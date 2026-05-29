@@ -30,6 +30,27 @@ push. **One-time setup:** in the GitHub repo go to **Settings → Pages → Buil
 deployment → Source: "GitHub Actions"**. After the next push, the live URL appears
 in the Actions run (and under Settings → Pages) — open it on any device.
 
+## Online co-op (up to 4)
+
+The game supports host-authoritative online co-op. There are two pieces:
+
+1. **The relay server** (`server/`) — a small Node WebSocket server that manages
+   rooms by share-code. It can't run on GitHub Pages; deploy it once to a host
+   that gives you a `wss://` URL (Render blueprint included):
+   ```bash
+   cd server && npm install && npm run dev   # local: ws://localhost:8080
+   ```
+   See [`server/README.md`](./server/README.md) for Render/Fly/Railway steps.
+
+2. **The client** points at that server via the `VITE_SERVER_URL` build var. For
+   the Pages build, set a repo **Variable** named `VITE_SERVER_URL` (Settings →
+   Secrets and variables → Actions → Variables) to your `wss://…` URL.
+
+Then on the title screen: **Host Co-op** prints a 4-letter room code; friends
+pick **Join**, type the code, and drop into your world. One player (the host) is
+the authoritative simulation; everyone shares the round, the horde, and points.
+Solo play needs none of this.
+
 ## Controls
 
 | Input            | Action            |

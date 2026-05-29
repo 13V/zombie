@@ -27,7 +27,12 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # Set repo variable VITE_SERVER_URL (Settings → Secrets and variables →
+      # Actions → Variables) to your deployed wss:// server for online co-op.
+      # Left unset, the build still works for solo play.
       - run: npm run build
+        env:
+          VITE_SERVER_URL: ${{ vars.VITE_SERVER_URL }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

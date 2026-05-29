@@ -74,6 +74,47 @@ html, body {
   box-shadow: 0 0 12px color-mix(in srgb, var(--gc) 60%, transparent);
 }
 .gum b { color: var(--gc); }
+.pill.room .value { color: #9fe0ff; letter-spacing: 2px; }
+
+.coop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+.join-row { display: flex; gap: 8px; }
+.coop-btn {
+  background: rgba(58, 47, 37, 0.6);
+  border: 2px solid rgba(255, 247, 230, 0.55);
+  color: #fff;
+  border-radius: 999px;
+  padding: 10px 22px;
+  font: inherit;
+  font-weight: bold;
+  cursor: pointer;
+}
+.coop-btn:hover { background: rgba(255, 247, 230, 0.18); }
+#join-code {
+  width: 110px;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 4px;
+  font: inherit;
+  font-weight: bold;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 247, 230, 0.4);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  padding: 10px;
+}
+.lobby-status {
+  min-height: 18px;
+  margin-top: 10px;
+  font-size: 14px;
+  color: #ffd9a0;
+  opacity: 0.9;
+}
 
 .hud-bottom {
   position: absolute;

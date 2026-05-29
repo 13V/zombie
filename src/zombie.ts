@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { ZOMBIE, ZombieType } from "./config";
+import { ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
 import { AssetManager, CharacterRig } from "./assets";
 import { VoxelChar } from "./voxelChar";
 
@@ -20,6 +20,8 @@ export class Zombie {
   readonly vel = new THREE.Vector3();
 
   typeName = "Shambler";
+  /** Index into ZOMBIE_TYPES, sent in network snapshots. */
+  typeIndex = 0;
   health = ZOMBIE.baseHealth;
   speed = ZOMBIE.baseSpeed;
   alive = false;
@@ -55,6 +57,7 @@ export class Zombie {
     this.touchCooldown = 0;
 
     this.typeName = type.name;
+    this.typeIndex = Math.max(0, ZOMBIE_TYPES.indexOf(type));
     this.health = baseHealth * type.healthMul;
     this.speed = baseSpeed * type.speedMul;
     this.touchDamage = type.touchDamage;

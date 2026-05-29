@@ -79,7 +79,7 @@ export class RoundManager {
     this.toSpawn--;
   }
 
-  update(dt: number, arena: Arena, playerPos: THREE.Vector3) {
+  update(dt: number, arena: Arena, playerPositions: THREE.Vector3[]) {
     if (this.phase === "active") {
       if (this.toSpawn > 0) {
         this.spawnTimer -= dt;
@@ -100,14 +100,32 @@ export class RoundManager {
     // move + animate the living horde; advance death animations for corpses
     for (const z of this.zombies) {
       if (z.alive) {
-        z.update(dt, playerPos, this.zombies);
-        arena.resolveObstacles(z.pos, ZOMBIE.radius);
-        z.group.position.x = z.pos.x;
-        z.group.position.z = z.pos.z;
+        const target = this.nearestPlayer(z.pos, playerPositions);
+        if (target) {
+          z.update(dt, target, this.zombies);
+          arena.resolveObstacles(z.pos, ZOMBIE.radius);
+          z.group.position.x = z.pos.x;
+          z.group.position.z = z.pos.z;
+        }
       } else if (z.dying) {
         z.updateDying(dt);
       }
     }
+  }
+
+  private nearestPlayer(pos: THREE.Vector3, players: THREE.Vector3[]): THREE.Vector3 | null {
+    let best: THREE.Vector3 | null = null;
+    let bestD = Infinity;
+    for (const p of players) {
+      const dx = p.x - pos.x;
+      const dz = p.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
   }
 
   reset() {

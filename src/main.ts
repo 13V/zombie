@@ -18,6 +18,9 @@ import { Interactables, GameApi } from "./interactables";
 import { Hud } from "./hud";
 import { AssetManager } from "./assets";
 import { Powerups } from "./powerups";
+import { NetClient, InputMsg, ZombieSnap } from "./net";
+import { NetPlay } from "./netplay";
+import { COLORS } from "./palette";
 import { TiltShift } from "./tiltShift";
 
 /** Tiny pooled "poof" particles for kill feedback. */
@@ -89,6 +92,11 @@ class Game implements GameApi {
   private powerups = new Powerups();
   private state: State = "menu";
 
+  // multiplayer (undefined = single-player)
+  private net?: NetClient;
+  private netplay?: NetPlay;
+  private myId = 1;
+
   private tilt: TiltShift;
 
   private camTarget = new THREE.Vector3();
@@ -151,6 +159,8 @@ class Game implements GameApi {
 
     this.hud.onStart(() => this.startRun());
     this.hud.onRestart(() => this.startRun());
+    this.hud.onHost(() => this.hostGame());
+    this.hud.onJoin((code) => this.joinGame(code));
 
     addEventListener("resize", this.onResize);
     this.onResize();
@@ -176,6 +186,7 @@ class Game implements GameApi {
     this.shake = 0;
     this.hud.setPoints(this.points);
     this.hud.setRound(1);
+    if (!this.netplay) this.hud.hideRoomCode();
     this.syncWeaponHud();
   }
 
@@ -191,6 +202,61 @@ class Game implements GameApi {
     this.state = "over";
     this.input.firing = false;
     this.hud.showGameOver(this.rounds.round, this.points);
+  }
+
+  // ---- multiplayer ----
+  private async hostGame() {
+    this.hud.setLobbyStatus("Connecting…");
+    try {
+      this.net = new NetClient();
+      this.net.onClose = (r) => this.onNetClose(r);
+      const { code } = await this.net.host();
+      this.netplay = new NetPlay(this.net, this.scene, this.assets, this.bullets);
+      this.myId = 1;
+      this.startRun();
+      this.hud.showRoomCode(code);
+    } catch (e) {
+      this.teardownNet();
+      this.hud.setLobbyStatus(`Couldn't reach server (${(e as Error).message})`);
+    }
+  }
+
+  private async joinGame(code: string) {
+    if (!code.trim()) {
+      this.hud.setLobbyStatus("Enter a room code");
+      return;
+    }
+    this.hud.setLobbyStatus("Joining…");
+    try {
+      this.net = new NetClient();
+      this.net.onClose = (r) => this.onNetClose(r);
+      const { id } = await this.net.join(code);
+      this.myId = id;
+      this.netplay = new NetPlay(this.net, this.scene, this.assets, this.bullets);
+      // guests render the host's authoritative world; no local sim
+      this.resetRun();
+      this.hud.hideStart();
+      this.hud.hideGameOver();
+      this.state = "playing";
+      this.hud.toast(`Joined ${this.net.room}`);
+    } catch (e) {
+      this.teardownNet();
+      this.hud.setLobbyStatus(`Join failed (${(e as Error).message})`);
+    }
+  }
+
+  private onNetClose(reason: string) {
+    this.teardownNet();
+    this.state = "menu";
+    this.hud.showStart();
+    this.hud.setLobbyStatus(reason);
+  }
+
+  private teardownNet() {
+    this.netplay?.dispose();
+    this.netplay = undefined;
+    this.net?.close();
+    this.net = undefined;
   }
 
   // ---- GameApi (used by interactables) ----
@@ -289,8 +355,12 @@ class Game implements GameApi {
 
     this.input.updateAim(this.camera);
 
-    if (this.state === "playing") this.simulate(dt);
-    else this.player.idle(dt); // keep the figure breathing on menu / pause / over
+    if (this.state === "playing") {
+      if (this.netplay && !this.netplay.isHost) this.simulateGuest(dt);
+      else this.simulate(dt);
+    } else {
+      this.player.idle(dt); // keep the figure breathing on menu / pause / over
+    }
 
     this.arena.update(dt);
     this.interactables.update(dt);
@@ -317,17 +387,40 @@ class Game implements GameApi {
     const w = this.weapon;
     w.update(dt, this.player.reloadMul);
     const wantFire = w.def.auto ? this.input.firing : this.input.clicked();
-    if (wantFire) w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, this.powerups.fireRateMul());
+    if (wantFire && w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, this.powerups.fireRateMul())) {
+      this.netplay?.hostShot(
+        this.player.muzzle.x, this.player.muzzle.z, this.player.aimDir.x, this.player.aimDir.z,
+        w.def.bulletColor ?? COLORS.bullet, w.def.bulletScale ?? 1,
+      );
+    }
     if (this.input.pressed("KeyR")) w.reload();
     if (this.input.pressed("KeyQ") && this.weapons.length > 1) {
       this.activeSlot = (this.activeSlot + 1) % this.weapons.length;
     }
 
+    // host also simulates each connected guest's player into the shared world
+    if (this.netplay) {
+      this.netplay.hostSimulateGuests(dt, this.arena, this.bullets, (x, z, dx, dz) =>
+        this.netplay!.hostShot(x, z, dx, dz, COLORS.bullet, 1),
+      );
+    }
+
     this.bullets.update(dt);
-    this.rounds.update(dt, this.arena, this.player.pos);
+    const targets = this.netplay ? this.netplay.hostPlayerPositions(this.player) : [this.player.pos];
+    this.rounds.update(dt, this.arena, targets);
 
     this.resolveBulletHits();
     this.resolveZombieTouch(dt);
+
+    // broadcast the authoritative snapshot to guests
+    if (this.netplay) {
+      const zs: ZombieSnap[] = [];
+      for (const z of this.rounds.zombies) {
+        if (!z.alive && !z.dying) continue;
+        zs.push({ id: z.id, x: z.pos.x, z: z.pos.z, ry: z.group.rotation.y, type: z.typeIndex, state: z.dying ? 1 : 0 });
+      }
+      this.netplay.hostBroadcast(dt, this.player, zs, this.rounds.round, this.points, this.rounds.phase);
+    }
 
     // interaction prompt + buy
     const near = this.interactables.nearest(this.player.pos);
@@ -340,7 +433,9 @@ class Game implements GameApi {
       this.hud.hidePrompt();
     }
 
-    if (!this.player.alive) {
+    // game over when every player (host + guests) is down
+    const anyAlive = this.player.alive || this.netplay?.hostGuestSlots().some((s) => s.player.alive);
+    if (!anyAlive) {
       this.gameOver();
       return;
     }
@@ -348,6 +443,31 @@ class Game implements GameApi {
     this.hud.setHealth(this.player.health, this.player.maxHealth);
     this.hud.setPowerups(this.powerups.list());
     this.syncWeaponHud();
+  }
+
+  /** Guest path: send input to the host and render the authoritative snapshot. */
+  private simulateGuest(dt: number) {
+    const axis = this.input.moveAxis(new THREE.Vector2());
+    const aim = this.input.aimPoint;
+    const inp: InputMsg = {
+      t: "input",
+      mx: axis.x,
+      mz: -axis.y,
+      ax: aim.x,
+      az: aim.z,
+      fire: this.input.firing || this.input.clicked(),
+      reload: this.input.pressed("KeyR"),
+      swap: this.input.pressed("KeyQ"),
+      interact: this.input.pressed("KeyE") || this.input.pressed("Space"),
+    };
+    this.netplay!.guestSendInput(inp);
+    this.netplay!.guestRender(dt, this.player, this.myId);
+    this.bullets.update(dt); // moves the local tracer ghosts
+
+    this.hud.setRound(this.netplay!.netRound);
+    this.hud.setPoints(this.netplay!.netPoints);
+    this.hud.setHealth(this.netplay!.myHp, this.netplay!.myMaxHp);
+    this.hud.hidePrompt();
   }
 
   private resolveBulletHits() {
@@ -403,20 +523,25 @@ class Game implements GameApi {
 
   private resolveZombieTouch(dt: number) {
     const r = ZOMBIE.radius + PLAYER.radius;
+    // candidate victims: local player + any guests (host-authoritative)
+    const victims = [this.player, ...(this.netplay ? this.netplay.hostGuestSlots().map((s) => s.player) : [])];
     for (const z of this.rounds.zombies) {
       if (!z.alive) continue;
       if (z.touchCooldown > 0) {
         z.touchCooldown -= dt;
         continue;
       }
-      // bigger variants (brutes) reach a little farther
-      const reach = r * z.group.scale.x;
-      const dx = z.pos.x - this.player.pos.x;
-      const dz = z.pos.z - this.player.pos.z;
-      if (dx * dx + dz * dz < reach * reach) {
-        this.player.damage(z.touchDamage);
-        z.touchCooldown = ZOMBIE.touchInterval;
-        this.shake = Math.min(0.5, this.shake + 0.25);
+      const reach = r * z.group.scale.x; // bigger variants reach a little farther
+      for (const victim of victims) {
+        if (!victim.alive) continue;
+        const dx = z.pos.x - victim.pos.x;
+        const dz = z.pos.z - victim.pos.z;
+        if (dx * dx + dz * dz < reach * reach) {
+          victim.damage(z.touchDamage);
+          z.touchCooldown = ZOMBIE.touchInterval;
+          if (victim === this.player) this.shake = Math.min(0.5, this.shake + 0.25);
+          break;
+        }
       }
     }
   }

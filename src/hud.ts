@@ -27,6 +27,7 @@ export class Hud {
       <div class="hud-top">
         <div class="pill round"><span class="label">Round</span><span class="value" id="hud-round">1</span></div>
         <div class="pill points"><span class="label">Points</span><span class="value" id="hud-points">0</span></div>
+        <div class="pill room hidden" id="hud-room"><span class="label">Room</span><span class="value" id="hud-room-code"></span></div>
       </div>
       <div class="powerups" id="hud-powerups"></div>
       <div class="hud-bottom">
@@ -55,7 +56,15 @@ export class Hud {
           <span class="k">Q</span><span>Swap weapon</span>
           <span class="k">P</span><span>Pause</span>
         </div>
-        <button class="play" id="btn-start">Play</button>
+        <button class="play" id="btn-start">Play Solo</button>
+        <div class="coop">
+          <button class="coop-btn" id="btn-host">Host Co-op</button>
+          <div class="join-row">
+            <input id="join-code" maxlength="4" placeholder="CODE" autocomplete="off" />
+            <button class="coop-btn" id="btn-join">Join</button>
+          </div>
+        </div>
+        <div class="lobby-status" id="lobby-status"></div>
       </div>
 
       <div class="overlay hidden" id="overlay-over">
@@ -89,6 +98,24 @@ export class Hud {
   }
   onRestart(cb: () => void) {
     this.q("#btn-restart").addEventListener("click", cb);
+  }
+  onHost(cb: () => void) {
+    this.q("#btn-host").addEventListener("click", cb);
+  }
+  onJoin(cb: (code: string) => void) {
+    this.q("#btn-join").addEventListener("click", () => {
+      cb((this.q("#join-code") as HTMLInputElement).value);
+    });
+  }
+  setLobbyStatus(msg: string) {
+    this.q("#lobby-status").textContent = msg;
+  }
+  showRoomCode(code: string) {
+    this.q("#hud-room-code").textContent = code;
+    this.q("#hud-room").classList.remove("hidden");
+  }
+  hideRoomCode() {
+    this.q("#hud-room").classList.add("hidden");
   }
 
   setRound(n: number) {
