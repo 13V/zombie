@@ -1,11 +1,13 @@
 import * as THREE from "three";
 import { PLAYER } from "./config";
-import { COLORS, voxelMaterial } from "./palette";
-import { AssetManager, Character } from "./assets";
+import { COLORS } from "./palette";
+import { AssetManager, CharacterRig } from "./assets";
+import { VoxelChar } from "./voxelChar";
 
 /**
- * The little hero figure. Uses a GLB character (with animations) when one is
- * loaded; otherwise builds a primitive toy figure. Handles movement, aim, health.
+ * The little hero. Driven by a CharacterRig — a voxel blocky figure by default
+ * (the committed style), or a KayKit GLB if one is dropped in. Handles movement,
+ * aim, health.
  */
 export class Player {
   readonly group = new THREE.Group();
@@ -23,49 +25,15 @@ export class Player {
   speedMul = 1;
   reloadMul = 1;
 
-  private char: Character | null;
-  private body?: THREE.Mesh; // only used by the primitive fallback
-  private bob = 0;
+  private char: CharacterRig;
 
   constructor(scene: THREE.Scene, assets: AssetManager) {
-    this.char = assets.createCharacter("player");
-    if (this.char) {
-      this.group.add(this.char.root);
-    } else {
-      this.buildPrimitive();
-    }
+    this.char =
+      assets.createCharacter("player") ??
+      new VoxelChar({ body: COLORS.player, head: COLORS.playerAccent, eye: 0x222222, hat: 0xf2c14e, gun: true });
+    this.group.add(this.char.root);
     this.group.position.copy(this.pos);
     scene.add(this.group);
-  }
-
-  private buildPrimitive() {
-    // Blocky Kintara-style figure: boxy body, square head with two dot-eyes, hat.
-    this.body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.6), voxelMaterial(COLORS.player));
-    this.body.position.y = 0.85;
-    this.body.castShadow = true;
-    this.group.add(this.body);
-
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.74, 0.74), voxelMaterial(COLORS.playerAccent));
-    head.position.y = 1.78;
-    head.castShadow = true;
-    this.group.add(head);
-
-    const eye = voxelMaterial(0x222222);
-    for (const dx of [-0.17, 0.17]) {
-      const e = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.18, 0.06), eye);
-      e.position.set(dx, 1.8, 0.39); // on the +Z (forward) face
-      this.group.add(e);
-    }
-
-    const hat = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.2, 0.82), voxelMaterial(0xf2c14e));
-    hat.position.y = 2.22;
-    hat.castShadow = true;
-    this.group.add(hat);
-
-    // muzzle/gun nub pointing forward (+Z) to read aim
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.7), voxelMaterial(0x3a2f25));
-    gun.position.set(0.32, 0.95, 0.55);
-    this.group.add(gun);
   }
 
   damage(amount: number) {
@@ -78,7 +46,7 @@ export class Player {
   /** Active gameplay update: move by `(moveX, moveZ)`, aim toward `aimPoint`. */
   update(dt: number, moveX: number, moveZ: number, aimPoint: THREE.Vector3) {
     if (!this.alive) {
-      this.char?.update(dt);
+      this.char.update(dt);
       return;
     }
 
@@ -94,13 +62,8 @@ export class Player {
     }
 
     const moving = moveX !== 0 || moveZ !== 0;
-    if (this.char) {
-      this.char.play(moving ? "walk" : "idle");
-      this.char.update(dt);
-    } else if (this.body) {
-      this.bob += dt * (moving ? 12 : 4);
-      this.body.position.y = 0.85 + (moving ? Math.abs(Math.sin(this.bob)) * 0.08 : 0);
-    }
+    this.char.play(moving ? "walk" : "idle");
+    this.char.update(dt);
 
     this.timeSinceHit += dt;
     if (this.timeSinceHit > PLAYER.regenDelay && this.health < this.maxHealth) {
@@ -114,8 +77,8 @@ export class Player {
 
   /** Used on the menu / paused screens so the figure keeps breathing. */
   idle(dt: number) {
-    this.char?.play("idle");
-    this.char?.update(dt);
+    this.char.play("idle");
+    this.char.update(dt);
   }
 
   reset() {

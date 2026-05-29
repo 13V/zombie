@@ -23,6 +23,13 @@ npm run build    # typecheck + production build into dist/
 npm run preview  # serve the production build
 ```
 
+### Play in the browser (GitHub Pages)
+
+A workflow (`.github/workflows/deploy.yml`) builds and publishes the game on every
+push. **One-time setup:** in the GitHub repo go to **Settings → Pages → Build and
+deployment → Source: "GitHub Actions"**. After the next push, the live URL appears
+in the Actions run (and under Settings → Pages) — open it on any device.
+
 ## Controls
 
 | Input            | Action            |
@@ -49,11 +56,11 @@ npm run preview  # serve the production build
 
 The Kintara / Tiny Worlds look comes from three layers, all wired up here:
 
-1. **Models (GLB).** Animated characters load from `public/models/`. Drop in
-   **KayKit** GLBs (`player.glb`, `zombie.glb`) and they're used automatically,
-   with walk/idle/attack/death animations fuzzy-matched by clip name. **No files?
-   It falls back to primitive toy shapes, so the game always runs.** See
-   [`public/models/README.md`](./public/models/README.md).
+1. **Characters.** By default these are **procedural voxel figures** (`voxelChar.ts`)
+   — boxy body, square head with two dot-eyes — animated procedurally
+   (walk/idle/attack/death). Optionally, drop **KayKit** GLBs into `public/models/`
+   (`player.glb`, `zombie.glb`) and they're used instead, with animations
+   fuzzy-matched by clip name. See [`public/models/README.md`](./public/models/README.md).
 2. **Render / look-dev.** Image-based ambient lighting (`RoomEnvironment` env map)
    for the soft "expensive" glow, soft shadows, gentle bloom, ACES tone mapping,
    and a **tilt-shift + vignette** post pass for the "miniature diorama" feel.

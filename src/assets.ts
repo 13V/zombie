@@ -5,6 +5,14 @@ import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js
 /** Logical animation states the game asks for. */
 export type AnimState = "idle" | "walk" | "attack" | "death";
 
+/** Common shape for anything an entity can drive: GLB `Character` or `VoxelChar`. */
+export interface CharacterRig {
+  readonly root: THREE.Object3D;
+  play(state: AnimState, opts?: { once?: boolean }): void;
+  update(dt: number): void;
+  hasAnim(state: AnimState): boolean;
+}
+
 /** Keyword groups used to fuzzy-match a GLB's clip names to our states.
  *  KayKit (and most packs) name clips differently, so we match loosely. */
 const ANIM_KEYWORDS: Record<AnimState, string[]> = {

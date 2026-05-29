@@ -1,15 +1,16 @@
 import * as THREE from "three";
 import { ZOMBIE } from "./config";
-import { COLORS, voxelMaterial } from "./palette";
-import { AssetManager, Character } from "./assets";
+import { COLORS } from "./palette";
+import { AssetManager, CharacterRig } from "./assets";
+import { VoxelChar } from "./voxelChar";
 
 const _tmp = new THREE.Vector3();
 
 /**
- * A cute-menacing undead. Uses a GLB character (with walk/death animations) when
- * loaded; otherwise a primitive wobble-figure. Steers toward the player, keeps
- * separation from neighbours, and hits on contact. On death it plays a death
- * animation (if available) as a brief corpse before being recycled.
+ * A cute-menacing undead, driven by a CharacterRig (voxel blocky by default, or
+ * a KayKit GLB if present). Steers toward the player, keeps separation from
+ * neighbours, hits on contact, and plays a death animation as a brief corpse
+ * before being recycled.
  */
 export class Zombie {
   readonly group = new THREE.Group();
@@ -24,36 +25,14 @@ export class Zombie {
   private deathTimer = 0;
   touchCooldown = 0;
 
-  private char: Character | null;
-  private body?: THREE.Mesh; // primitive fallback
-  private head?: THREE.Mesh;
-  private wobble = Math.random() * Math.PI * 2;
+  private char: CharacterRig;
 
   constructor(assets: AssetManager) {
-    this.char = assets.createCharacter("zombie");
-    if (!this.char) this.buildPrimitive();
-    else this.group.add(this.char.root);
+    this.char =
+      assets.createCharacter("zombie") ??
+      new VoxelChar({ body: COLORS.zombie, head: COLORS.zombieDark, eye: 0x141414, zombie: true });
+    this.group.add(this.char.root);
     this.group.visible = false;
-  }
-
-  private buildPrimitive() {
-    // Blocky Kintara-style undead: boxy body, square head with two dark dot-eyes.
-    this.body = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.0, 0.55), voxelMaterial(COLORS.zombie));
-    this.body.position.y = 0.8;
-    this.body.castShadow = true;
-    this.group.add(this.body);
-
-    this.head = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.64, 0.64), voxelMaterial(COLORS.zombieDark));
-    this.head.position.y = 1.62;
-    this.head.castShadow = true;
-    this.group.add(this.head);
-
-    const eye = voxelMaterial(0x141414);
-    for (const dx of [-0.15, 0.15]) {
-      const e = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.06), eye);
-      e.position.set(dx, 1.64, 0.34); // forward (+Z) face
-      this.group.add(e);
-    }
   }
 
   spawn(at: THREE.Vector3, health: number, speed: number) {
@@ -65,10 +44,8 @@ export class Zombie {
     this.dying = false;
     this.deathTimer = 0;
     this.touchCooldown = 0;
-    this.wobble = Math.random() * Math.PI * 2;
     this.group.rotation.set(0, 0, 0);
-    if (this.body) (this.body.material as THREE.MeshStandardMaterial).color.set(COLORS.zombie);
-    if (this.char) this.char.play("walk");
+    this.char.play("walk");
     this.group.position.copy(this.pos);
     this.group.visible = true;
   }
@@ -77,20 +54,11 @@ export class Zombie {
   hit(damage: number): boolean {
     if (!this.alive) return false;
     this.health -= damage;
-    if (this.body) {
-      const m = this.body.material as THREE.MeshStandardMaterial;
-      const f = Math.max(0, this.health / ZOMBIE.baseHealth);
-      m.color.lerpColors(new THREE.Color(COLORS.zombieDark), new THREE.Color(COLORS.zombie), f);
-    }
     if (this.health <= 0) {
       this.alive = false;
-      if (this.char?.hasAnim("death")) {
-        this.dying = true;
-        this.deathTimer = 1.4;
-        this.char.play("death", { once: true });
-      } else {
-        this.group.visible = false;
-      }
+      this.dying = true;
+      this.deathTimer = 1.4;
+      this.char.play("death", { once: true });
       return true;
     }
     return false;
@@ -124,21 +92,13 @@ export class Zombie {
     this.pos.y = 0;
     this.group.position.copy(this.pos);
     this.group.rotation.y = Math.atan2(_tmp.x, _tmp.z);
-
-    if (this.char) {
-      this.char.update(dt);
-    } else {
-      // primitive wobble walk
-      this.wobble += dt * 9;
-      this.group.position.y = Math.abs(Math.sin(this.wobble)) * 0.12;
-      this.group.rotation.z = Math.sin(this.wobble) * 0.12;
-    }
+    this.char.update(dt);
   }
 
   /** Advance the death animation; hide + recycle when the corpse times out. */
   updateDying(dt: number) {
     if (!this.dying) return;
-    this.char?.update(dt);
+    this.char.update(dt);
     this.deathTimer -= dt;
     if (this.deathTimer <= 0) {
       this.dying = false;
