@@ -40,17 +40,21 @@ class VoxelBatch {
 }
 
 /**
- * A voxel floating island in a soft sky — the "Tiny World" look. Grass-topped
- * blocks over dirt + a tapering stone underside, with paths, a pond, a farm,
- * voxel trees, houses, fences and crops. Drifting blocky clouds fill the sky.
+ * A flat voxel arena in a soft sky — a blend of Kintara (flat isometric tiled
+ * ground, a central cobblestone fountain plaza) and Tiny World (thick beveled
+ * voxels, blue sky, drifting clouds). The fountain is the defensive core to
+ * circle while kiting the horde; blocky trees and peaked-roof houses give cover.
  */
 export class Arena {
   readonly group = new THREE.Group();
   readonly half = WORLD.half;
   readonly obstacles: Obstacle[] = [];
+  readonly plaza = 6; // half-extent of the central plaza
 
   private geo = new RoundedBoxGeometry(1, 1, 1, 2, 0.08);
   private clouds: { group: THREE.Group; speed: number }[] = [];
+  private plume?: THREE.Mesh;
+  private t = 0;
 
   constructor(scene: THREE.Scene) {
     scene.fog = new THREE.Fog(WORLD.fogColor, WORLD.fogNear, WORLD.fogFar);
@@ -60,12 +64,13 @@ export class Arena {
 
     const terrain = new VoxelBatch();
     const props = new VoxelBatch();
-    this.generateIsland(terrain, props);
+    this.generateGround(terrain, props);
     this.buildHouses(props);
     this.buildTrees(props);
     terrain.build(this.group, this.geo, false, true);
     props.build(this.group, this.geo, true, true);
 
+    this.buildFountain();
     this.buildClouds(scene);
     scene.add(this.group);
   }
@@ -99,9 +104,7 @@ export class Arena {
   }
 
   private buildLights(scene: THREE.Scene) {
-    // Env map (set in main.ts) supplies soft ambient; these stay gentle + warm.
     scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x6f7a4a, 0.55));
-
     const key = new THREE.DirectionalLight(0xfff2d4, 1.35);
     key.position.set(20, 34, 16);
     key.castShadow = true;
@@ -115,9 +118,9 @@ export class Arena {
     scene.add(key);
   }
 
-  // ---- island generation ----
-  private inIsland(i: number, j: number, shrink = 0): boolean {
-    const H = this.half - shrink;
+  // ---- ground generation ----
+  private inArena(i: number, j: number): boolean {
+    const H = this.half;
     if (Math.max(Math.abs(i), Math.abs(j)) > H) return false;
     const ci = Math.abs(i) - (H - 3);
     const cj = Math.abs(j) - (H - 3);
@@ -125,88 +128,87 @@ export class Arena {
     return true;
   }
 
-  private inRect(i: number, j: number, x0: number, x1: number, z0: number, z1: number) {
-    return i >= x0 && i <= x1 && j >= z0 && j <= z1;
-  }
-
-  private generateIsland(terrain: VoxelBatch, props: VoxelBatch) {
+  private generateGround(terrain: VoxelBatch, props: VoxelBatch) {
     const H = this.half;
-    // feature regions (kept off the central spawn area)
-    const pond = { x0: -H + 4, x1: -H + 9, z0: H - 9, z1: H - 4 };
-    const farm = { x0: 4, x1: 10, z0: -10, z1: -4 };
+    const P = this.plaza;
 
     for (let i = -H; i <= H; i++) {
       for (let j = -H; j <= H; j++) {
-        if (!this.inIsland(i, j)) continue;
+        if (!this.inArena(i, j)) continue;
 
-        const isPond = this.inRect(i, j, pond.x0, pond.x1, pond.z0, pond.z1);
-        const isFarm = this.inRect(i, j, farm.x0, farm.x1, farm.z0, farm.z1);
-        const isPath = (Math.abs(i) <= 1 || Math.abs(j) <= 1) && !isPond && !isFarm;
+        const cheb = Math.max(Math.abs(i), Math.abs(j));
+        const onPlaza = cheb <= P;
+        const onPath = !onPlaza && (Math.abs(i) <= 1 || Math.abs(j) <= 1);
 
-        if (isPond) {
-          terrain.add(i, -0.75, j, VOX.water, 1, 0.7, 1); // recessed water
-        } else if (isFarm) {
-          terrain.add(i, -0.5, j, VOX.tilled);
-          if ((i + j) % 2 === 0) {
-            const ripe = Math.random() < 0.3;
-            props.add(i, 0.2, j, ripe ? VOX.cropRipe : VOX.crop, 0.3, 0.5, 0.3);
-          }
-        } else if (isPath) {
+        if (onPlaza) {
+          terrain.add(i, -0.5, j, (i + j) % 2 === 0 ? VOX.cobble : VOX.cobbleDark);
+        } else if (onPath) {
           terrain.add(i, -0.5, j, VOX.path);
         } else {
-          const shade = (i * 7 + j * 13) % 5 === 0 ? VOX.grassDark : VOX.grass;
-          terrain.add(i, -0.5, j, shade);
-          // scattered grass tufts for texture
-          if (Math.random() < 0.05 && Math.abs(i) + Math.abs(j) > 4) {
+          terrain.add(i, -0.5, j, (i * 7 + j * 13) % 5 === 0 ? VOX.grassDark : VOX.grass);
+          if (Math.random() < 0.05) {
             props.add(i + (Math.random() - 0.5) * 0.4, 0.15, j + (Math.random() - 0.5) * 0.4, VOX.leaf, 0.35, 0.35, 0.35);
           }
         }
       }
     }
 
-    this.buildUnderside(terrain);
-    this.buildFences(props, farm);
-  }
-
-  private buildUnderside(terrain: VoxelBatch) {
-    const H = this.half;
-    for (let d = 1; d <= 9; d++) {
-      const shrink = Math.max(0, d - 1);
-      if (H - shrink < 3) break;
-      const color = d === 1 ? VOX.dirt : d === 2 ? VOX.dirtDark : (d % 2 ? VOX.stone : VOX.stoneDark);
+    // Flat slab underside (dirt over stone), with a slightly inset bottom rim.
+    for (let d = 1; d <= 4; d++) {
+      const color = d <= 2 ? (d === 1 ? VOX.dirt : VOX.dirtDark) : d === 3 ? VOX.stone : VOX.stoneDark;
       for (let i = -H; i <= H; i++) {
         for (let j = -H; j <= H; j++) {
-          if (this.inIsland(i, j, shrink)) terrain.add(i, -0.5 - d, j, color);
+          if (!this.inArena(i, j)) continue;
+          if (d === 4 && Math.max(Math.abs(i), Math.abs(j)) >= H - 1) continue; // inset rim
+          terrain.add(i, -0.5 - d, j, color);
         }
       }
     }
-    // a few ragged stalactite blocks dangling from the center underside
-    for (let n = 0; n < 10; n++) {
-      const i = Math.floor((Math.random() * 2 - 1) * (H - 6));
-      const j = Math.floor((Math.random() * 2 - 1) * (H - 6));
-      const depth = 9 + Math.floor(Math.random() * 3);
-      terrain.add(i, -0.5 - depth, j, Math.random() < 0.5 ? VOX.stone : VOX.stoneDark);
-    }
   }
 
-  private buildFences(props: VoxelBatch, farm: { x0: number; x1: number; z0: number; z1: number }) {
-    for (let i = farm.x0 - 1; i <= farm.x1 + 1; i++) {
-      props.add(i, 0.4, farm.z0 - 1, VOX.fence, 0.25, 1.0, 0.25);
-      props.add(i, 0.4, farm.z1 + 1, VOX.fence, 0.25, 1.0, 0.25);
-    }
-    for (let j = farm.z0 - 1; j <= farm.z1 + 1; j++) {
-      props.add(farm.x0 - 1, 0.4, j, VOX.fence, 0.25, 1.0, 0.25);
-      props.add(farm.x1 + 1, 0.4, j, VOX.fence, 0.25, 1.0, 0.25);
-    }
+  // ---- fountain (plaza centerpiece) ----
+  private buildFountain() {
+    const stone = new THREE.MeshStandardMaterial({ color: VOX.cobbleDark, roughness: 0.85 });
+    const water = new THREE.MeshStandardMaterial({ color: VOX.water, roughness: 0.25, metalness: 0.0 });
+    const spray = new THREE.MeshStandardMaterial({
+      color: 0xeaf6ff, roughness: 0.2, transparent: true, opacity: 0.65, emissive: 0x9fd2f5, emissiveIntensity: 0.4,
+    });
+
+    const basin = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.4, 0.8, 28), stone);
+    basin.position.y = 0.4;
+    basin.castShadow = true;
+    basin.receiveShadow = true;
+    this.group.add(basin);
+
+    const pool = new THREE.Mesh(new THREE.CylinderGeometry(2.7, 2.7, 0.4, 28), water);
+    pool.position.y = 0.65;
+    this.group.add(pool);
+
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 1.4, 16), stone);
+    post.position.y = 1.1;
+    post.castShadow = true;
+    this.group.add(post);
+
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.2, 16), stone);
+    cap.position.y = 1.85;
+    this.group.add(cap);
+
+    this.plume = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.4, 1.6, 12), spray);
+    this.plume.position.y = 2.6;
+    this.group.add(this.plume);
+
+    // Block the fountain so players circle it (the kiting core).
+    this.obstacles.push({ minX: -3.1, maxX: 3.1, minZ: -3.1, maxZ: 3.1 });
   }
 
   // ---- structures ----
   private buildHouses(props: VoxelBatch) {
-    this.buildHouse(props, -9, -8, VOX.roofBlue);
-    this.buildHouse(props, 7, 8, VOX.roofRed);
+    this.buildHouse(props, -13, -11, VOX.roofPurple);
+    this.buildHouse(props, 10, 11, VOX.roofDark);
+    this.buildHouse(props, -12, 10, VOX.roofBlue);
   }
 
-  /** A 4×4 voxel cottage with walls, a door gap and a stepped colored roof. */
+  /** A 4×4 voxel cottage with walls, a door gap and a peaked colored roof. */
   private buildHouse(props: VoxelBatch, ox: number, oz: number, roof: number) {
     const w = 4;
     for (let y = 0; y < 3; y++) {
@@ -219,10 +221,11 @@ export class Arena {
         }
       }
     }
-    // stepped roof
+    // peaked roof: two stepped tiers + a ridge
     for (let i = -1; i < w + 1; i++) for (let j = -1; j < w + 1; j++) props.add(ox + i, 3.5, oz + j, roof);
-    for (let i = 0; i < w; i++) for (let j = 0; j < w; j++) props.add(ox + i, 4.5, oz + j, roof);
-    props.add(ox + 1.5, 5.5, oz + 1.5, roof, 1.4, 1, 1.4);
+    for (let i = 0; i < w; i++) for (let j = 0; j < w; j++) props.add(ox + i, 4.4, oz + j, roof);
+    for (let i = 1; i < w - 1; i++) for (let j = 0; j < w; j++) props.add(ox + i, 5.2, oz + j, roof);
+    props.add(ox + 1.5, 5.9, oz + 1.5, roof, 1.2, 0.8, w + 0.4);
 
     this.obstacles.push({ minX: ox - 0.5, maxX: ox + w - 0.5, minZ: oz - 0.5, maxZ: oz + w - 0.5 });
   }
@@ -230,11 +233,12 @@ export class Arena {
   private buildTrees(props: VoxelBatch) {
     const placed: [number, number][] = [];
     let attempts = 0;
-    while (placed.length < 11 && attempts++ < 200) {
+    while (placed.length < 16 && attempts++ < 300) {
       const i = Math.floor((Math.random() * 2 - 1) * (this.half - 3));
       const j = Math.floor((Math.random() * 2 - 1) * (this.half - 3));
-      if (!this.inIsland(i, j)) continue;
-      if (Math.abs(i) < 3 && Math.abs(j) < 3) continue; // keep spawn clear
+      if (!this.inArena(i, j)) continue;
+      if (Math.max(Math.abs(i), Math.abs(j)) <= this.plaza + 1) continue; // keep plaza clear
+      if (Math.abs(i) <= 1 || Math.abs(j) <= 1) continue; // keep paths clear
       if (this.insideObstacle(i, j, 2)) continue;
       if (placed.some(([pi, pj]) => Math.abs(pi - i) < 3 && Math.abs(pj - j) < 3)) continue;
       placed.push([i, j]);
@@ -242,16 +246,16 @@ export class Arena {
     }
   }
 
+  /** Kintara-style tiered voxel tree: thin trunk + stacked green tiers. */
   private buildTree(props: VoxelBatch, ox: number, oz: number) {
-    props.add(ox, 0.5, oz, VOX.trunk, 0.5, 1, 0.5);
-    props.add(ox, 1.5, oz, VOX.trunk, 0.5, 1, 0.5);
-    const pink = Math.random() < 0.25;
+    props.add(ox, 0.5, oz, VOX.trunk, 0.45, 1, 0.45);
+    props.add(ox, 1.5, oz, VOX.trunk, 0.45, 1, 0.45);
+    const pink = Math.random() < 0.2;
     const leaf = pink ? VOX.leafPink : VOX.leaf;
     const leafD = pink ? VOX.leafPink : VOX.leafDark;
-    for (let i = -1; i <= 1; i++)
-      for (let j = -1; j <= 1; j++) props.add(ox + i, 2.6, oz + j, (i + j) % 2 ? leafD : leaf);
-    for (let i = 0; i <= 1; i++)
-      for (let j = 0; j <= 1; j++) props.add(ox + i - 0.5, 3.6, oz + j - 0.5, leaf);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) props.add(ox + i, 2.4, oz + j, (i + j) % 2 ? leafD : leaf);
+    for (let i = 0; i <= 1; i++) for (let j = 0; j <= 1; j++) props.add(ox + i - 0.5, 3.2, oz + j - 0.5, leaf);
+    props.add(ox, 3.9, oz, leaf, 0.8, 0.8, 0.8);
   }
 
   private insideObstacle(x: number, z: number, pad = 0): boolean {
@@ -273,11 +277,7 @@ export class Arena {
         m.scale.set(s, s * 0.7, s);
         g.add(m);
       }
-      g.position.set(
-        (Math.random() - 0.5) * 160,
-        -6 + Math.random() * 34,
-        (Math.random() - 0.5) * 160,
-      );
+      g.position.set((Math.random() - 0.5) * 170, 10 + Math.random() * 30, (Math.random() - 0.5) * 170);
       scene.add(g);
       this.clouds.push({ group: g, speed: 1 + Math.random() * 1.6 });
     }
@@ -285,9 +285,14 @@ export class Arena {
 
   // ---- per-frame ----
   update(dt: number) {
+    this.t += dt;
     for (const c of this.clouds) {
       c.group.position.x += c.speed * dt;
-      if (c.group.position.x > 90) c.group.position.x = -90;
+      if (c.group.position.x > 95) c.group.position.x = -95;
+    }
+    if (this.plume) {
+      this.plume.scale.y = 1 + Math.sin(this.t * 3) * 0.12;
+      this.plume.rotation.y = this.t;
     }
   }
 
@@ -298,7 +303,7 @@ export class Arena {
     pos.z = Math.max(-lim, Math.min(lim, pos.z));
   }
 
-  /** Push a circle (radius r) out of any house footprint. */
+  /** Push a circle (radius r) out of any obstacle footprint. */
   resolveObstacles(pos: THREE.Vector3, r: number) {
     for (const o of this.obstacles) {
       const minX = o.minX - r, maxX = o.maxX + r, minZ = o.minZ - r, maxZ = o.maxZ + r;

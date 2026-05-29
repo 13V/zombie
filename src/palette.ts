@@ -22,14 +22,16 @@ export const COLORS = {
  * Grass · Path · Dirt · Water · House · Tree · Fence · Crop · Tuft.
  */
 export const VOX = {
-  grass: 0xa7dd54,
-  grassDark: 0x8cc63f,
-  path: 0xe7dab0,
+  grass: 0x9ed94f,
+  grassDark: 0x86c63c,
+  path: 0xc9a96e,
   dirt: 0x8a5a32,
   dirtDark: 0x6f4626,
   tilled: 0x6e4a2c,
   stone: 0x9b9b90,
   stoneDark: 0x7c7c71,
+  cobble: 0xc2c2b6,
+  cobbleDark: 0x9ea093,
   water: 0x3f9fe0,
   house: 0x4a90d9,
   houseAlt: 0xb6452f,
@@ -37,6 +39,7 @@ export const VOX = {
   roofBlue: 0x3f6fd1,
   roofRed: 0xb6452f,
   roofPurple: 0x6e4a9e,
+  roofDark: 0x3b3b42,
   trunk: 0x7a5230,
   leaf: 0x6fbf3b,
   leafDark: 0x57a52c,

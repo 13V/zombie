@@ -39,20 +39,32 @@ export class Player {
   }
 
   private buildPrimitive() {
-    // Blocky voxel-style figure so the fallback matches the world's look.
+    // Blocky Kintara-style figure: boxy body, square head with two dot-eyes, hat.
     this.body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.6), voxelMaterial(COLORS.player));
     this.body.position.y = 0.85;
     this.body.castShadow = true;
     this.group.add(this.body);
 
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), voxelMaterial(COLORS.playerAccent));
-    head.position.y = 1.75;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.74, 0.74), voxelMaterial(COLORS.playerAccent));
+    head.position.y = 1.78;
     head.castShadow = true;
     this.group.add(head);
 
-    // a little muzzle/gun nub pointing forward (+Z) to read facing
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.7), voxelMaterial(0x3a2f25));
-    gun.position.set(0.3, 0.95, 0.55);
+    const eye = voxelMaterial(0x222222);
+    for (const dx of [-0.17, 0.17]) {
+      const e = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.18, 0.06), eye);
+      e.position.set(dx, 1.8, 0.39); // on the +Z (forward) face
+      this.group.add(e);
+    }
+
+    const hat = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.2, 0.82), voxelMaterial(0xf2c14e));
+    hat.position.y = 2.22;
+    hat.castShadow = true;
+    this.group.add(hat);
+
+    // muzzle/gun nub pointing forward (+Z) to read aim
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.7), voxelMaterial(0x3a2f25));
+    gun.position.set(0.32, 0.95, 0.55);
     this.group.add(gun);
   }
 

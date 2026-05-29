@@ -66,7 +66,8 @@ type State = "menu" | "playing" | "paused" | "over";
 class Game implements GameApi {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera: THREE.PerspectiveCamera;
+  private camera: THREE.OrthographicCamera;
+  private viewSize = 15; // half-height of the orthographic view, in world units
   private composer: EffectComposer;
   private clock = new THREE.Clock();
 
@@ -103,7 +104,11 @@ class Game implements GameApi {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    this.camera = new THREE.PerspectiveCamera(CAMERA.fov, innerWidth / innerHeight, 0.1, 1000);
+    // Orthographic = true isometric look (no perspective convergence), like both refs.
+    const aspect = innerWidth / innerHeight;
+    this.camera = new THREE.OrthographicCamera(
+      -this.viewSize * aspect, this.viewSize * aspect, this.viewSize, -this.viewSize, 0.1, 1000,
+    );
     this.camera.position.set(CAMERA.offset.x, CAMERA.offset.y, CAMERA.offset.z);
     this.camera.lookAt(0, 0, 0);
 
@@ -155,6 +160,8 @@ class Game implements GameApi {
   // ---- run lifecycle ----
   private resetRun() {
     this.player.reset();
+    this.player.pos.set(0, 0, 9); // start on the plaza, south of the fountain
+    this.player.group.position.copy(this.player.pos);
     this.bullets.clear();
     this.rounds.reset();
     this.points = SCORE.startingPoints;
@@ -371,7 +378,11 @@ class Game implements GameApi {
   }
 
   private onResize = () => {
-    this.camera.aspect = innerWidth / innerHeight;
+    const aspect = innerWidth / innerHeight;
+    this.camera.left = -this.viewSize * aspect;
+    this.camera.right = this.viewSize * aspect;
+    this.camera.top = this.viewSize;
+    this.camera.bottom = -this.viewSize;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(innerWidth, innerHeight);
     this.composer.setSize(innerWidth, innerHeight);

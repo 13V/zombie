@@ -32,23 +32,24 @@ wrapped around tense, greedy "one more round" survival.
 
 ---
 
-## 3. Art Direction — voxel "Tiny World"
+## 3. Art Direction — voxel isometric (a blend of Kintara × Tiny World)
 
-Reference: **Tiny Worlds** (@tinyworldsapp / @jasonkneen) and the Claude-made
-**"Tiny World Builder"** artifact. The look is **soft voxel art** — a floating
-island of beveled cubes in a bright sky — *not* rounded low-poly toys.
+References: **Kintara** (@PlayKintara — flat isometric tiled ground, cobblestone
+fountain plazas, blocky square-headed characters, MMO feel) and **Tiny World**
+(@tinyworldsapp / @jasonkneen, + the Claude-made **"Tiny World Builder"** artifact
+— thick soft-beveled voxels, blue sky, drifting clouds). Our look fuses them:
+**a flat voxel arena with a central fountain plaza, in a soft sky.**
 
 | Element        | Direction |
 | -------------- | --------- |
-| **Form**       | **Voxels.** Everything is built from soft, lightly-beveled cubes (`RoundedBoxGeometry`), instanced for performance. |
-| **World**      | A **floating island**: grass-topped blocks over dirt + a tapering stone underside, hovering in a soft-blue sky. |
-| **Block kit**  | Matches the builder's toolbar: **Grass · Path · Dirt · Water · House · Tree · Fence · Crop · Tuft** (+ stone underside, clouds). |
-| **Camera**     | 3/4 isometric, long lens (FOV ≈ 32°), smoothly following the player. |
-| **Palette**    | Vivid yellow-green grass, tan paths, brown dirt, blue water, colored voxel-house roofs (blue/red/purple), pink cherry trees. Bright + soft. |
-| **Lighting**   | Bright daylight: hemisphere + warm key with soft shadows, plus image-based ambient (env map) for the soft "expensive" glow. |
-| **Sky**        | Gradient blue dome with drifting low-poly puffy white clouds. |
-| **Post**       | Gentle bloom on emissive accents, **tilt-shift + vignette** for the miniature feel. |
-| **Animation**  | Walk wobble; death puff. Characters: KayKit GLBs (low-poly) sit on the voxel world; blocky-box fallback when no model is present. |
+| **Form**       | **Voxels.** Soft lightly-beveled cubes (`RoundedBoxGeometry`), instanced per color for performance. |
+| **World**      | A **flat tiled arena** (Kintara): grass + dirt paths radiating from a **cobblestone fountain plaza** at the center — the defensive core to circle while kiting. A thick dirt/stone slab underside floats in a soft sky (Tiny World). |
+| **Block kit**  | Grass · Path · Dirt · Cobble · Water · House · Tree · Fence · Crop · Tuft (+ stone underside, clouds, fountain). |
+| **Camera**     | **Orthographic** (true isometric, no perspective convergence), high 3/4 angle, smoothly following the player. |
+| **Characters** | Kintara-style: boxy body + **square head with two dot-eyes** (player has a hat). KayKit GLBs drop in when present; blocky-box fallback otherwise. |
+| **Palette**    | Saturated green grass, tan/dirt paths, gray cobble plaza, blue water + animated fountain spray, colored peaked house roofs (purple/dark/blue). |
+| **Lighting**   | Bright daylight: hemisphere + warm key with soft shadows + image-based ambient (env map) for the soft glow. |
+| **Sky / Post** | Gradient blue dome + drifting low-poly clouds; gentle bloom + **tilt-shift & vignette** for the miniature feel. |
 
 ---
 

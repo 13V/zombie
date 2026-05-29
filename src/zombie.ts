@@ -37,16 +37,23 @@ export class Zombie {
   }
 
   private buildPrimitive() {
-    // Blocky voxel-style undead to match the world.
+    // Blocky Kintara-style undead: boxy body, square head with two dark dot-eyes.
     this.body = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.0, 0.55), voxelMaterial(COLORS.zombie));
     this.body.position.y = 0.8;
     this.body.castShadow = true;
     this.group.add(this.body);
 
-    this.head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), voxelMaterial(COLORS.zombieDark));
-    this.head.position.y = 1.6;
+    this.head = new THREE.Mesh(new THREE.BoxGeometry(0.64, 0.64, 0.64), voxelMaterial(COLORS.zombieDark));
+    this.head.position.y = 1.62;
     this.head.castShadow = true;
     this.group.add(this.head);
+
+    const eye = voxelMaterial(0x141414);
+    for (const dx of [-0.15, 0.15]) {
+      const e = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.06), eye);
+      e.position.set(dx, 1.64, 0.34); // forward (+Z) face
+      this.group.add(e);
+    }
   }
 
   spawn(at: THREE.Vector3, health: number, speed: number) {
