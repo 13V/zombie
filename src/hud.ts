@@ -1,3 +1,5 @@
+import { ActiveGum } from "./powerups";
+
 /** DOM-based HUD + overlays. Cheap, crisp, and easy to restyle. */
 export class Hud {
   private root: HTMLElement;
@@ -8,6 +10,7 @@ export class Hud {
   private weaponAmmo!: HTMLElement;
   private promptEl!: HTMLElement;
   private toastEl!: HTMLElement;
+  private powerupsEl!: HTMLElement;
   private startOverlay!: HTMLElement;
   private overOverlay!: HTMLElement;
   private overStats!: HTMLElement;
@@ -25,6 +28,7 @@ export class Hud {
         <div class="pill round"><span class="label">Round</span><span class="value" id="hud-round">1</span></div>
         <div class="pill points"><span class="label">Points</span><span class="value" id="hud-points">0</span></div>
       </div>
+      <div class="powerups" id="hud-powerups"></div>
       <div class="hud-bottom">
         <div class="health"><div class="bar"><div class="fill" id="hud-health"></div></div></div>
         <div class="weapon">
@@ -38,9 +42,10 @@ export class Hud {
 
       <div class="overlay" id="overlay-start">
         <h1>TINY <span class="dead">DEAD</span></h1>
-        <p>A cozy little world. An impolite number of the undead — including
-           runners, hulking brutes, and bombers. Survive the rounds, spin the
-           Prize Wheel, and Pack-a-Punch your gun.</p>
+        <p>A cozy little world. Ten flavors of undead — from shamblers to
+           armored hulks and the Abomination. Clear rubble to open new buy
+           spots, spin the Prize Wheel for wild guns, chew Bubblegum for
+           power-ups, and Pack-a-Punch to go again.</p>
         <div class="controls">
           <span class="k">WASD</span><span>Move</span>
           <span class="k">Mouse</span><span>Aim</span>
@@ -67,6 +72,7 @@ export class Hud {
     this.weaponAmmo = this.q("#hud-ammo");
     this.promptEl = this.q("#prompt");
     this.toastEl = this.q("#toast");
+    this.powerupsEl = this.q("#hud-powerups");
     this.startOverlay = this.q("#overlay-start");
     this.overOverlay = this.q("#overlay-over");
     this.overStats = this.q("#over-stats");
@@ -95,6 +101,14 @@ export class Hud {
     const pct = Math.max(0, Math.min(1, hp / max));
     this.healthFill.style.width = `${pct * 100}%`;
     this.healthFill.classList.toggle("low", pct < 0.35);
+  }
+  setPowerups(list: ActiveGum[]) {
+    this.powerupsEl.innerHTML = list
+      .map((a) => {
+        const c = `#${a.def.color.toString(16).padStart(6, "0")}`;
+        return `<span class="gum" style="--gc:${c}">${a.def.short} <b>${Math.ceil(a.remaining)}s</b></span>`;
+      })
+      .join("");
   }
   setWeapon(name: string, ammo: number, reserve: string, reloading: boolean) {
     this.weaponName.textContent = name;

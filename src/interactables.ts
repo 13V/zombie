@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { COSTS } from "./config";
+import { COSTS, GUMS } from "./config";
 import { COLORS, glowMaterial, toyMaterial } from "./palette";
 import { WEAPONS } from "./weapons";
 
@@ -13,6 +13,8 @@ export interface GameApi {
   hasPerk(perk: "tough" | "quick"): boolean;
   /** Pack-a-Punch the currently equipped weapon. */
   upgradeCurrentWeapon(): void;
+  /** Dispense a random Gobblegum power-up. */
+  giveRandomGum(): void;
   toast(msg: string): void;
 }
 
@@ -201,6 +203,121 @@ class PackAPunch implements Interactable {
   }
 }
 
+/**
+ * Bubblegum machine — a gumball globe that dispenses a random COD-style
+ * power-up (Double Points, Insta-Kill, Rapid Fire, Sugar Rush, Full Pockets).
+ */
+class Bubblegum implements Interactable {
+  readonly group = new THREE.Group();
+  range = 2.5;
+  private globe: THREE.Mesh;
+  private t = 0;
+  constructor(public pos: THREE.Vector3, private cost: number) {
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 0.9, 16), toyMaterial(0xd23b3b));
+    base.position.set(pos.x, 0.45, pos.z);
+    base.castShadow = true;
+    this.group.add(base);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 0.25, 16), toyMaterial(0xf0c33a));
+    neck.position.set(pos.x, 0.95, pos.z);
+    this.group.add(neck);
+    // glass globe
+    this.globe = new THREE.Mesh(
+      new THREE.SphereGeometry(0.62, 18, 14),
+      new THREE.MeshStandardMaterial({ color: 0xeaf6ff, roughness: 0.1, metalness: 0, transparent: true, opacity: 0.35 }),
+    );
+    this.globe.position.set(pos.x, 1.65, pos.z);
+    this.group.add(this.globe);
+    // candy gumballs in the colors of the actual gums
+    for (let i = 0; i < 14; i++) {
+      const c = GUMS[i % GUMS.length].color;
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), glowMaterial(c, 0.6));
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.random() * 0.36;
+      ball.position.set(pos.x + Math.cos(a) * rr, 1.45 + Math.random() * 0.35, pos.z + Math.sin(a) * rr);
+      this.group.add(ball);
+    }
+    const light = new THREE.PointLight(0xff7ab0, 3, 6, 2);
+    light.position.set(pos.x, 1.7, pos.z + 0.4);
+    this.group.add(light);
+  }
+  prompt(game: GameApi) {
+    return { text: `[E] Bubblegum — ${this.cost}`, affordable: game.points >= this.cost };
+  }
+  interact(game: GameApi) {
+    if (game.spend(this.cost)) game.giveRandomGum();
+  }
+  update(dt: number) {
+    this.t += dt;
+    this.globe.rotation.y = this.t * 0.8;
+    this.globe.position.y = 1.65 + Math.sin(this.t * 2) * 0.03;
+  }
+}
+
+/**
+ * A buyable map spot: a rubble pile you clear with points to "unlock" the area,
+ * which reveals a wall-buy weapon stall behind it. Two-phase interactable.
+ */
+class DebrisGate implements Interactable {
+  readonly group = new THREE.Group();
+  range = 2.7;
+  private rubble = new THREE.Group();
+  private stall = new THREE.Group();
+  private cleared = false;
+  constructor(
+    public pos: THREE.Vector3,
+    private clearCost: number,
+    private weaponId: string,
+    private buyCost: number,
+  ) {
+    // rubble pile (blocks the spot until cleared)
+    for (let i = 0; i < 9; i++) {
+      const s = 0.5 + Math.random() * 0.5;
+      const rock = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), toyMaterial(i % 2 ? 0x8a8a80 : 0x6f6f66));
+      rock.position.set(pos.x + (Math.random() - 0.5) * 1.6, 0.2 + Math.random() * 0.7, pos.z + (Math.random() - 0.5) * 1.0);
+      rock.rotation.set(Math.random(), Math.random(), Math.random());
+      rock.castShadow = true;
+      this.rubble.add(rock);
+    }
+    const tape = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.12, 0.12), glowMaterial(0xffd24a, 0.8));
+    tape.position.set(pos.x, 1.0, pos.z + 0.2);
+    this.rubble.add(tape);
+    this.group.add(this.rubble);
+
+    // hidden weapon stall revealed after clearing
+    const def = WEAPONS[weaponId];
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(2, 1.3, 0.2), glowMaterial(COLORS.wallBuy, 0.5));
+    panel.position.set(pos.x, 1.6, pos.z);
+    this.stall.add(panel);
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.3, 0.3), toyMaterial(0x3a2f25));
+    gun.position.set(pos.x, 1.6, pos.z + 0.2);
+    this.stall.add(gun);
+    this.stall.visible = false;
+    this.group.add(this.stall);
+    this.def = def;
+  }
+  private def;
+  prompt(game: GameApi) {
+    if (!this.cleared) {
+      return { text: `[E] Clear rubble — ${this.clearCost}`, affordable: game.points >= this.clearCost };
+    }
+    return { text: `[E] Buy ${this.def.name} — ${this.buyCost}`, affordable: game.points >= this.buyCost };
+  }
+  interact(game: GameApi) {
+    if (!this.cleared) {
+      if (game.spend(this.clearCost)) {
+        this.cleared = true;
+        this.rubble.visible = false;
+        this.stall.visible = true;
+        game.toast("Area unlocked!");
+      }
+    } else if (game.spend(this.buyCost)) {
+      game.giveWeapon(this.weaponId);
+      game.toast(`${this.def.name}!`);
+    }
+  }
+  update() {}
+}
+
 class PerkPad implements Interactable {
   readonly group = new THREE.Group();
   range = 2.4;
@@ -255,18 +372,25 @@ export class Interactables {
     const wall = new WallBuy(new THREE.Vector3(0, 0, -half + 1.5), "buzzgun", COSTS.wallBuy);
     const wheel = new PrizeWheel(new THREE.Vector3(half - 6, 0, half - 6), COSTS.mysteryBox);
     const pap = new PackAPunch(new THREE.Vector3(-half + 6, 0, half - 6), COSTS.packAPunch);
+    const gum = new Bubblegum(new THREE.Vector3(5, 0, 9), COSTS.gobblegum);
     const tough = new PerkPad(
       new THREE.Vector3(-half + 6, 0, -half + 6), "tough", COSTS.perkTough, "Tough (+HP)", COLORS.perkTough,
     );
     const quick = new PerkPad(
       new THREE.Vector3(half - 6, 0, -half + 6), "quick", COSTS.perkQuick, "Quick (speed+reload)", COLORS.perkQuick,
     );
+    // buyable map spots: clear rubble to reveal a wall-buy weapon stall
+    const gateW = new DebrisGate(new THREE.Vector3(-half + 3, 0, 0), COSTS.debris, "boomstick", COSTS.wallBuy + 500);
+    const gateE = new DebrisGate(new THREE.Vector3(half - 3, 0, 0), COSTS.debris, "marksman", COSTS.wallBuy + 1500);
 
     items.push({ i: wall, group: wall.group });
     items.push({ i: wheel, group: wheel.group });
     items.push({ i: pap, group: pap.group });
+    items.push({ i: gum, group: gum.group });
     items.push({ i: tough, group: tough.group });
     items.push({ i: quick, group: quick.group });
+    items.push({ i: gateW, group: gateW.group });
+    items.push({ i: gateE, group: gateE.group });
 
     for (const { i, group } of items) {
       this.list.push(i);

@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { ROUNDS, SPECIALS, ZOMBIE } from "./config";
-import { Zombie, SpecialDef } from "./zombie";
+import { ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
+import { Zombie } from "./zombie";
 import { Arena } from "./arena";
 import { AssetManager } from "./assets";
 
@@ -48,19 +48,22 @@ export class RoundManager {
     this.onRoundStart?.(n);
   }
 
-  /** Roll for a special variant eligible at the current round, else normal. */
-  private pickSpecial(): SpecialDef | null {
-    const eligible: SpecialDef[] = [];
-    for (const s of Object.values(SPECIALS)) {
-      if (this.round >= s.from) eligible.push(s as SpecialDef);
-    }
+  /**
+   * Pick a zombie type eligible at the current round. Tougher tiers unlock
+   * later and consume their weight slice; the basic Shambler (index 0) fills
+   * whatever probability is left.
+   */
+  private pickType(): ZombieType {
     let r = Math.random();
-    for (const s of eligible) {
-      const w = (s as unknown as { weight: number }).weight;
-      if (r < w) return s;
-      r -= w;
+    // iterate strongest → weakest so the deadliest eligible tier absorbs the
+    // tail once later-round weights sum past 1.
+    for (let i = ZOMBIE_TYPES.length - 1; i >= 1; i--) {
+      const t = ZOMBIE_TYPES[i];
+      if (this.round < t.from) continue;
+      if (r < t.weight) return t;
+      r -= t.weight;
     }
-    return null;
+    return ZOMBIE_TYPES[0];
   }
 
   private spawnOne(arena: Arena) {
@@ -72,7 +75,7 @@ export class RoundManager {
       this.zombies.push(z);
     }
     arena.randomEdgePoint(this.edge);
-    z.spawn(this.edge, this.curHealth, this.curSpeed, this.pickSpecial());
+    z.spawn(this.edge, this.curHealth, this.curSpeed, this.pickType());
     this.toSpawn--;
   }
 

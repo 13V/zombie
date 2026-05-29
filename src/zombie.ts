@@ -1,23 +1,10 @@
 import * as THREE from "three";
-import { ZOMBIE } from "./config";
-import { COLORS } from "./palette";
+import { ZOMBIE, ZombieType } from "./config";
 import { AssetManager, CharacterRig } from "./assets";
 import { VoxelChar } from "./voxelChar";
 
 const _tmp = new THREE.Vector3();
-
-/** Stat/visual overrides for a special variant; `null` = ordinary zombie. */
-export interface SpecialDef {
-  healthMul: number;
-  speedMul: number;
-  scale: number;
-  touchDamage: number;
-  scoreMul: number;
-  body: number;
-  head: number;
-  blastRadius?: number;
-  blastDamage?: number;
-}
+let _nextId = 1;
 
 /**
  * A cute-menacing undead, driven by a CharacterRig (voxel blocky by default, or
@@ -26,10 +13,13 @@ export interface SpecialDef {
  * before being recycled.
  */
 export class Zombie {
+  /** Stable id for the frame's hit bookkeeping (piercing bullets). */
+  readonly id = _nextId++;
   readonly group = new THREE.Group();
   readonly pos = new THREE.Vector3();
   readonly vel = new THREE.Vector3();
 
+  typeName = "Shambler";
   health = ZOMBIE.baseHealth;
   speed = ZOMBIE.baseSpeed;
   alive = false;
@@ -41,7 +31,7 @@ export class Zombie {
   // per-spawn variant state
   touchDamage = ZOMBIE.touchDamage;
   scoreMul = 1;
-  puffColor = COLORS.zombie;
+  puffColor = 0x8fcf6f;
   explodes = false;
   blastRadius = 0;
   blastDamage = 0;
@@ -51,12 +41,12 @@ export class Zombie {
   constructor(assets: AssetManager) {
     this.char =
       assets.createCharacter("zombie") ??
-      new VoxelChar({ body: COLORS.zombie, head: COLORS.zombieDark, eye: 0x141414, zombie: true });
+      new VoxelChar({ body: 0x8fcf6f, head: 0x5f9d4a, eye: 0x141414, zombie: true });
     this.group.add(this.char.root);
     this.group.visible = false;
   }
 
-  spawn(at: THREE.Vector3, baseHealth: number, baseSpeed: number, special: SpecialDef | null) {
+  spawn(at: THREE.Vector3, baseHealth: number, baseSpeed: number, type: ZombieType) {
     this.pos.copy(at);
     this.pos.y = 0;
     this.alive = true;
@@ -64,30 +54,18 @@ export class Zombie {
     this.deathTimer = 0;
     this.touchCooldown = 0;
 
-    if (special) {
-      this.health = baseHealth * special.healthMul;
-      this.speed = baseSpeed * special.speedMul;
-      this.touchDamage = special.touchDamage;
-      this.scoreMul = special.scoreMul;
-      this.puffColor = special.body;
-      this.explodes = special.blastRadius !== undefined;
-      this.blastRadius = special.blastRadius ?? 0;
-      this.blastDamage = special.blastDamage ?? 0;
-      this.group.scale.setScalar(special.scale);
-      if (this.char instanceof VoxelChar) {
-        this.char.setColor(special.body, special.head, this.explodes ? special.body : 0x000000);
-      }
-    } else {
-      this.health = baseHealth;
-      this.speed = baseSpeed;
-      this.touchDamage = ZOMBIE.touchDamage;
-      this.scoreMul = 1;
-      this.puffColor = COLORS.zombie;
-      this.explodes = false;
-      this.blastRadius = 0;
-      this.blastDamage = 0;
-      this.group.scale.setScalar(1);
-      if (this.char instanceof VoxelChar) this.char.setColor(COLORS.zombie, COLORS.zombieDark);
+    this.typeName = type.name;
+    this.health = baseHealth * type.healthMul;
+    this.speed = baseSpeed * type.speedMul;
+    this.touchDamage = type.touchDamage;
+    this.scoreMul = type.scoreMul;
+    this.puffColor = type.body;
+    this.explodes = type.blastRadius !== undefined;
+    this.blastRadius = type.blastRadius ?? 0;
+    this.blastDamage = type.blastDamage ?? 0;
+    this.group.scale.setScalar(type.scale);
+    if (this.char instanceof VoxelChar) {
+      this.char.setColor(type.body, type.head, this.explodes ? type.body : 0x000000);
     }
 
     this.group.rotation.set(0, 0, 0);

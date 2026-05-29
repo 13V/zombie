@@ -13,10 +13,11 @@ import { Arena } from "./arena";
 import { Player } from "./player";
 import { RoundManager } from "./rounds";
 import { Zombie } from "./zombie";
-import { BulletSystem, Weapon, WEAPONS, BOX_POOL } from "./weapons";
+import { BulletSystem, Weapon, WEAPONS, BOX_POOL, WONDER_POOL } from "./weapons";
 import { Interactables, GameApi } from "./interactables";
 import { Hud } from "./hud";
 import { AssetManager } from "./assets";
+import { Powerups } from "./powerups";
 import { TiltShift } from "./tiltShift";
 
 /** Tiny pooled "poof" particles for kill feedback. */
@@ -85,6 +86,7 @@ class Game implements GameApi {
   private weapons: Weapon[] = [];
   private activeSlot = 0;
   private perks = new Set<"tough" | "quick">();
+  private powerups = new Powerups();
   private state: State = "menu";
 
   private tilt: TiltShift;
@@ -169,6 +171,8 @@ class Game implements GameApi {
     this.weapons = [new Weapon(WEAPONS.peashooter)];
     this.activeSlot = 0;
     this.perks.clear();
+    this.powerups.clear();
+    this.hud.setPowerups([]);
     this.shake = 0;
     this.hud.setPoints(this.points);
     this.hud.setRound(1);
@@ -223,6 +227,8 @@ class Game implements GameApi {
     this.syncWeaponHud();
   }
   randomBoxWeapon(): string {
+    // ~12% of pulls are a wonder weapon; the rest are normal guns.
+    if (Math.random() < 0.12) return WONDER_POOL[Math.floor(Math.random() * WONDER_POOL.length)];
     return BOX_POOL[Math.floor(Math.random() * BOX_POOL.length)];
   }
   grantPerk(perk: "tough" | "quick") {
@@ -248,6 +254,16 @@ class Game implements GameApi {
     w.upgrade();
     this.syncWeaponHud();
     this.hud.toast(`${w.def.name}!`);
+  }
+  giveRandomGum() {
+    const id = this.powerups.randomId();
+    const def = this.powerups.grant(id);
+    if (!def) return;
+    if (id === "fullPockets") {
+      for (const w of this.weapons) w.refill();
+      this.syncWeaponHud();
+    }
+    this.hud.toast(`${def.name}!`);
   }
   toast(msg: string) {
     this.hud.toast(msg);
@@ -286,6 +302,10 @@ class Game implements GameApi {
   };
 
   private simulate(dt: number) {
+    this.powerups.update(dt);
+    // Sugar Rush stacks on the Quick perk for movement speed.
+    this.player.speedMul = (this.perks.has("quick") ? 1.35 : 1) * this.powerups.speedMul();
+
     const axis = this.input.moveAxis(new THREE.Vector2());
     // Camera looks down the -Z axis, so W (axis.y +1) moves toward -Z.
     this.player.update(dt, axis.x, -axis.y, this.input.aimPoint);
@@ -297,7 +317,7 @@ class Game implements GameApi {
     const w = this.weapon;
     w.update(dt, this.player.reloadMul);
     const wantFire = w.def.auto ? this.input.firing : this.input.clicked();
-    if (wantFire) w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets);
+    if (wantFire) w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, this.powerups.fireRateMul());
     if (this.input.pressed("KeyR")) w.reload();
     if (this.input.pressed("KeyQ") && this.weapons.length > 1) {
       this.activeSlot = (this.activeSlot + 1) % this.weapons.length;
@@ -326,31 +346,58 @@ class Game implements GameApi {
     }
 
     this.hud.setHealth(this.player.health, this.player.maxHealth);
+    this.hud.setPowerups(this.powerups.list());
     this.syncWeaponHud();
   }
 
   private resolveBulletHits() {
-    const hitR = ZOMBIE.radius + 0.25;
-    const hitR2 = hitR * hitR;
+    const dmgMul = this.powerups.damageMul();
+    const sMul = this.powerups.scoreMul();
     for (const b of this.bullets.bullets) {
       if (!b.alive) continue;
       for (const z of this.rounds.zombies) {
-        if (!z.alive) continue;
+        if (!z.alive || b.hit.has(z.id)) continue;
+        const hitR = ZOMBIE.radius * z.group.scale.x + 0.25;
         const dx = z.pos.x - b.mesh.position.x;
         const dz = z.pos.z - b.mesh.position.z;
         const dy = 1 - b.mesh.position.y; // bullets fly ~y=1, zombie body center ~1
-        if (dx * dx + dz * dz + dy * dy < hitR2) {
-          const killed = z.hit(b.damage);
-          this.bullets.retire(b);
-          this.addPoints(SCORE.hit);
-          if (killed) {
-            this.addPoints(Math.round(SCORE.kill * z.scoreMul));
-            this.puffs.burst(z.pos, z.puffColor);
-            if (z.explodes) this.detonate(z);
+        if (dx * dx + dz * dz + dy * dy < hitR * hitR) {
+          b.hit.add(z.id);
+          this.addPoints(Math.round(SCORE.hit * sMul));
+          this.damageZombie(z, b.damage * dmgMul, sMul);
+          if (b.splashRadius > 0) {
+            this.puffs.burst(z.pos, 0xffd0a0, 6);
+            this.splash(z.pos, b.splashRadius, b.splashDamage * dmgMul, z.id, sMul);
           }
-          break;
+          // piercing rounds keep flying; everything else stops on first contact
+          if (b.pierce > 0) b.pierce--;
+          else {
+            this.bullets.retire(b);
+            break;
+          }
         }
       }
+    }
+  }
+
+  /** Apply damage to one zombie and handle the score/FX if it dies. */
+  private damageZombie(z: Zombie, dmg: number, scoreMul: number) {
+    const killed = z.hit(dmg);
+    if (killed) {
+      this.addPoints(Math.round(SCORE.kill * z.scoreMul * scoreMul));
+      this.puffs.burst(z.pos, z.puffColor);
+      if (z.explodes) this.detonate(z);
+    }
+  }
+
+  /** AoE damage to every zombie in range (except the one already hit directly). */
+  private splash(center: THREE.Vector3, radius: number, dmg: number, exceptId: number, scoreMul: number) {
+    const r2 = radius * radius;
+    for (const z of this.rounds.zombies) {
+      if (!z.alive || z.id === exceptId) continue;
+      const dx = z.pos.x - center.x;
+      const dz = z.pos.z - center.z;
+      if (dx * dx + dz * dz < r2) this.damageZombie(z, dmg, scoreMul);
     }
   }
 

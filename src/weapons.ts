@@ -18,6 +18,17 @@ export interface WeaponDef {
   /** Hold-to-fire vs click-per-shot. */
   auto: boolean;
   reloadTime: number;
+  // ---- wonder-weapon extras (all optional) ----
+  /** Zombies a single shot can punch through before dying. */
+  pierce?: number;
+  /** AoE applied at each impact point. */
+  splashRadius?: number;
+  splashDamage?: number;
+  /** Tracer tint + size. */
+  bulletColor?: number;
+  bulletScale?: number;
+  /** Flagged for HUD / box flavor. */
+  wonder?: boolean;
 }
 
 export const WEAPONS: Record<string, WeaponDef> = {
@@ -46,10 +57,46 @@ export const WEAPONS: Record<string, WeaponDef> = {
     magSize: 5, reserve: 40, pellets: 1, spread: 0.0,
     bulletSpeed: 90, auto: false, reloadTime: 1.8,
   },
+
+  // ---- wonder weapons: rare, spectacular, but finite ammo so they can't
+  // carry you to round 100 on their own. ----
+  arc: {
+    id: "arc", name: "Arc Cannon", damage: 110, fireRate: 6,
+    magSize: 40, reserve: 240, pellets: 1, spread: 0.03,
+    bulletSpeed: 82, auto: true, reloadTime: 1.8,
+    pierce: 6, splashRadius: 2.2, splashDamage: 55,
+    bulletColor: 0x6ad7ff, bulletScale: 1.4, wonder: true,
+  },
+  singularity: {
+    id: "singularity", name: "Singularity", damage: 180, fireRate: 1.4,
+    magSize: 5, reserve: 30, pellets: 1, spread: 0.0,
+    bulletSpeed: 44, auto: false, reloadTime: 2.4,
+    splashRadius: 4.6, splashDamage: 240,
+    bulletColor: 0xc792ea, bulletScale: 2.2, wonder: true,
+  },
+  pyroclasm: {
+    id: "pyroclasm", name: "Pyroclasm", damage: 55, fireRate: 9,
+    magSize: 64, reserve: 384, pellets: 1, spread: 0.06,
+    bulletSpeed: 64, auto: true, reloadTime: 2.0,
+    pierce: 1, splashRadius: 1.8, splashDamage: 42,
+    bulletColor: 0xff7a3a, bulletScale: 1.3, wonder: true,
+  },
 };
 
-/** Pool of weapons the Mystery Box can hand out. */
+/** Normal weapons the Prize Wheel can hand out. */
 export const BOX_POOL = ["buzzgun", "scattershot", "boomstick", "marksman"];
+/** The crazy ones — rolled rarely by the wheel. */
+export const WONDER_POOL = ["arc", "singularity", "pyroclasm"];
+
+export interface SpawnOpts {
+  speed: number;
+  damage: number;
+  pierce: number;
+  splashRadius: number;
+  splashDamage: number;
+  color: number;
+  scale: number;
+}
 
 export interface Bullet {
   mesh: THREE.Mesh;
@@ -57,30 +104,52 @@ export interface Bullet {
   life: number;
   damage: number;
   alive: boolean;
+  pierce: number;
+  splashRadius: number;
+  splashDamage: number;
+  /** Zombie ids already struck (so a piercing round won't re-hit one). */
+  hit: Set<number>;
 }
+
+const _UP = new THREE.Vector3(0, 1, 0);
+const _dir = new THREE.Vector3();
 
 /** Spawns, moves, recycles bullet meshes. Collision is resolved by the caller. */
 export class BulletSystem {
   readonly bullets: Bullet[] = [];
   private pool: Bullet[] = [];
-  private geo = new THREE.SphereGeometry(0.16, 8, 8);
-  private mat = glowMaterial(COLORS.bullet, 1.6);
+  // A stretched capsule reads as a whizzing tracer once aligned to velocity.
+  private geo = new THREE.CapsuleGeometry(0.07, 0.5, 4, 8);
 
   constructor(private scene: THREE.Scene) {}
 
-  spawn(origin: THREE.Vector3, dir: THREE.Vector3, speed: number, damage: number) {
+  spawn(origin: THREE.Vector3, dir: THREE.Vector3, opts: SpawnOpts) {
     let b = this.pool.pop();
     if (!b) {
-      const mesh = new THREE.Mesh(this.geo, this.mat);
+      const mesh = new THREE.Mesh(this.geo, glowMaterial(opts.color, 1.8));
       mesh.castShadow = false;
-      b = { mesh, vel: new THREE.Vector3(), life: 0, damage: 0, alive: false };
+      b = {
+        mesh, vel: new THREE.Vector3(), life: 0, damage: 0, alive: false,
+        pierce: 0, splashRadius: 0, splashDamage: 0, hit: new Set<number>(),
+      };
     }
+    const mat = b.mesh.material as THREE.MeshStandardMaterial;
+    mat.color.set(opts.color);
+    mat.emissive.set(opts.color);
+
     b.mesh.position.copy(origin);
-    b.vel.copy(dir).normalize().multiplyScalar(speed);
+    b.vel.copy(dir).normalize().multiplyScalar(opts.speed);
     b.life = 1.3;
-    b.damage = damage;
+    b.damage = opts.damage;
+    b.pierce = opts.pierce;
+    b.splashRadius = opts.splashRadius;
+    b.splashDamage = opts.splashDamage;
+    b.hit.clear();
     b.alive = true;
     b.mesh.visible = true;
+    b.mesh.scale.set(opts.scale, opts.scale * 1.4, opts.scale);
+    // Orient the capsule's long (Y) axis along the flight direction.
+    b.mesh.quaternion.setFromUnitVectors(_UP, _dir.copy(b.vel).normalize());
     this.scene.add(b.mesh);
     this.bullets.push(b);
   }
@@ -100,7 +169,6 @@ export class BulletSystem {
       b.life -= dt;
       if (b.life <= 0) this.retire(b);
     }
-    // Compact the live list.
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       if (!this.bullets[i].alive) this.bullets.splice(i, 1);
     }
@@ -146,6 +214,7 @@ export class Weapon {
       magSize: Math.ceil(d.magSize * 1.4),
       reserve: d.reserve === Infinity ? Infinity : Math.ceil(d.reserve * 1.5),
       reloadTime: d.reloadTime * 0.85,
+      splashDamage: d.splashDamage ? Math.round(d.splashDamage * 2) : d.splashDamage,
     };
     this.ammo = this.def.magSize;
     if (this.reserve !== Infinity) this.reserve = this.def.reserve;
@@ -176,21 +245,39 @@ export class Weapon {
     this.reloadTimer = this.def.reloadTime;
   }
 
+  /** Refill mag + reserve to factory spec (Full Pockets gum). */
+  refill() {
+    this.ammo = this.def.magSize;
+    this.reserve = this.def.reserve;
+    this.reloading = false;
+  }
+
   /** Attempt to fire toward `dir`; spawns bullets and returns true if it shot. */
-  tryFire(origin: THREE.Vector3, dir: THREE.Vector3, bullets: BulletSystem): boolean {
+  tryFire(origin: THREE.Vector3, dir: THREE.Vector3, bullets: BulletSystem, fireRateMul = 1): boolean {
     if (this.cooldown > 0 || this.reloading) return false;
     if (this.ammo <= 0) {
       this.reload();
       return false;
     }
     this.ammo--;
-    this.cooldown = 1 / this.def.fireRate;
+    this.cooldown = 1 / (this.def.fireRate * fireRateMul);
+
+    const d = this.def;
+    const opts: SpawnOpts = {
+      speed: d.bulletSpeed,
+      damage: d.damage,
+      pierce: d.pierce ?? 0,
+      splashRadius: d.splashRadius ?? 0,
+      splashDamage: d.splashDamage ?? 0,
+      color: d.bulletColor ?? COLORS.bullet,
+      scale: d.bulletScale ?? 1,
+    };
 
     const base = new THREE.Vector3(dir.x, 0, dir.z).normalize();
-    for (let p = 0; p < this.def.pellets; p++) {
-      const a = (Math.random() * 2 - 1) * this.def.spread;
-      const d = base.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), a);
-      bullets.spawn(origin, d, this.def.bulletSpeed, this.def.damage);
+    for (let p = 0; p < d.pellets; p++) {
+      const a = (Math.random() * 2 - 1) * d.spread;
+      const dd = base.clone().applyAxisAngle(_UP, a);
+      bullets.spawn(origin, dd, opts);
     }
     if (this.ammo <= 0) this.reload();
     return true;

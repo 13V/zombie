@@ -53,6 +53,28 @@ html, body {
 .pill.points .value { color: var(--gold); }
 .pill.round .value { color: #ffd9a0; }
 
+.powerups {
+  position: absolute;
+  top: 66px; left: 0; right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.gum {
+  background: color-mix(in srgb, var(--gc) 28%, rgba(20, 16, 12, 0.82));
+  border: 2px solid var(--gc);
+  color: #fff;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--gc) 60%, transparent);
+}
+.gum b { color: var(--gc); }
+
 .hud-bottom {
   position: absolute;
   bottom: 22px; left: 0; right: 0;
