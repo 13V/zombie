@@ -33,6 +33,8 @@ export class VoxelChar implements CharacterRig {
   private deathTilt = (Math.random() - 0.5) * 0.6;
   private gait: number;
   private reach: number;
+  private bodyMat: THREE.MeshStandardMaterial;
+  private headMat: THREE.MeshStandardMaterial;
 
   constructor(opts: VoxelCharOpts) {
     this.gait = opts.zombie ? 6 : 10;
@@ -40,6 +42,8 @@ export class VoxelChar implements CharacterRig {
 
     const bodyMat = voxelMaterial(opts.body);
     const headMat = voxelMaterial(opts.head);
+    this.bodyMat = bodyMat;
+    this.headMat = headMat;
 
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.9, 0.5), bodyMat);
     torso.position.y = 1.05;
@@ -103,6 +107,14 @@ export class VoxelChar implements CharacterRig {
 
   hasAnim(): boolean {
     return true; // all states are procedural
+  }
+
+  /** Recolor body/head (used to turn a pooled zombie into a special variant). */
+  setColor(body: number, head: number, emissive = 0x000000) {
+    this.bodyMat.color.set(body);
+    this.bodyMat.emissive.set(emissive);
+    this.bodyMat.emissiveIntensity = emissive === 0x000000 ? 1 : 0.5;
+    this.headMat.color.set(head);
   }
 
   play(state: AnimState, _opts: { once?: boolean } = {}) {

@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { ROUNDS, ZOMBIE } from "./config";
-import { Zombie } from "./zombie";
+import { ROUNDS, SPECIALS, ZOMBIE } from "./config";
+import { Zombie, SpecialDef } from "./zombie";
 import { Arena } from "./arena";
 import { AssetManager } from "./assets";
 
@@ -48,6 +48,21 @@ export class RoundManager {
     this.onRoundStart?.(n);
   }
 
+  /** Roll for a special variant eligible at the current round, else normal. */
+  private pickSpecial(): SpecialDef | null {
+    const eligible: SpecialDef[] = [];
+    for (const s of Object.values(SPECIALS)) {
+      if (this.round >= s.from) eligible.push(s as SpecialDef);
+    }
+    let r = Math.random();
+    for (const s of eligible) {
+      const w = (s as unknown as { weight: number }).weight;
+      if (r < w) return s;
+      r -= w;
+    }
+    return null;
+  }
+
   private spawnOne(arena: Arena) {
     // Prefer a fully-idle zombie; avoid snatching one mid death-animation.
     let z = this.zombies.find((q) => !q.alive && !q.dying) ?? this.zombies.find((q) => !q.alive);
@@ -57,7 +72,7 @@ export class RoundManager {
       this.zombies.push(z);
     }
     arena.randomEdgePoint(this.edge);
-    z.spawn(this.edge, this.curHealth, this.curSpeed);
+    z.spawn(this.edge, this.curHealth, this.curSpeed, this.pickSpecial());
     this.toSpawn--;
   }
 

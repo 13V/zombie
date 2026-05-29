@@ -58,4 +58,27 @@ export const COSTS = {
   mysteryBox: 950,
   perkTough: 2500,
   perkQuick: 2000,
+  packAPunch: 2500,
 };
+
+/**
+ * Special zombie variants (COD-style). Multipliers stack on the round's base
+ * health/speed. `from` is the earliest round each can appear; `weight` is its
+ * relative spawn chance once eligible (normal zombies fill the rest).
+ */
+export const SPECIALS = {
+  runner: {
+    from: 4, weight: 0.22, healthMul: 0.6, speedMul: 1.9, scale: 0.82,
+    touchDamage: 9, scoreMul: 1, body: 0xe8923a, head: 0xc9701f,
+  },
+  brute: {
+    from: 6, weight: 0.16, healthMul: 4.0, speedMul: 0.7, scale: 1.55,
+    touchDamage: 26, scoreMul: 3, body: 0xc0452f, head: 0x8f2f1f,
+  },
+  bomber: {
+    from: 8, weight: 0.14, healthMul: 0.9, speedMul: 1.15, scale: 0.95,
+    touchDamage: 12, scoreMul: 2, body: 0x9b6ad6, head: 0x6e4a9e,
+    /** On death: AoE that hurts the player if close. */
+    blastRadius: 3.6, blastDamage: 34,
+  },
+} as const;

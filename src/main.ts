@@ -6,12 +6,13 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, PLAYER, SCORE, ZOMBIE } from "./config";
-import { COLORS, glowMaterial } from "./palette";
+import { CAMERA, COSTS, PLAYER, SCORE, ZOMBIE } from "./config";
+import { glowMaterial } from "./palette";
 import { Input } from "./input";
 import { Arena } from "./arena";
 import { Player } from "./player";
 import { RoundManager } from "./rounds";
+import { Zombie } from "./zombie";
 import { BulletSystem, Weapon, WEAPONS, BOX_POOL } from "./weapons";
 import { Interactables, GameApi } from "./interactables";
 import { Hud } from "./hud";
@@ -237,6 +238,17 @@ class Game implements GameApi {
   hasPerk(perk: "tough" | "quick"): boolean {
     return this.perks.has(perk);
   }
+  upgradeCurrentWeapon() {
+    const w = this.weapon;
+    if (w.upgraded) {
+      this.hud.toast("Already Pack-a-Punched");
+      return;
+    }
+    if (!this.spend(COSTS.packAPunch)) return;
+    w.upgrade();
+    this.syncWeaponHud();
+    this.hud.toast(`${w.def.name}!`);
+  }
   toast(msg: string) {
     this.hud.toast(msg);
   }
@@ -332,8 +344,9 @@ class Game implements GameApi {
           this.bullets.retire(b);
           this.addPoints(SCORE.hit);
           if (killed) {
-            this.addPoints(SCORE.kill);
-            this.puffs.burst(z.pos, COLORS.zombie);
+            this.addPoints(Math.round(SCORE.kill * z.scoreMul));
+            this.puffs.burst(z.pos, z.puffColor);
+            if (z.explodes) this.detonate(z);
           }
           break;
         }
@@ -343,20 +356,32 @@ class Game implements GameApi {
 
   private resolveZombieTouch(dt: number) {
     const r = ZOMBIE.radius + PLAYER.radius;
-    const r2 = r * r;
     for (const z of this.rounds.zombies) {
       if (!z.alive) continue;
       if (z.touchCooldown > 0) {
         z.touchCooldown -= dt;
         continue;
       }
+      // bigger variants (brutes) reach a little farther
+      const reach = r * z.group.scale.x;
       const dx = z.pos.x - this.player.pos.x;
       const dz = z.pos.z - this.player.pos.z;
-      if (dx * dx + dz * dz < r2) {
-        this.player.damage(ZOMBIE.touchDamage);
+      if (dx * dx + dz * dz < reach * reach) {
+        this.player.damage(z.touchDamage);
         z.touchCooldown = ZOMBIE.touchInterval;
         this.shake = Math.min(0.5, this.shake + 0.25);
       }
+    }
+  }
+
+  /** Bomber death: orange burst + AoE damage if the player is in range. */
+  private detonate(z: Zombie) {
+    this.puffs.burst(z.pos, 0xff7a3a, 20);
+    const dx = this.player.pos.x - z.pos.x;
+    const dz = this.player.pos.z - z.pos.z;
+    if (dx * dx + dz * dz < z.blastRadius * z.blastRadius) {
+      this.player.damage(z.blastDamage);
+      this.shake = Math.min(0.7, this.shake + 0.4);
     }
   }
 

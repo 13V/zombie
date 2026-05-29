@@ -38,8 +38,9 @@ export class Hud {
 
       <div class="overlay" id="overlay-start">
         <h1>TINY <span class="dead">DEAD</span></h1>
-        <p>A cozy little world. An impolite number of the undead. Survive the rounds,
-           bank your points, and gamble them on the Mystery Box.</p>
+        <p>A cozy little world. An impolite number of the undead — including
+           runners, hulking brutes, and bombers. Survive the rounds, spin the
+           Prize Wheel, and Pack-a-Punch your gun.</p>
         <div class="controls">
           <span class="k">WASD</span><span>Move</span>
           <span class="k">Mouse</span><span>Aim</span>

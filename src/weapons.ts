@@ -120,6 +120,7 @@ export class Weapon {
   private cooldown = 0;
   reloading = false;
   reloadTimer = 0;
+  upgraded = false;
 
   constructor(def: WeaponDef) {
     this.def = def;
@@ -129,6 +130,27 @@ export class Weapon {
 
   get reserveLabel(): string {
     return this.reserve === Infinity ? "∞" : String(this.reserve);
+  }
+
+  /**
+   * Pack-a-Punch: replace this instance's def with a beefed-up clone (we clone
+   * so the shared WEAPONS template is never mutated). Refills on upgrade.
+   */
+  upgrade(): boolean {
+    if (this.upgraded) return false;
+    const d = this.def;
+    this.def = {
+      ...d,
+      name: `${d.name} +`,
+      damage: Math.round(d.damage * 2.4),
+      magSize: Math.ceil(d.magSize * 1.4),
+      reserve: d.reserve === Infinity ? Infinity : Math.ceil(d.reserve * 1.5),
+      reloadTime: d.reloadTime * 0.85,
+    };
+    this.ammo = this.def.magSize;
+    if (this.reserve !== Infinity) this.reserve = this.def.reserve;
+    this.upgraded = true;
+    return true;
   }
 
   update(dt: number, reloadMul: number) {
