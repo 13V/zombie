@@ -1,18 +1,18 @@
 // Central tuning knobs for gameplay + look. Tweak here, not in the systems.
 
 export const WORLD = {
-  /** Half-extent of the playable square arena (world units from center to wall). */
-  half: 24,
-  fogColor: 0xf3e9d6,
-  fogNear: 38,
-  fogFar: 96,
-  groundColor: 0xd9c9a3,
+  /** Half-extent of the playable island (in voxels / world units from center). */
+  half: 20,
+  // Distant haze the color of the sky horizon, so far clouds fade softly.
+  fogColor: 0xd9eeff,
+  fogNear: 70,
+  fogFar: 150,
 };
 
 export const CAMERA = {
-  fov: 34, // long lens => flat, miniature/diorama feel
-  // Offset from the player (high + behind). Tuned for the iso-ish toy look.
-  offset: { x: 0, y: 30, z: 22 },
+  fov: 32, // long lens => flat, miniature/diorama feel
+  // Offset from the player: high + behind, ~38° elevation for a 3/4 iso look.
+  offset: { x: 0, y: 24, z: 30 },
   follow: 6, // higher = snappier follow
 };
 

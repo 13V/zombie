@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { ZOMBIE } from "./config";
-import { COLORS, toyMaterial } from "./palette";
+import { COLORS, voxelMaterial } from "./palette";
 import { AssetManager, Character } from "./assets";
 
 const _tmp = new THREE.Vector3();
@@ -37,19 +37,14 @@ export class Zombie {
   }
 
   private buildPrimitive() {
-    this.body = new THREE.Mesh(
-      new THREE.CapsuleGeometry(ZOMBIE.radius, 0.6, 4, 10),
-      toyMaterial(COLORS.zombie),
-    );
-    this.body.position.y = 0.85;
+    // Blocky voxel-style undead to match the world.
+    this.body = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.0, 0.55), voxelMaterial(COLORS.zombie));
+    this.body.position.y = 0.8;
     this.body.castShadow = true;
     this.group.add(this.body);
 
-    this.head = new THREE.Mesh(
-      new THREE.SphereGeometry(ZOMBIE.radius * 0.65, 10, 8),
-      toyMaterial(COLORS.zombieDark),
-    );
-    this.head.position.y = 1.45;
+    this.head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), voxelMaterial(COLORS.zombieDark));
+    this.head.position.y = 1.6;
     this.head.castShadow = true;
     this.group.add(this.head);
   }

@@ -81,8 +81,14 @@ export class RoundManager {
 
     // move + animate the living horde; advance death animations for corpses
     for (const z of this.zombies) {
-      if (z.alive) z.update(dt, playerPos, this.zombies);
-      else if (z.dying) z.updateDying(dt);
+      if (z.alive) {
+        z.update(dt, playerPos, this.zombies);
+        arena.resolveObstacles(z.pos, ZOMBIE.radius);
+        z.group.position.x = z.pos.x;
+        z.group.position.z = z.pos.z;
+      } else if (z.dying) {
+        z.updateDying(dt);
+      }
     }
   }
 

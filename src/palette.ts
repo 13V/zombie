@@ -2,10 +2,10 @@ import * as THREE from "three";
 
 // The cozy toy-diorama palette + shared material helpers.
 export const COLORS = {
-  player: 0x5b8cff,
+  player: 0x4a78d6,
   playerAccent: 0xfff4d6,
-  zombie: 0x9fcaa0,
-  zombieDark: 0x6f9d76,
+  zombie: 0x8fcf6f,
+  zombieDark: 0x5f9d4a,
   bullet: 0xffe28a,
   wall: 0xc8b48c,
   wallTop: 0xb39e74,
@@ -16,6 +16,48 @@ export const COLORS = {
   wallBuy: 0xc9ff7a,
   damageNumber: 0xfff1c1,
 };
+
+/**
+ * Voxel block palette, matching the "Tiny World Builder" toolbar:
+ * Grass · Path · Dirt · Water · House · Tree · Fence · Crop · Tuft.
+ */
+export const VOX = {
+  grass: 0xa7dd54,
+  grassDark: 0x8cc63f,
+  path: 0xe7dab0,
+  dirt: 0x8a5a32,
+  dirtDark: 0x6f4626,
+  tilled: 0x6e4a2c,
+  stone: 0x9b9b90,
+  stoneDark: 0x7c7c71,
+  water: 0x3f9fe0,
+  house: 0x4a90d9,
+  houseAlt: 0xb6452f,
+  houseWall: 0xede4d0,
+  roofBlue: 0x3f6fd1,
+  roofRed: 0xb6452f,
+  roofPurple: 0x6e4a9e,
+  trunk: 0x7a5230,
+  leaf: 0x6fbf3b,
+  leafDark: 0x57a52c,
+  leafPink: 0xeaa6c6,
+  fence: 0x8a6a3a,
+  crop: 0x8fd24a,
+  cropRipe: 0xe7c04a,
+  cloud: 0xffffff,
+  skyTop: 0x73b4ec,
+  skyBottom: 0xd9eeff,
+};
+
+/** Matte, flat-shaded material for voxel blocks (crisp per-face shading). */
+export function voxelMaterial(color: number) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.92,
+    metalness: 0.0,
+    flatShading: true,
+  });
+}
 
 /** Soft, slightly matte material — the toy-plastic look. */
 export function toyMaterial(color: number, opts: { emissive?: number; emissiveIntensity?: number } = {}) {

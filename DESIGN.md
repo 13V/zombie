@@ -32,16 +32,23 @@ wrapped around tense, greedy "one more round" survival.
 
 ---
 
-## 3. Art Direction
+## 3. Art Direction — voxel "Tiny World"
+
+Reference: **Tiny Worlds** (@tinyworldsapp / @jasonkneen) and the Claude-made
+**"Tiny World Builder"** artifact. The look is **soft voxel art** — a floating
+island of beveled cubes in a bright sky — *not* rounded low-poly toys.
 
 | Element        | Direction |
 | -------------- | --------- |
-| **Camera**     | High, angled perspective with a long lens (low FOV ≈ 35°) to flatten the world into a "miniature diorama." Smoothly follows the player. |
-| **Geometry**   | Chunky, rounded low-poly. Everything looks injection-molded — like a toy set. |
-| **Palette**    | Warm pastels for the world (sand, moss, terracotta), desaturated mint-green undead, candy-bright accents for interactables (box = gold, perks = neon). |
-| **Lighting**   | Hemisphere + one warm key light with soft shadows. Subtle fog for depth. |
-| **Post**       | Gentle bloom on emissive accents (box glow, perk pads, muzzle flash). Optional tilt-shift later. |
-| **Animation**  | Wobble. Zombies bob and lean as they walk; the player squashes/stretches slightly. Death = a little puff + tip-over. |
+| **Form**       | **Voxels.** Everything is built from soft, lightly-beveled cubes (`RoundedBoxGeometry`), instanced for performance. |
+| **World**      | A **floating island**: grass-topped blocks over dirt + a tapering stone underside, hovering in a soft-blue sky. |
+| **Block kit**  | Matches the builder's toolbar: **Grass · Path · Dirt · Water · House · Tree · Fence · Crop · Tuft** (+ stone underside, clouds). |
+| **Camera**     | 3/4 isometric, long lens (FOV ≈ 32°), smoothly following the player. |
+| **Palette**    | Vivid yellow-green grass, tan paths, brown dirt, blue water, colored voxel-house roofs (blue/red/purple), pink cherry trees. Bright + soft. |
+| **Lighting**   | Bright daylight: hemisphere + warm key with soft shadows, plus image-based ambient (env map) for the soft "expensive" glow. |
+| **Sky**        | Gradient blue dome with drifting low-poly puffy white clouds. |
+| **Post**       | Gentle bloom on emissive accents, **tilt-shift + vignette** for the miniature feel. |
+| **Animation**  | Walk wobble; death puff. Characters: KayKit GLBs (low-poly) sit on the voxel world; blocky-box fallback when no model is present. |
 
 ---
 

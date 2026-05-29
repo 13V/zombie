@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { PLAYER } from "./config";
-import { COLORS, toyMaterial } from "./palette";
+import { COLORS, voxelMaterial } from "./palette";
 import { AssetManager, Character } from "./assets";
 
 /**
@@ -39,25 +39,21 @@ export class Player {
   }
 
   private buildPrimitive() {
-    this.body = new THREE.Mesh(
-      new THREE.CapsuleGeometry(PLAYER.radius, 0.7, 4, 12),
-      toyMaterial(COLORS.player),
-    );
-    this.body.position.y = 0.95;
+    // Blocky voxel-style figure so the fallback matches the world's look.
+    this.body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.6), voxelMaterial(COLORS.player));
+    this.body.position.y = 0.85;
     this.body.castShadow = true;
     this.group.add(this.body);
 
-    const cap = new THREE.Mesh(
-      new THREE.SphereGeometry(PLAYER.radius * 0.75, 12, 10),
-      toyMaterial(COLORS.playerAccent),
-    );
-    cap.position.y = 1.6;
-    cap.castShadow = true;
-    this.group.add(cap);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), voxelMaterial(COLORS.playerAccent));
+    head.position.y = 1.75;
+    head.castShadow = true;
+    this.group.add(head);
 
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 0.7), toyMaterial(0x3a2f25));
-    nose.position.set(0, 1.0, -0.7);
-    this.group.add(nose);
+    // a little muzzle/gun nub pointing forward (+Z) to read facing
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.7), voxelMaterial(0x3a2f25));
+    gun.position.set(0.3, 0.95, 0.55);
+    this.group.add(gun);
   }
 
   damage(amount: number) {
@@ -91,7 +87,7 @@ export class Player {
       this.char.update(dt);
     } else if (this.body) {
       this.bob += dt * (moving ? 12 : 4);
-      this.body.position.y = 0.95 + (moving ? Math.abs(Math.sin(this.bob)) * 0.08 : 0);
+      this.body.position.y = 0.85 + (moving ? Math.abs(Math.sin(this.bob)) * 0.08 : 0);
     }
 
     this.timeSinceHit += dt;

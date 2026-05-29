@@ -103,7 +103,7 @@ class Game implements GameApi {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    this.camera = new THREE.PerspectiveCamera(CAMERA.fov, innerWidth / innerHeight, 0.1, 200);
+    this.camera = new THREE.PerspectiveCamera(CAMERA.fov, innerWidth / innerHeight, 0.1, 1000);
     this.camera.position.set(CAMERA.offset.x, CAMERA.offset.y, CAMERA.offset.z);
     this.camera.lookAt(0, 0, 0);
 
@@ -116,7 +116,7 @@ class Game implements GameApi {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.6, 0.86);
     this.composer.addPass(bloom);
-    this.tilt = new TiltShift(innerWidth, innerHeight);
+    this.tilt = new TiltShift(innerWidth, innerHeight, { focus: 0.58, band: 0.2, strength: 3.0, vignette: 0.4 });
     this.composer.addPass(this.tilt.horizontal);
     this.composer.addPass(this.tilt.vertical);
     this.composer.addPass(new OutputPass());
@@ -257,6 +257,7 @@ class Game implements GameApi {
     if (this.state === "playing") this.simulate(dt);
     else this.player.idle(dt); // keep the figure breathing on menu / pause / over
 
+    this.arena.update(dt);
     this.interactables.update(dt);
     this.puffs.update(dt);
     this.updateCamera(dt);
@@ -270,6 +271,7 @@ class Game implements GameApi {
     // Camera looks down the -Z axis, so W (axis.y +1) moves toward -Z.
     this.player.update(dt, axis.x, -axis.y, this.input.aimPoint);
     this.arena.clamp(this.player.pos, PLAYER.radius);
+    this.arena.resolveObstacles(this.player.pos, PLAYER.radius);
     this.player.group.position.copy(this.player.pos);
 
     // weapon
