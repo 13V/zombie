@@ -45,6 +45,20 @@ npm run preview  # serve the production build
   (Tough = more HP, Quick = faster movement + reload).
 - HUD: round, points, health, weapon + ammo, interaction prompts; start / game-over flow.
 
+## Matching the cozy soft-3D art style
+
+The Kintara / Tiny Worlds look comes from three layers, all wired up here:
+
+1. **Models (GLB).** Animated characters load from `public/models/`. Drop in
+   **KayKit** GLBs (`player.glb`, `zombie.glb`) and they're used automatically,
+   with walk/idle/attack/death animations fuzzy-matched by clip name. **No files?
+   It falls back to primitive toy shapes, so the game always runs.** See
+   [`public/models/README.md`](./public/models/README.md).
+2. **Render / look-dev.** Image-based ambient lighting (`RoomEnvironment` env map)
+   for the soft "expensive" glow, soft shadows, gentle bloom, ACES tone mapping,
+   and a **tilt-shift + vignette** post pass for the "miniature diorama" feel.
+3. **Materials.** High-roughness, metalness-free toy plastic lit by the env map.
+
 ## Project layout
 
 ```
@@ -54,12 +68,15 @@ src/
   palette.ts        colors + shared toy/glow material helpers
   input.ts          keyboard/mouse + pointer→ground raycast
   arena.ts          the diorama world: ground, walls, props, lights, fog
-  player.ts         player entity
-  zombie.ts         zombie entity + steering/separation
+  assets.ts         GLB loader + AnimationMixer wrapper (KayKit-ready, fuzzy clips)
+  tiltShift.ts      tilt-shift + vignette post-processing (the "miniature" look)
+  player.ts         player entity (GLB character or primitive fallback)
+  zombie.ts         zombie entity + steering/separation (GLB or primitive)
   rounds.ts         RoundManager: spawn budget, scaling, intermission
   weapons.ts        weapon defs + bullet pool + firing
   interactables.ts  Mystery Box, wall-buy, perk pads
   hud.ts            DOM HUD + overlays
+public/models/      drop KayKit GLBs here (see its README)
 ```
 
 Roadmap / out-of-scope items (co-op, Pack-a-Punch, special enemies, buyable doors,

@@ -4,6 +4,7 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 import { CAMERA, PLAYER, SCORE, ZOMBIE } from "./config";
 import { COLORS, glowMaterial } from "./palette";
@@ -14,6 +15,8 @@ import { RoundManager } from "./rounds";
 import { BulletSystem, Weapon, WEAPONS, BOX_POOL } from "./weapons";
 import { Interactables, GameApi } from "./interactables";
 import { Hud } from "./hud";
+import { AssetManager } from "./assets";
+import { TiltShift } from "./tiltShift";
 
 /** Tiny pooled "poof" particles for kill feedback. */
 class Puffs {
@@ -82,11 +85,13 @@ class Game implements GameApi {
   private perks = new Set<"tough" | "quick">();
   private state: State = "menu";
 
+  private tilt: TiltShift;
+
   private camTarget = new THREE.Vector3();
   private shake = 0;
   private _v2 = new THREE.Vector3();
 
-  constructor() {
+  constructor(private assets: AssetManager) {
     const canvas = document.getElementById("scene") as HTMLCanvasElement;
     const ui = document.getElementById("ui") as HTMLElement;
 
@@ -102,17 +107,25 @@ class Game implements GameApi {
     this.camera.position.set(CAMERA.offset.x, CAMERA.offset.y, CAMERA.offset.z);
     this.camera.lookAt(0, 0, 0);
 
+    // Soft image-based ambient light — the key to the "soft 3D" cozy look.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.55;
+
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.5, 0.6, 0.85);
+    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.6, 0.86);
     this.composer.addPass(bloom);
+    this.tilt = new TiltShift(innerWidth, innerHeight);
+    this.composer.addPass(this.tilt.horizontal);
+    this.composer.addPass(this.tilt.vertical);
     this.composer.addPass(new OutputPass());
 
     this.input = new Input(canvas);
     this.arena = new Arena(this.scene);
-    this.player = new Player(this.scene);
+    this.player = new Player(this.scene, this.assets);
     this.bullets = new BulletSystem(this.scene);
-    this.rounds = new RoundManager(this.scene);
+    this.rounds = new RoundManager(this.scene, this.assets);
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene);
     this.hud = new Hud(ui);
@@ -242,6 +255,7 @@ class Game implements GameApi {
     this.input.updateAim(this.camera);
 
     if (this.state === "playing") this.simulate(dt);
+    else this.player.idle(dt); // keep the figure breathing on menu / pause / over
 
     this.interactables.update(dt);
     this.puffs.update(dt);
@@ -359,7 +373,13 @@ class Game implements GameApi {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(innerWidth, innerHeight);
     this.composer.setSize(innerWidth, innerHeight);
+    this.tilt.setSize(innerWidth, innerHeight);
   };
 }
 
-new Game();
+// Load GLB models (best-effort; falls back to primitives) then start the game.
+(async () => {
+  const assets = new AssetManager();
+  await assets.loadAll();
+  new Game(assets);
+})();

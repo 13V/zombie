@@ -154,6 +154,26 @@ src/
 
 ---
 
+## 7b. Art pipeline — matching the reference style
+
+Matching the cozy soft-3D look of the references is **three layers**, not just models:
+
+1. **Models (GLB).** Low-poly, rounded, animated characters exported as `.glb`.
+   We target **KayKit** packs (free, rigged, shared skeleton + clip names). They
+   load from `public/models/` and are cloned per-instance with `SkeletonUtils`;
+   animations are fuzzy-matched to logical states (`idle`/`walk`/`attack`/`death`)
+   so exact clip names don't matter. Missing files fall back to primitives.
+   *(Asset sources: KayKit · Quaternius · Kenney · Synty POLYGON.)*
+2. **Render / look-dev** — *the part most people miss.* Image-based ambient light
+   (`RoomEnvironment` env map via `PMREMGenerator`) is the #1 lever for the soft,
+   "expensive" stylized glow. Plus soft shadows, gentle bloom, ACES tone mapping,
+   and a **tilt-shift + vignette** pass that sells the "miniature diorama" feel.
+3. **Materials** — high-roughness, metalness-free toy-plastic, lit by the env map.
+   (A `MeshToonMaterial` ramp is an alternative for a flatter, illustrated look.)
+
+Future look-dev: LUT color grading, a soft outline pass, baked AO/contact shadows,
+and per-character material tints.
+
 ## 8. Controls
 
 | Input            | Action            |

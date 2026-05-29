@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { ROUNDS, ZOMBIE } from "./config";
 import { Zombie } from "./zombie";
 import { Arena } from "./arena";
+import { AssetManager } from "./assets";
 
 type Phase = "pre" | "active" | "intermission";
 
@@ -24,7 +25,7 @@ export class RoundManager {
   onRoundStart?: (round: number) => void;
   onIntermission?: (nextRound: number) => void;
 
-  constructor(private scene: THREE.Scene) {}
+  constructor(private scene: THREE.Scene, private assets: AssetManager) {}
 
   get aliveCount(): number {
     let n = 0;
@@ -48,9 +49,10 @@ export class RoundManager {
   }
 
   private spawnOne(arena: Arena) {
-    let z = this.zombies.find((q) => !q.alive);
+    // Prefer a fully-idle zombie; avoid snatching one mid death-animation.
+    let z = this.zombies.find((q) => !q.alive && !q.dying) ?? this.zombies.find((q) => !q.alive);
     if (!z) {
-      z = new Zombie();
+      z = new Zombie(this.assets);
       this.scene.add(z.group);
       this.zombies.push(z);
     }
@@ -77,15 +79,17 @@ export class RoundManager {
       if (this.intermissionTimer <= 0) this.beginRound(this.round + 1);
     }
 
-    // move + animate the living horde
+    // move + animate the living horde; advance death animations for corpses
     for (const z of this.zombies) {
       if (z.alive) z.update(dt, playerPos, this.zombies);
+      else if (z.dying) z.updateDying(dt);
     }
   }
 
   reset() {
     for (const z of this.zombies) {
       z.alive = false;
+      z.dying = false;
       z.group.visible = false;
     }
     this.round = 0;

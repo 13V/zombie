@@ -23,10 +23,11 @@ export class Arena {
   }
 
   private buildLights(scene: THREE.Scene) {
-    const hemi = new THREE.HemisphereLight(0xfff3d6, 0x6b5a3e, 0.85);
+    // Env map (set in main.ts) supplies soft ambient, so these stay gentle.
+    const hemi = new THREE.HemisphereLight(0xfff3d6, 0x6b5a3e, 0.45);
     scene.add(hemi);
 
-    const key = new THREE.DirectionalLight(0xfff0c8, 1.5);
+    const key = new THREE.DirectionalLight(0xfff0c8, 1.25);
     key.position.set(18, 32, 14);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
