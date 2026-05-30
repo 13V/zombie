@@ -161,6 +161,12 @@ class Game implements GameApi {
     this.scene.environmentIntensity = 0.5;
 
     this.composer = new EffectComposer(this.renderer);
+    // MSAA on the composer targets: `antialias:true` is bypassed once we render
+    // through post passes, so without this every voxel edge is hard-aliased.
+    // 4x multisampling smooths every edge — the biggest single quality lever.
+    const maxSamples = this.renderer.capabilities.maxSamples ?? 4;
+    this.composer.renderTarget1.samples = Math.min(8, maxSamples);
+    this.composer.renderTarget2.samples = Math.min(8, maxSamples);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     // Gentle bloom — only the brightest emissives (windows, fire, pickups) glow,
     // so the grass and props stay crisp instead of washing out.
