@@ -24,7 +24,7 @@ import { Audio } from "./audio";
 import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
-import { Pet, PETS, findPet, petLevelCost } from "./pets";
+import { Pet, PETS, findAnyPet, petLevelCost } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
@@ -385,16 +385,21 @@ class Game implements GameApi {
     // Pets: buy companions with gold (the gold sink + late-game chaos).
     this.hud.renderPets(
       this.save.gold,
-      PETS.map((p) => {
-        const owned = this.save.pets.includes(p.id);
-        const level = this.save.petLevels[p.id] ?? 1;
-        const upCost = petLevelCost(p, level);
+      PETS.map((base) => {
+        // If this pet has evolved, show its evolved form (continue leveling it).
+        const evoId = base.evolvesTo;
+        const isEvolved = !!evoId && this.save.pets.includes(evoId);
+        const p = isEvolved ? (findAnyPet(evoId!) ?? base) : base;
+        const ownId = isEvolved ? evoId! : base.id;
+        const owned = this.save.pets.includes(ownId);
+        const level = this.save.petLevels[ownId] ?? 1;
+        const upCost = petLevelCost(base, level); // cost curve keyed off the base
         return {
-          id: p.id, name: p.name, desc: p.desc, cost: p.cost,
+          id: ownId, name: p.name, desc: p.desc, cost: base.cost,
           color: `#${p.color.toString(16).padStart(6, "0")}`,
           owned, level,
           upCost,
-          affordable: owned ? this.save.gold >= upCost : this.save.gold >= p.cost,
+          affordable: owned ? this.save.gold >= upCost : this.save.gold >= base.cost,
         };
       }),
       (id) => this.buyOrLevelPet(id),
@@ -404,8 +409,10 @@ class Game implements GameApi {
   /** Buy a companion pet with gold; it joins you on the next run (and this one). */
   /** Buy a pet if unowned, else spend gold to level it up (the idle loop). */
   private buyOrLevelPet(id: string) {
-    const def = findPet(id);
+    const def = findAnyPet(id);
     if (!def) return;
+    // For an evolved pet, the level-cost curve still uses the base pet's cost.
+    const baseForCost = PETS.find((p) => p.evolvesTo === id) ?? def;
     const owned = this.save.pets.includes(id);
     if (!owned) {
       if (this.save.gold < def.cost) { this.audio.deny(); return; }
@@ -414,13 +421,24 @@ class Game implements GameApi {
       this.save.petLevels[id] = 1;
     } else {
       const level = this.save.petLevels[id] ?? 1;
-      const cost = petLevelCost(def, level);
+      const cost = petLevelCost(baseForCost, level);
       if (this.save.gold < cost) { this.audio.deny(); return; }
       this.save.gold -= cost;
-      this.save.petLevels[id] = level + 1;
-      // live-grow the matching pet so the upgrade is visible immediately
-      const live = this.pets.find((p) => p.def.id === id);
-      if (live) live.setLevel(level + 1);
+      const newLevel = level + 1;
+      this.save.petLevels[id] = newLevel;
+      // EVOLUTION: crossing the evolve level transforms the pet into its evolved
+      // form (new id swapped into the owned list; level carries over).
+      if (def.evolvesTo && def.evolveLevel && newLevel >= def.evolveLevel) {
+        const idx = this.save.pets.indexOf(id);
+        if (idx >= 0) this.save.pets[idx] = def.evolvesTo;
+        this.save.petLevels[def.evolvesTo] = newLevel;
+        delete this.save.petLevels[id];
+        this.spawnPets();
+        this.hud.toast("Evolved into " + (findAnyPet(def.evolvesTo)?.name ?? "?") + "!");
+      } else {
+        const live = this.pets.find((p) => p.def.id === id);
+        if (live) live.setLevel(newLevel);
+      }
     }
     writeSave(this.save);
     this.audio.powerup();
@@ -1304,7 +1322,7 @@ class Game implements GameApi {
     for (const p of this.pets) this.scene.remove(p.group);
     this.pets = [];
     this.save.pets.forEach((id, i) => {
-      const def = findPet(id);
+      const def = findAnyPet(id);
       if (!def) return;
       const lvl = this.save.petLevels[id] ?? 1;
       const pet = new Pet(def, (i / Math.max(1, this.save.pets.length)) * Math.PI * 2, lvl);

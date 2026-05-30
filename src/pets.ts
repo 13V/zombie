@@ -35,12 +35,41 @@ export interface PetDef {
   role?: "banker" | "buffer";
   /** banker: gold per second passively. buffer: +damage fraction to other pets. */
   roleValue?: number;
+  /** At `evolveLevel`, the pet transforms into the `evolvesTo` def (bigger,
+   *  stronger model + new behavior). The big idle payoff. */
+  evolveLevel?: number;
+  evolvesTo?: string;
+}
+
+/** Evolved pet forms — not buyable directly; a base pet evolves into these. */
+export const PET_EVOLUTIONS: PetDef[] = [
+  {
+    id: "beebot_evo", name: "Queen Bee", desc: "A royal swarm of stingers", cost: 0, color: 0xffcf3a, accent: 0x2a2a2a,
+    damage: 22, interval: 0.32, bulletColor: 0xffe14a, bulletScale: 0.7, pierce: 2, splashRadius: 0, splashDamage: 0, homing: 1, shape: "bee", range: 18,
+  },
+  {
+    id: "turret_evo", name: "War Drone", desc: "Twin piercing autocannons", cost: 0, color: 0x9fb6ff, accent: 0x2a3450,
+    damage: 70, interval: 0.45, bulletColor: 0x9fe8ff, bulletScale: 1.3, pierce: 5, splashRadius: 0, splashDamage: 0, homing: 0, shape: "turret", range: 22,
+  },
+  {
+    id: "ghost_evo", name: "Reaper", desc: "Wide haunting splash", cost: 0, color: 0x9a5ad6, accent: 0xf3e6ff,
+    damage: 55, interval: 0.7, bulletColor: 0xc792ea, bulletScale: 1.7, pierce: 1, splashRadius: 3.0, splashDamage: 50, homing: 1, shape: "ghost", range: 18,
+  },
+  {
+    id: "dragon_evo", name: "Elder Dragon", desc: "Devastating fireball barrage", cost: 0, color: 0xff3a2a, accent: 0xffd24a,
+    damage: 140, interval: 0.45, bulletColor: 0xff7a3a, bulletScale: 2.0, pierce: 4, splashRadius: 3.4, splashDamage: 110, homing: 1, shape: "dragon", range: 24,
+  },
+];
+
+export function findAnyPet(id: string): PetDef | undefined {
+  return PETS.find((p) => p.id === id) ?? PET_EVOLUTIONS.find((p) => p.id === id);
 }
 
 export const PETS: PetDef[] = [
   {
     id: "beebot", name: "Bee Buddy", desc: "Fires homing stingers", cost: 300, color: 0xffd24a, accent: 0x2a2a2a,
     damage: 14, interval: 0.5, bulletColor: 0xffe14a, bulletScale: 0.6, pierce: 1, splashRadius: 0, splashDamage: 0, homing: 1, shape: "bee", range: 16,
+    evolveLevel: 10, evolvesTo: "beebot_evo",
   },
   {
     id: "wisp", name: "Spark Wisp", desc: "Rapid little zaps", cost: 450, color: 0x6ad7ff, accent: 0xeaffff,
@@ -49,14 +78,17 @@ export const PETS: PetDef[] = [
   {
     id: "turret", name: "Mini Turret", desc: "Heavy piercing rounds", cost: 700, color: 0x8a98a8, accent: 0x3a4450,
     damage: 40, interval: 0.7, bulletColor: 0xffc06a, bulletScale: 1.1, pierce: 3, splashRadius: 0, splashDamage: 0, homing: 0, shape: "turret", range: 18,
+    evolveLevel: 10, evolvesTo: "turret_evo",
   },
   {
     id: "ghost", name: "Boo Ghost", desc: "Spooky splash orbs", cost: 900, color: 0xc792ea, accent: 0xf3e6ff,
     damage: 30, interval: 0.9, bulletColor: 0xc792ea, bulletScale: 1.3, pierce: 0, splashRadius: 2.0, splashDamage: 24, homing: 1, shape: "ghost", range: 16,
+    evolveLevel: 10, evolvesTo: "ghost_evo",
   },
   {
     id: "dragon", name: "Baby Dragon", desc: "Spits explosive fireballs", cost: 1600, color: 0xff5a3a, accent: 0xffd24a,
     damage: 70, interval: 0.6, bulletColor: 0xff7a3a, bulletScale: 1.5, pierce: 2, splashRadius: 2.6, splashDamage: 60, homing: 1, shape: "dragon", range: 20,
+    evolveLevel: 10, evolvesTo: "dragon_evo",
   },
   // ---- non-combat roles (the idle-economy hooks) ----
   {
