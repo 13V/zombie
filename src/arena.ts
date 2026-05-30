@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { WORLD } from "./config";
-import { VOX, voxelMaterial } from "./palette";
+import { VOX, voxelMaterial, glowMaterial } from "./palette";
 
 /** Axis-aligned box footprint that the player + zombies are pushed out of. */
 interface Obstacle {
@@ -9,6 +9,21 @@ interface Obstacle {
   maxX: number;
   minZ: number;
   maxZ: number;
+}
+
+/** Which wall of a building a cell faces. */
+type Side = "xmin" | "xmax" | "zmin" | "zmax";
+
+/** Layout for one cottage. */
+interface HouseCfg {
+  ox: number; // min-corner origin
+  oz: number;
+  w: number; // footprint width (x) / depth (z)
+  d: number;
+  stories: number; // 1 or 2
+  wall: number; // wall color
+  roof: number; // roof color
+  chimney: boolean;
 }
 
 /** Accumulates voxel positions per color, then bakes one InstancedMesh per color. */
@@ -21,10 +36,16 @@ class VoxelBatch {
     arr.push({ x, y, z, sx, sy, sz });
   }
 
-  build(parent: THREE.Object3D, geo: THREE.BufferGeometry, cast: boolean, receive: boolean) {
+  build(
+    parent: THREE.Object3D,
+    geo: THREE.BufferGeometry,
+    cast: boolean,
+    receive: boolean,
+    matFn: (color: number) => THREE.Material = voxelMaterial,
+  ) {
     const dummy = new THREE.Object3D();
     for (const [color, arr] of this.buckets) {
-      const mesh = new THREE.InstancedMesh(geo, voxelMaterial(color), arr.length);
+      const mesh = new THREE.InstancedMesh(geo, matFn(color), arr.length);
       mesh.castShadow = cast;
       mesh.receiveShadow = receive;
       arr.forEach((p, i) => {
@@ -54,6 +75,7 @@ export class Arena {
   private geo = new RoundedBoxGeometry(1, 1, 1, 2, 0.08);
   private clouds: { group: THREE.Group; speed: number }[] = [];
   private plume?: THREE.Mesh;
+  private smoke: { mesh: THREE.Mesh; baseX: number; baseY: number; baseZ: number; phase: number; speed: number; rise: number }[] = [];
   private t = 0;
 
   constructor(scene: THREE.Scene) {
@@ -64,11 +86,13 @@ export class Arena {
 
     const terrain = new VoxelBatch();
     const props = new VoxelBatch();
+    const glow = new VoxelBatch(); // emissive window/lantern panes (caught by bloom)
     this.generateGround(terrain, props);
-    this.buildHouses(props);
+    this.buildHouses(props, glow);
     this.buildTrees(props);
     terrain.build(this.group, this.geo, false, true);
     props.build(this.group, this.geo, true, true);
+    glow.build(this.group, this.geo, false, false, (c) => glowMaterial(c, 0.9));
 
     this.buildFountain();
     this.buildClouds(scene);
@@ -202,32 +226,142 @@ export class Arena {
   }
 
   // ---- structures ----
-  private buildHouses(props: VoxelBatch) {
-    this.buildHouse(props, -13, -11, VOX.roofPurple);
-    this.buildHouse(props, 10, 11, VOX.roofDark);
-    this.buildHouse(props, -12, 10, VOX.roofBlue);
+  private buildHouses(props: VoxelBatch, glow: VoxelBatch) {
+    // A deliberate ring of varied cottages around the plaza, each with its door
+    // turned toward the centre. Mixed footprints, heights, wall + roof colors.
+    const cfgs: HouseCfg[] = [
+      { ox: -16, oz: -15, w: 4, d: 5, stories: 2, wall: VOX.houseWall, roof: VOX.roofBlue, chimney: true },
+      { ox: 11, oz: -15, w: 5, d: 4, stories: 1, wall: VOX.plasterWarm, roof: VOX.roofRed, chimney: true },
+      { ox: -15, oz: 11, w: 4, d: 4, stories: 1, wall: VOX.plasterSage, roof: VOX.roofPurple, chimney: false },
+      { ox: 11, oz: 11, w: 4, d: 5, stories: 2, wall: VOX.brick, roof: VOX.roofDark, chimney: true },
+      { ox: 15, oz: -2, w: 4, d: 4, stories: 1, wall: VOX.houseWall, roof: VOX.roofRed, chimney: false },
+      { ox: -17, oz: -1, w: 3, d: 4, stories: 1, wall: VOX.plasterWarm, roof: VOX.roofBlue, chimney: true },
+    ];
+    for (const c of cfgs) this.buildHouse(props, glow, c);
   }
 
-  /** A 4×4 voxel cottage with walls, a door gap and a peaked colored roof. */
-  private buildHouse(props: VoxelBatch, ox: number, oz: number, roof: number) {
-    const w = 4;
-    for (let y = 0; y < 3; y++) {
+  /**
+   * A chunky voxel cottage: stone foundation, plastered walls with glowing
+   * windows + flower boxes, a framed door with a lantern, an overhanging hip
+   * roof with a ridge cap, and an optional smoking chimney. The door faces the
+   * plaza so it reads as the "front".
+   */
+  private buildHouse(props: VoxelBatch, glow: VoxelBatch, c: HouseCfg) {
+    const { ox, oz, w, d, stories } = c;
+    const H = stories * 3; // wall courses tall
+    // which side faces the plaza centre → that's the front (door) wall
+    const cx = ox + (w - 1) / 2;
+    const cz = oz + (d - 1) / 2;
+    const front: Side =
+      Math.abs(cx) >= Math.abs(cz) ? (cx >= 0 ? "xmin" : "xmax") : cz >= 0 ? "zmin" : "zmax";
+
+    // the door's index along its wall, and its grid cell
+    const horiz = front === "xmin" || front === "xmax"; // wall runs along z
+    const doorAlong = horiz ? Math.floor((d - 1) / 2) : Math.floor((w - 1) / 2);
+    const doorI = front === "xmin" ? 0 : front === "xmax" ? w - 1 : doorAlong;
+    const doorJ = front === "zmin" ? 0 : front === "zmax" ? d - 1 : doorAlong;
+
+    for (let y = 0; y < H; y++) {
       for (let i = 0; i < w; i++) {
-        for (let j = 0; j < w; j++) {
-          const edge = i === 0 || i === w - 1 || j === 0 || j === w - 1;
-          if (!edge) continue;
-          if (y === 0 && i === 1 && j === 0) continue; // door gap
-          props.add(ox + i, 0.5 + y, oz + j, VOX.houseWall);
+        for (let j = 0; j < d; j++) {
+          if (i !== 0 && i !== w - 1 && j !== 0 && j !== d - 1) continue; // interior
+          const side = this.cellSide(i, j, w, d); // null at corners
+
+          // door opening: front wall, centre column, bottom two courses
+          if (i === doorI && j === doorJ && y < 2) {
+            props.add(ox + i, 0.5 + y, oz + j, VOX.doorWood, 0.82, 1, 0.82);
+            continue;
+          }
+          // glowing windows: 2nd course of each storey, non-corner, every other
+          // cell along the wall
+          const onWindowRow = y % 3 === 1;
+          const along = side === "xmin" || side === "xmax" ? j : i;
+          if (side && onWindowRow && along % 2 === 1) {
+            glow.add(ox + i, 0.5 + y, oz + j, VOX.windowGlow, 0.92, 0.92, 0.92);
+            if (y === 1) this.addFlowerBox(props, ox + i, 0.5 + y - 0.5, oz + j, side); // sill box
+            continue;
+          }
+          // foundation course is stone; everything above is the wall color
+          props.add(ox + i, 0.5 + y, oz + j, y === 0 ? VOX.foundation : c.wall);
         }
       }
     }
-    // peaked roof: two stepped tiers + a ridge
-    for (let i = -1; i < w + 1; i++) for (let j = -1; j < w + 1; j++) props.add(ox + i, 3.5, oz + j, roof);
-    for (let i = 0; i < w; i++) for (let j = 0; j < w; j++) props.add(ox + i, 4.4, oz + j, roof);
-    for (let i = 1; i < w - 1; i++) for (let j = 0; j < w; j++) props.add(ox + i, 5.2, oz + j, roof);
-    props.add(ox + 1.5, 5.9, oz + 1.5, roof, 1.2, 0.8, w + 0.4);
 
-    this.obstacles.push({ minX: ox - 0.5, maxX: ox + w - 0.5, minZ: oz - 0.5, maxZ: oz + w - 0.5 });
+    this.addDoorLantern(props, glow, ox + doorI, oz + doorJ, front);
+    this.buildRoof(props, ox, oz, w, d, 0.5 + H - 0.5, c.roof);
+    if (c.chimney) this.buildChimney(props, ox, oz, w, 0.5 + H);
+
+    this.obstacles.push({ minX: ox - 0.5, maxX: ox + w - 0.5, minZ: oz - 0.5, maxZ: oz + d - 0.5 });
+  }
+
+  /** Which wall a non-corner perimeter cell sits on (null at corners). */
+  private cellSide(i: number, j: number, w: number, d: number): Side | null {
+    const onI = i === 0 || i === w - 1;
+    const onJ = j === 0 || j === d - 1;
+    if (onI && onJ) return null; // corner
+    if (i === 0) return "xmin";
+    if (i === w - 1) return "xmax";
+    if (j === 0) return "zmin";
+    return "zmax";
+  }
+
+  /** Outward offset for a wall side (so sills/lanterns sit on the exterior). */
+  private sideOut(side: Side, out: number): [number, number] {
+    return [
+      side === "xmin" ? -out : side === "xmax" ? out : 0,
+      side === "zmin" ? -out : side === "zmax" ? out : 0,
+    ];
+  }
+
+  private addFlowerBox(props: VoxelBatch, x: number, y: number, z: number, side: Side) {
+    const [dx, dz] = this.sideOut(side, 0.5);
+    props.add(x + dx, y, z + dz, VOX.woodTrim, 0.7, 0.3, 0.7);
+    props.add(x + dx, y + 0.32, z + dz, VOX.leafPink, 0.5, 0.3, 0.5);
+  }
+
+  /** A warm lantern mounted on the wall just outside the door. */
+  private addDoorLantern(props: VoxelBatch, glow: VoxelBatch, dx0: number, dz0: number, front: Side) {
+    const [dx, dz] = this.sideOut(front, 0.6);
+    props.add(dx0 + dx, 2.1, dz0 + dz, VOX.woodTrim, 0.16, 0.7, 0.16); // bracket
+    glow.add(dx0 + dx, 1.75, dz0 + dz, VOX.lantern, 0.32, 0.42, 0.32); // flame
+  }
+
+  /** Stepped overhanging hip roof with a small ridge cap. */
+  private buildRoof(props: VoxelBatch, ox: number, oz: number, w: number, d: number, top: number, roof: number) {
+    // overhanging eave ring
+    for (let i = -1; i <= w; i++) for (let j = -1; j <= d; j++) props.add(ox + i, top + 0.5, oz + j, roof);
+    // step inward until the roof closes
+    let inset = 0;
+    let y = top + 1.3;
+    while (true) {
+      const x0 = inset, x1 = w - 1 - inset, z0 = inset, z1 = d - 1 - inset;
+      if (x0 > x1 || z0 > z1) break;
+      for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) props.add(ox + i, y, oz + j, roof);
+      inset++;
+      y += 0.8;
+    }
+  }
+
+  private buildChimney(props: VoxelBatch, ox: number, oz: number, w: number, top: number) {
+    const cxv = ox + w - 1;
+    const czv = oz + 1;
+    for (let k = 0; k < 3; k++) props.add(cxv, top + 0.6 + k, czv, VOX.brick, 0.7, 1, 0.7);
+    const capY = top + 0.6 + 3;
+    props.add(cxv, capY, czv, VOX.stoneDark, 0.85, 0.4, 0.85);
+    this.registerSmoke(cxv, capY + 0.4, czv);
+  }
+
+  private registerSmoke(x: number, y: number, z: number) {
+    const mat = new THREE.MeshStandardMaterial({
+      color: VOX.smoke, transparent: true, opacity: 0.5, roughness: 1, depthWrite: false,
+    });
+    for (let p = 0; p < 3; p++) {
+      const m = new THREE.Mesh(this.geo, mat.clone());
+      m.position.set(x, y, z);
+      m.scale.setScalar(0.4);
+      this.group.add(m);
+      this.smoke.push({ mesh: m, baseX: x, baseY: y, baseZ: z, phase: p / 3, speed: 0.5 + Math.random() * 0.3, rise: 3 + Math.random() });
+    }
   }
 
   private buildTrees(props: VoxelBatch) {
@@ -293,6 +427,17 @@ export class Arena {
     if (this.plume) {
       this.plume.scale.y = 1 + Math.sin(this.t * 3) * 0.12;
       this.plume.rotation.y = this.t;
+    }
+    // chimney smoke: each puff rises, drifts, swells + fades, then loops
+    for (const s of this.smoke) {
+      const k = (this.t * s.speed + s.phase) % 1; // 0→1 life cycle
+      s.mesh.position.set(
+        s.baseX + Math.sin(this.t * 0.8 + s.phase * 6) * k * 0.8,
+        s.baseY + k * s.rise,
+        s.baseZ + Math.cos(this.t * 0.6 + s.phase * 6) * k * 0.4,
+      );
+      s.mesh.scale.setScalar(0.3 + k * 0.9);
+      (s.mesh.material as THREE.MeshStandardMaterial).opacity = 0.5 * (1 - k);
     }
   }
 
