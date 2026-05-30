@@ -163,6 +163,8 @@ class Game implements GameApi {
   // juice: transient camera punch-zoom (0 = none) + last combo tier shown
   private zoomPunch = 0;
   private lastComboTier = 1;
+  // Nuke panic button: charge builds from kills; press F to wipe the screen.
+  private nukeCharge = 1;
 
   constructor(private assets: AssetManager) {
     const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -317,6 +319,7 @@ class Game implements GameApi {
     this.healKills = 0;
     this.lastComboTier = 1;
     this.zoomPunch = 0;
+    this.nukeCharge = 1;
     this.runStats = blankRunStats();
     this.combo.windowBonus = this.mods.comboWindowBonus;
     this.hud.setPowerups([]);
@@ -913,6 +916,12 @@ class Game implements GameApi {
       if (this.state === "playing") this.state = "paused";
       else if (this.state === "paused") this.state = "playing";
     }
+    if (this.input.pressed("KeyF") && this.state === "playing" && this.nukeCharge >= 1) {
+      this.nukeCharge = 0;
+      this.nukeBoard();
+      this.zoomPunch = 1;
+      this.floaters.spawn(this.player.pos, "NUKE!", "#ff7a3a", 1.6, true);
+    }
     if (this.input.pressed("KeyM")) {
       this.audio.setEnabled(!this.audio.enabled);
       this.save.muted = !this.audio.enabled;
@@ -1307,7 +1316,8 @@ class Game implements GameApi {
         this.hitTmp.set(shot.ox, 1.0, shot.oz);
         this._petDir.set(shot.dx, 0, shot.dz);
         this.bullets.spawn(this.hitTmp, this._petDir, {
-          speed: 56, damage: d.damage, pierce: d.pierce, splashRadius: d.splashRadius,
+          // pets inherit 60% of your damage scaling so every upgrade buffs the squad
+          speed: 56, damage: d.damage * (1 + (this.mods.damageMul - 1) * 0.6), pierce: d.pierce + this.mods.pierceBonus, splashRadius: d.splashRadius,
           splashDamage: d.splashDamage, color: d.bulletColor, scale: d.bulletScale, homing: d.homing,
         });
       }
@@ -1402,6 +1412,7 @@ class Game implements GameApi {
       }
       this.lastComboTier = mult;
       if (this.mods.lifeSteal > 0) this.player.heal(this.mods.lifeSteal);
+      if (this.nukeCharge < 1) this.nukeCharge = Math.min(1, this.nukeCharge + 0.012); // ~85 kills to recharge
       // Detonate: killed zombies explode, damaging (and chaining through) neighbors.
       if (this.mods.detonate > 0 && !wasBoss) {
         this.puffs.burst(z.pos, 0xffa23a, 10);

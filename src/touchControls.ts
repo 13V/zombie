@@ -39,6 +39,7 @@ export class TouchControls {
         <button class="tbtn act" data-k="KeyE" aria-label="Interact">E</button>
         <button class="tbtn" data-k="KeyR" aria-label="Reload">R</button>
         <button class="tbtn" data-k="KeyQ" aria-label="Swap">Q</button>
+        <button class="tbtn nuke" data-k="KeyF" aria-label="Nuke">☢</button>
       </div>
       <button class="tbtn pause" data-k="KeyP" aria-label="Pause">II</button>
     `;

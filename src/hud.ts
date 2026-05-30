@@ -147,6 +147,7 @@ export class Hud {
           <span class="k">Q</span><span>Swap weapon</span>
           <span class="k">P</span><span>Pause</span>
           <span class="k">M</span><span>Mute</span>
+          <span class="k">F</span><span>Nuke (when charged)</span>
         </div>
         <button class="play" id="btn-start">Play Solo</button>
         <div class="coop">
