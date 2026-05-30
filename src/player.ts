@@ -49,6 +49,8 @@ export class Player {
   private muzzleFlash: THREE.Sprite;
   private flashLife = 0;
   private aimGuide: THREE.Mesh;
+  private readonly guideLen = 9;
+  private guideBaseW = 0.7;
 
   constructor(scene: THREE.Scene, assets: AssetManager) {
     this.char =
@@ -70,12 +72,14 @@ export class Player {
     this.muzzleFlash.position.set(0, 1.0, 0.9);
     this.group.add(this.muzzleFlash);
 
-    // Brawl-Stars-style aim guide: a soft beam on the ground from the player
-    // toward where they're aiming. Child of the group, so it inherits the
-    // facing rotation and extends forward (+Z = aim direction).
-    const guideLen = 9;
+    // Brawl-Stars-style aim guide: a soft beam on the ground toward the aim
+    // direction. A unit plane pivoted at the near (player) edge so we can scale
+    // length (Y→Z when laid flat) and width (X) independently — the width fans
+    // out with the equipped weapon's spread.
+    const guideGeo = new THREE.PlaneGeometry(1, 1);
+    guideGeo.translate(0, 0.5, 0); // pivot at the near edge
     this.aimGuide = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.62, guideLen),
+      guideGeo,
       new THREE.MeshBasicMaterial({
         map: makeGuideTexture(),
         color: 0xfff0c8,
@@ -85,11 +89,22 @@ export class Player {
       }),
     );
     this.aimGuide.rotation.x = -Math.PI / 2; // lie flat on the ground
-    this.aimGuide.position.set(0, 0.06, guideLen / 2 + 0.6);
+    this.aimGuide.position.set(0, 0.06, 0.6); // start just in front of the player
+    this.aimGuide.scale.set(this.guideBaseW, this.guideLen, 1);
     this.aimGuide.renderOrder = 2;
     this.group.add(this.aimGuide);
 
     scene.add(this.group);
+  }
+
+  /**
+   * Match the guide to the current weapon: width fans out with `spread`
+   * (radians) — thin line for a sniper, wide cone for a shotgun.
+   */
+  setAimSpread(spread: number, pellets = 1) {
+    const tip = Math.tan(Math.min(spread, 0.6)) * this.guideLen; // half-width at the tip
+    this.guideBaseW = 0.5 + tip * 2 + (pellets > 1 ? 0.4 : 0);
+    this.aimGuide.scale.x = this.guideBaseW;
   }
 
   /** Fade the aim guide in/out (shown only during active play). */
@@ -97,6 +112,7 @@ export class Player {
     const mat = this.aimGuide.material as THREE.MeshBasicMaterial;
     const target = on ? 0.18 : 0;
     mat.opacity += (target - mat.opacity) * 0.3;
+    this.aimGuide.visible = mat.opacity > 0.01;
   }
 
   /** Pop the muzzle flash (called when a shot actually fires). */

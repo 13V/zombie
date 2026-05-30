@@ -15,7 +15,7 @@ import { Arena } from "./arena";
 import { Player } from "./player";
 import { RoundManager } from "./rounds";
 import { Zombie } from "./zombie";
-import { BulletSystem, Weapon, WEAPONS, BOX_POOL, WONDER_POOL, styleForWeaponName, FireMods, Bullet } from "./weapons";
+import { BulletSystem, Weapon, WEAPONS, BOX_POOL, WONDER_POOL, styleForWeaponName, spreadForWeaponName, FireMods, Bullet } from "./weapons";
 import { Interactables, GameApi } from "./interactables";
 import { Hud } from "./hud";
 import { AssetManager } from "./assets";
@@ -709,6 +709,7 @@ class Game implements GameApi {
     const w = this.weapon;
     this.hud.setWeapon(w.def.name, w.ammo, w.reserveLabel, w.reloading);
     this.player.setWeaponModel(w.def.style);
+    this.player.setAimSpread(w.def.spread, w.def.pellets);
   }
 
   /** Run `fn` with `actor` as the acting player, restoring the previous actor
@@ -1046,6 +1047,8 @@ class Game implements GameApi {
     this.hud.setHealth(this.netplay!.myHp, this.netplay!.myMaxHp);
     this.hud.setWeapon(this.netplay!.myWeapon, this.netplay!.myAmmo, this.netplay!.myReserve, this.netplay!.myReloading);
     this.player.setWeaponModel(styleForWeaponName(this.netplay!.myWeapon));
+    const sp = spreadForWeaponName(this.netplay!.myWeapon);
+    this.player.setAimSpread(sp.spread, sp.pellets);
 
     // Local buy prompt: interactables sit at fixed positions, so the guest can
     // compute its own prompt from the snapshot-driven position + shared points.

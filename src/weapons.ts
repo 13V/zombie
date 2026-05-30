@@ -149,9 +149,17 @@ export const WEAPONS: Record<string, WeaponDef> = {
 
 /** Look up a weapon's gun style by display name (handles the "X +" PaP variant). */
 const NAME_STYLE = new Map<string, GunStyle>();
-for (const d of Object.values(WEAPONS)) NAME_STYLE.set(d.name, d.style);
+const NAME_SPREAD = new Map<string, { spread: number; pellets: number }>();
+for (const d of Object.values(WEAPONS)) {
+  NAME_STYLE.set(d.name, d.style);
+  NAME_SPREAD.set(d.name, { spread: d.spread, pellets: d.pellets });
+}
 export function styleForWeaponName(name: string): GunStyle {
   return NAME_STYLE.get(name) ?? NAME_STYLE.get(name.replace(/ \+$/, "")) ?? "pistol";
+}
+/** Spread + pellet count by display name (for the aim guide on the guest path). */
+export function spreadForWeaponName(name: string): { spread: number; pellets: number } {
+  return NAME_SPREAD.get(name) ?? NAME_SPREAD.get(name.replace(/ \+$/, "")) ?? { spread: 0.05, pellets: 1 };
 }
 
 /** Normal weapons the Mystery Box can hand out (incl. the cheaper wacky ones). */
