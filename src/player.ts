@@ -110,8 +110,8 @@ export class Player {
   /** Fade the aim guide in/out (shown only during active play). */
   showAimGuide(on: boolean) {
     const mat = this.aimGuide.material as THREE.MeshBasicMaterial;
-    const target = on ? 0.18 : 0;
-    mat.opacity += (target - mat.opacity) * 0.3;
+    const target = on ? 0.14 : 0; // tuned-down opacity (less intrusive)
+    mat.opacity += (target - mat.opacity) * 0.25;
     this.aimGuide.visible = mat.opacity > 0.01;
   }
 
