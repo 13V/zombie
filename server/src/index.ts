@@ -45,7 +45,13 @@ const httpServer = http.createServer((req, res) => {
   res.end('not found');
 });
 
-const wss = new WebSocketServer({ server: httpServer });
+// maxPayload caps frame size (64 KB) so a client can't send a huge frame and
+// OOM the server via JSON.parse. Game messages are tiny; 64 KB is generous.
+const wss = new WebSocketServer({ server: httpServer, maxPayload: 64 * 1024 });
+
+// Hard ceiling on concurrent sockets — refuse new connections past this so a
+// flood can't exhaust memory/file descriptors.
+const MAX_CONNECTIONS = 500;
 
 // ---------------------------------------------------------------------------
 // Message helpers.
@@ -68,6 +74,15 @@ function sendError(socket: WebSocket, message: string): void {
 // ---------------------------------------------------------------------------
 
 wss.on('connection', (socket: WebSocket) => {
+  // Refuse connections beyond the ceiling (flood / FD exhaustion guard).
+  if (wss.clients.size > MAX_CONNECTIONS) {
+    try {
+      socket.close(1013, 'server full');
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   state.set(socket, {});
 
   // Heartbeat: a pong marks the socket alive again. The interval below sweeps
@@ -77,7 +92,27 @@ wss.on('connection', (socket: WebSocket) => {
     (socket as WebSocket & { isAlive?: boolean }).isAlive = true;
   });
 
+  // Per-socket token-bucket rate limiter: refill ~40 msg/s, burst 80. Beyond
+  // that, drop messages (and disconnect a sustained flooder) so one client
+  // can't relay-flood the room.
+  const rate = { tokens: 80, last: Date.now() };
+
   socket.on('message', (raw) => {
+    // refill tokens
+    const now = Date.now();
+    rate.tokens = Math.min(80, rate.tokens + ((now - rate.last) / 1000) * 40);
+    rate.last = now;
+    if (rate.tokens < 1) {
+      // sustained flood — terminate
+      try {
+        socket.close(1008, 'rate limit');
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    rate.tokens -= 1;
+
     let msg: unknown;
     try {
       msg = JSON.parse(raw.toString());
