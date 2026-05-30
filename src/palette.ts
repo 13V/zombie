@@ -87,6 +87,20 @@ export const VOX = {
   rockDark: 0x7c7c71,
   ember: 0xff7a2a,       // campfire flame (glow)
   emberHot: 0xffd24a,
+  // ---- ground & foliage detail (studio-voxel dressing) ----
+  grassLight: 0xb6e85f,  // sun-kissed grass tufts / highlights
+  leafLight: 0x8fd44f,   // lit top of tree canopies
+  bark: 0x6b4a2a,
+  barkDark: 0x523822,
+  flowerPink: 0xff9ec7,
+  flowerYellow: 0xffd45a,
+  flowerWhite: 0xfff3e0,
+  flowerRed: 0xff6f7a,
+  flowerStem: 0x57a52c,
+  mushroomCap: 0xd0593f,
+  mushroomStem: 0xf0e6d2,
+  pebble: 0xb8b8ad,
+  pebbleDark: 0x97978c,
 };
 
 /** Matte, flat-shaded material for voxel blocks (crisp per-face shading). */
