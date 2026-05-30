@@ -94,7 +94,7 @@ export class Player {
         blending: THREE.AdditiveBlending,
       }),
     );
-    this.aimGuide.rotation.x = -Math.PI / 2; // lie flat on the ground
+    this.aimGuide.rotation.x = Math.PI / 2; // lie flat, extending toward +Z (the character's front / aim)
     this.aimGuide.position.set(0, 0.06, 0.6); // start just in front of the player
     this.aimGuide.scale.set(this.guideBaseW, this.guideLen, 1);
     this.aimGuide.renderOrder = 3;
