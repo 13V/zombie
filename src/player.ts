@@ -151,7 +151,7 @@ export class Player {
   }
 
   /** Active gameplay update: move by `(moveX, moveZ)`, aim toward `aimPoint`. */
-  update(dt: number, moveX: number, moveZ: number, aimPoint: THREE.Vector3) {
+  update(dt: number, moveX: number, moveZ: number, aimPoint: THREE.Vector3, aiming = true) {
     if (!this.alive) {
       this.char.update(dt);
       return;
@@ -161,14 +161,22 @@ export class Player {
     this.pos.x += moveX * speed * dt;
     this.pos.z += moveZ * speed * dt;
 
+    // aimDir always tracks the aim point (bullets + muzzle fire along it).
     const dx = aimPoint.x - this.pos.x;
     const dz = aimPoint.z - this.pos.z;
-    if (dx * dx + dz * dz > 0.0004) {
-      this.aimDir.set(dx, 0, dz).normalize();
-      this.group.rotation.y = Math.atan2(this.aimDir.x, this.aimDir.z);
-    }
+    if (dx * dx + dz * dz > 0.0004) this.aimDir.set(dx, 0, dz).normalize();
 
     const moving = moveX !== 0 || moveZ !== 0;
+    // Face the aim while firing; otherwise look where you are walking.
+    if (aiming || !moving) {
+      this.group.rotation.y = Math.atan2(this.aimDir.x, this.aimDir.z);
+    } else {
+      const tgt = Math.atan2(moveX, moveZ);
+      let d2 = tgt - this.group.rotation.y;
+      while (d2 > Math.PI) d2 -= Math.PI * 2;
+      while (d2 < -Math.PI) d2 += Math.PI * 2;
+      this.group.rotation.y += d2 * Math.min(1, dt * 12);
+    }
     this.moving = moving;
     this.char.play(moving ? "walk" : "idle");
     this.char.update(dt);
