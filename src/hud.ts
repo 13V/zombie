@@ -30,6 +30,10 @@ export class Hud {
         <div class="pill room hidden" id="hud-room"><span class="label">Room</span><span class="value" id="hud-room-code"></span></div>
       </div>
       <div class="powerups" id="hud-powerups"></div>
+      <div class="combo" id="hud-combo">
+        <span class="combo-x" id="hud-combo-x">x2</span>
+        <div class="combo-bar"><div class="combo-fill" id="hud-combo-fill"></div></div>
+      </div>
       <div class="hud-bottom">
         <div class="health"><div class="bar"><div class="fill" id="hud-health"></div></div></div>
         <div class="weapon">
@@ -55,6 +59,7 @@ export class Hud {
           <span class="k">E</span><span>Buy / interact</span>
           <span class="k">Q</span><span>Swap weapon</span>
           <span class="k">P</span><span>Pause</span>
+          <span class="k">M</span><span>Mute</span>
         </div>
         <button class="play" id="btn-start">Play Solo</button>
         <div class="coop">
@@ -128,6 +133,17 @@ export class Hud {
     const pct = Math.max(0, Math.min(1, hp / max));
     this.healthFill.style.width = `${pct * 100}%`;
     this.healthFill.classList.toggle("low", pct < 0.35);
+  }
+  /** Show the kill-combo multiplier (0 = hide). `frac` drains the bar. */
+  setCombo(mult: number, frac: number) {
+    const el = this.q("#hud-combo");
+    if (mult <= 1) {
+      el.classList.remove("show");
+      return;
+    }
+    el.classList.add("show");
+    this.q("#hud-combo-x").textContent = `x${mult % 1 === 0 ? mult : mult.toFixed(2).replace(/0$/, "")}`;
+    this.q("#hud-combo-fill").style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
   }
   setPowerups(list: ActiveGum[]) {
     this.powerupsEl.innerHTML = list

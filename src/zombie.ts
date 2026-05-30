@@ -29,6 +29,9 @@ export class Zombie {
   dying = false;
   private deathTimer = 0;
   touchCooldown = 0;
+  /** Decaying knockback velocity + hit-flash timer for game feel. */
+  private knock = new THREE.Vector3();
+  private flash = 0;
 
   // per-spawn variant state
   touchDamage = ZOMBIE.touchDamage;
@@ -81,6 +84,7 @@ export class Zombie {
   hit(damage: number): boolean {
     if (!this.alive) return false;
     this.health -= damage;
+    this.flash = 0.12; // brief white hit-flash
     if (this.health <= 0) {
       this.alive = false;
       this.dying = true;
@@ -89,6 +93,15 @@ export class Zombie {
       return true;
     }
     return false;
+  }
+
+  /** Shove the zombie away from a point — visual "bullet force". */
+  knockback(fromX: number, fromZ: number, force: number) {
+    const dx = this.pos.x - fromX;
+    const dz = this.pos.z - fromZ;
+    const d = Math.hypot(dx, dz) || 1;
+    this.knock.x += (dx / d) * force;
+    this.knock.z += (dz / d) * force;
   }
 
   update(dt: number, target: THREE.Vector3, others: Zombie[]) {
@@ -115,16 +128,28 @@ export class Zombie {
       }
     }
 
+    // apply + decay knockback (visual push, then snaps back to steering)
     this.pos.addScaledVector(this.vel, dt);
+    this.pos.x += this.knock.x * dt;
+    this.pos.z += this.knock.z * dt;
+    this.knock.multiplyScalar(Math.pow(0.0008, dt));
     this.pos.y = 0;
     this.group.position.copy(this.pos);
     this.group.rotation.y = Math.atan2(_tmp.x, _tmp.z);
+    if (this.flash > 0) {
+      this.flash -= dt;
+      if (this.char instanceof VoxelChar) this.char.setHitFlash(Math.max(0, this.flash / 0.12));
+    }
     this.char.update(dt);
   }
 
   /** Advance the death animation; hide + recycle when the corpse times out. */
   updateDying(dt: number) {
     if (!this.dying) return;
+    if (this.flash > 0) {
+      this.flash -= dt;
+      if (this.char instanceof VoxelChar) this.char.setHitFlash(Math.max(0, this.flash / 0.12));
+    }
     this.char.update(dt);
     this.deathTimer -= dt;
     if (this.deathTimer <= 0) {

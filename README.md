@@ -62,6 +62,7 @@ Solo play needs none of this.
 | **E** / **Space**| Interact / buy    |
 | **Q**            | Swap weapon       |
 | **P** / **Esc**  | Pause             |
+| **M**            | Mute / unmute     |
 
 ## What's in the prototype
 
@@ -72,6 +73,19 @@ Solo play needs none of this.
 - **Mystery Box** (random weapon gamble), a **wall-buy** weapon, and **two perk pads**
   (Tough = more HP, Quick = faster movement + reload).
 - HUD: round, points, health, weapon + ammo, interaction prompts; start / game-over flow.
+
+### Game feel & juice
+- **Procedural audio** (`audio.ts`) — every sound is synthesized live with the Web
+  Audio API (no asset files): gunfire, hit ticks, crit pops, zombie groans, kill
+  thuds, explosions, pickup jingles, buy/deny blips, a round-start sting, and an
+  escalating ambient drone. Press **M** to mute.
+- **Floating combat text** (`feedback.ts`) — pooled, billboarded damage / "+points"
+  / CRIT numbers that rise and fade (capped for performance).
+- **Hit feedback** — white hit-flash on zombies, knockback shove, muzzle flash, and
+  brief **hit-stop** (sim micro-freeze) on crits / combo kills for impact weight.
+- **Center-hit crits** — precise shots (near the body axis) deal ×2 and pop "CRIT".
+- **Kill-combo multiplier** (`combo.ts`) — chaining kills ramps a points multiplier
+  (up to ×5) shown with a draining HUD bar; lapses if you stop killing.
 
 ## Matching the cozy soft-3D art style
 

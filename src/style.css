@@ -76,6 +76,39 @@ html, body {
 .gum b { color: var(--gc); }
 .pill.room .value { color: #9fe0ff; letter-spacing: 2px; }
 
+.combo {
+  position: absolute;
+  top: 96px; right: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.12s, transform 0.12s;
+  pointer-events: none;
+}
+.combo.show { opacity: 1; transform: scale(1); }
+.combo-x {
+  font-size: 30px;
+  font-weight: 900;
+  color: #ffd24a;
+  text-shadow: 0 2px 0 rgba(0,0,0,0.4), 0 0 14px rgba(255,210,74,0.7);
+  letter-spacing: 1px;
+}
+.combo-bar {
+  width: 86px; height: 6px;
+  background: rgba(0,0,0,0.4);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.combo-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ffd24a, #ff8a3a);
+  border-radius: 999px;
+  transition: width 0.08s linear;
+}
+
 .coop {
   display: flex;
   flex-direction: column;

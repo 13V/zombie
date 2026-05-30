@@ -26,6 +26,8 @@ export class Player {
   reloadMul = 1;
 
   private char: CharacterRig;
+  private muzzleFlash: THREE.Sprite;
+  private flashLife = 0;
 
   constructor(scene: THREE.Scene, assets: AssetManager) {
     this.char =
@@ -33,7 +35,27 @@ export class Player {
       new VoxelChar({ body: COLORS.player, head: COLORS.playerAccent, eye: 0x222222, hat: 0xf2c14e, gun: true });
     this.group.add(this.char.root);
     this.group.position.copy(this.pos);
+
+    // pooled muzzle flash: one billboarded glow, toggled per shot (no per-shot allocs)
+    const mat = new THREE.SpriteMaterial({
+      color: 0xffe9a8,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.muzzleFlash = new THREE.Sprite(mat);
+    this.muzzleFlash.scale.set(1.1, 1.1, 1);
+    this.muzzleFlash.position.set(0, 1.0, 0.9);
+    this.group.add(this.muzzleFlash);
+
     scene.add(this.group);
+  }
+
+  /** Pop the muzzle flash (called when a shot actually fires). */
+  flash() {
+    this.flashLife = 0.06;
+    this.muzzleFlash.position.set(0, 1.0, 0.9);
   }
 
   damage(amount: number) {
@@ -64,6 +86,7 @@ export class Player {
     const moving = moveX !== 0 || moveZ !== 0;
     this.char.play(moving ? "walk" : "idle");
     this.char.update(dt);
+    this.updateFlash(dt);
 
     this.timeSinceHit += dt;
     if (this.timeSinceHit > PLAYER.regenDelay && this.health < this.maxHealth) {
@@ -75,10 +98,23 @@ export class Player {
     this.muzzle.y = 1.0;
   }
 
+  private updateFlash(dt: number) {
+    const mat = this.muzzleFlash.material as THREE.SpriteMaterial;
+    if (this.flashLife > 0) {
+      this.flashLife -= dt;
+      const k = Math.max(0, this.flashLife / 0.06);
+      mat.opacity = k;
+      this.muzzleFlash.scale.setScalar(0.8 + (1 - k) * 0.6);
+    } else if (mat.opacity !== 0) {
+      mat.opacity = 0;
+    }
+  }
+
   /** Used on the menu / paused screens so the figure keeps breathing. */
   idle(dt: number) {
     this.char.play("idle");
     this.char.update(dt);
+    this.updateFlash(dt);
   }
 
   reset() {

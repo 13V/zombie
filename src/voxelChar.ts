@@ -35,6 +35,7 @@ export class VoxelChar implements CharacterRig {
   private reach: number;
   private bodyMat: THREE.MeshStandardMaterial;
   private headMat: THREE.MeshStandardMaterial;
+  private baseEmissive = 0x000000;
 
   constructor(opts: VoxelCharOpts) {
     this.gait = opts.zombie ? 6 : 10;
@@ -114,7 +115,23 @@ export class VoxelChar implements CharacterRig {
     this.bodyMat.color.set(body);
     this.bodyMat.emissive.set(emissive);
     this.bodyMat.emissiveIntensity = emissive === 0x000000 ? 1 : 0.5;
+    this.baseEmissive = emissive;
     this.headMat.color.set(head);
+  }
+
+  /** White flash on hit (0..1); fades back to the variant's base emissive. */
+  setHitFlash(amount: number) {
+    if (amount <= 0) {
+      this.bodyMat.emissive.set(this.baseEmissive);
+      this.headMat.emissive.set(0x000000);
+      this.bodyMat.emissiveIntensity = this.baseEmissive === 0x000000 ? 1 : 0.5;
+      this.headMat.emissiveIntensity = 1;
+      return;
+    }
+    this.bodyMat.emissive.setRGB(amount, amount, amount);
+    this.headMat.emissive.setRGB(amount, amount, amount);
+    this.bodyMat.emissiveIntensity = 1;
+    this.headMat.emissiveIntensity = 1;
   }
 
   play(state: AnimState, _opts: { once?: boolean } = {}) {

@@ -18,6 +18,9 @@ import { Interactables, GameApi } from "./interactables";
 import { Hud } from "./hud";
 import { AssetManager } from "./assets";
 import { Powerups } from "./powerups";
+import { FloatingText } from "./feedback";
+import { Audio } from "./audio";
+import { Combo } from "./combo";
 import { NetClient, InputMsg, ZombieSnap } from "./net";
 import { NetPlay } from "./netplay";
 import { COLORS } from "./palette";
@@ -84,6 +87,10 @@ class Game implements GameApi {
   private interactables: Interactables;
   private hud: Hud;
   private puffs: Puffs;
+  private floaters: FloatingText;
+  private audio = new Audio();
+  private combo = new Combo();
+  private hitStop = 0; // seconds of remaining sim freeze (game feel)
 
   points = 0;
   private weapons: Weapon[] = [];
@@ -144,11 +151,19 @@ class Game implements GameApi {
     this.rounds = new RoundManager(this.scene, this.assets);
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene);
+    this.floaters = new FloatingText(this.scene);
     this.hud = new Hud(ui);
+
+    // Resume audio on the first user gesture (browser autoplay policy).
+    const unlock = () => this.audio.unlock();
+    addEventListener("pointerdown", unlock, { once: true });
+    addEventListener("keydown", unlock, { once: true });
 
     this.rounds.onRoundStart = (n) => {
       this.hud.setRound(n);
       if (n > 1) this.hud.toast(`Round ${n}`);
+      this.audio.roundStart();
+      this.audio.setIntensity(n / 20);
     };
     this.rounds.onIntermission = () => {
       const cleared = this.rounds.round;
@@ -184,6 +199,10 @@ class Game implements GameApi {
     this.powerups.clear();
     this.hud.setPowerups([]);
     this.shake = 0;
+    this.combo.reset();
+    this.floaters.clear();
+    this.hitStop = 0;
+    this.hud.setCombo(0, 0);
     this.hud.setPoints(this.points);
     this.hud.setRound(1);
     if (!this.netplay) this.hud.hideRoomCode();
@@ -196,11 +215,14 @@ class Game implements GameApi {
     this.hud.hideGameOver();
     this.state = "playing";
     this.rounds.start();
+    this.audio.startMusic(0);
   }
 
   private gameOver() {
     this.state = "over";
     this.input.firing = false;
+    this.audio.stopMusic();
+    this.audio.hurt();
     this.hud.showGameOver(this.rounds.round, this.points);
   }
 
@@ -263,10 +285,12 @@ class Game implements GameApi {
   spend(amount: number): boolean {
     if (this.points < amount) {
       this.hud.toast("Not enough points");
+      this.audio.deny();
       return false;
     }
     this.points -= amount;
     this.hud.setPoints(this.points);
+    this.audio.buy();
     return true;
   }
   private addPoints(n: number) {
@@ -329,6 +353,7 @@ class Game implements GameApi {
       for (const w of this.weapons) w.refill();
       this.syncWeaponHud();
     }
+    this.audio.powerup();
     this.hud.toast(`${def.name}!`);
   }
   toast(msg: string) {
@@ -346,14 +371,21 @@ class Game implements GameApi {
   // ---- main loop ----
   private loop = () => {
     requestAnimationFrame(this.loop);
-    const dt = Math.min(0.05, this.clock.getDelta());
+    let dt = Math.min(0.05, this.clock.getDelta());
 
     if (this.input.pressed("KeyP") || this.input.pressed("Escape")) {
       if (this.state === "playing") this.state = "paused";
       else if (this.state === "paused") this.state = "playing";
     }
+    if (this.input.pressed("KeyM")) this.audio.setEnabled(!this.audio.enabled);
 
     this.input.updateAim(this.camera);
+
+    // Hit-stop: briefly freeze the sim (not rendering/FX) for impact weight.
+    if (this.hitStop > 0) {
+      this.hitStop -= dt;
+      dt = 0;
+    }
 
     if (this.state === "playing") {
       if (this.netplay && !this.netplay.isHost) this.simulateGuest(dt);
@@ -365,6 +397,7 @@ class Game implements GameApi {
     this.arena.update(dt);
     this.interactables.update(dt);
     this.puffs.update(dt);
+    this.floaters.update(dt);
     this.updateCamera(dt);
 
     this.composer.render();
@@ -373,6 +406,7 @@ class Game implements GameApi {
 
   private simulate(dt: number) {
     this.powerups.update(dt);
+    this.combo.update(dt);
     // Sugar Rush stacks on the Quick perk for movement speed.
     this.player.speedMul = (this.perks.has("quick") ? 1.35 : 1) * this.powerups.speedMul();
 
@@ -388,6 +422,8 @@ class Game implements GameApi {
     w.update(dt, this.player.reloadMul);
     const wantFire = w.def.auto ? this.input.firing : this.input.clicked();
     if (wantFire && w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, this.powerups.fireRateMul())) {
+      this.player.flash();
+      this.audio.shoot(w.def.wonder ? 0.85 : 0.4);
       this.netplay?.hostShot(
         this.player.muzzle.x, this.player.muzzle.z, this.player.aimDir.x, this.player.aimDir.z,
         w.def.bulletColor ?? COLORS.bullet, w.def.bulletScale ?? 1,
@@ -440,8 +476,14 @@ class Game implements GameApi {
       return;
     }
 
+    // occasional ambient groan scaled to how many are shambling about
+    if (this.rounds.aliveCount > 0 && Math.random() < dt * (0.5 + this.rounds.aliveCount * 0.08)) {
+      this.audio.groan();
+    }
+
     this.hud.setHealth(this.player.health, this.player.maxHealth);
     this.hud.setPowerups(this.powerups.list());
+    this.hud.setCombo(this.combo.active ? this.combo.multiplier : 0, this.combo.fraction);
     this.syncWeaponHud();
   }
 
@@ -460,6 +502,7 @@ class Game implements GameApi {
       swap: this.input.pressed("KeyQ"),
       interact: this.input.pressed("KeyE") || this.input.pressed("Space"),
     };
+    if (inp.fire) this.audio.shoot(0.4); // local fire feedback (host is authoritative)
     this.netplay!.guestSendInput(inp);
     this.netplay!.guestRender(dt, this.player, this.myId);
     this.bullets.update(dt); // moves the local tracer ghosts
@@ -477,14 +520,21 @@ class Game implements GameApi {
       if (!b.alive) continue;
       for (const z of this.rounds.zombies) {
         if (!z.alive || b.hit.has(z.id)) continue;
-        const hitR = ZOMBIE.radius * z.group.scale.x + 0.25;
+        const scale = z.group.scale.x;
+        const hitR = ZOMBIE.radius * scale + 0.25;
         const dx = z.pos.x - b.mesh.position.x;
         const dz = z.pos.z - b.mesh.position.z;
-        const dy = 1 - b.mesh.position.y; // bullets fly ~y=1, zombie body center ~1
-        if (dx * dx + dz * dz + dy * dy < hitR * hitR) {
+        const horiz2 = dx * dx + dz * dz;
+        if (horiz2 < hitR * hitR) {
           b.hit.add(z.id);
-          this.addPoints(Math.round(SCORE.hit * sMul));
-          this.damageZombie(z, b.damage * dmgMul, sMul);
+          // Precise center hits are "crits" (rewards aim, ×2 damage + bonus pts).
+          const crit = horiz2 < (hitR * 0.4) * (hitR * 0.4);
+          const dmg = b.damage * dmgMul * (crit ? 2 : 1);
+          this.addPoints(Math.round(SCORE.hit * sMul * (crit ? 2 : 1)));
+          z.knockback(b.mesh.position.x, b.mesh.position.z, crit ? 5 : 3);
+          this.audio.hit(crit);
+          if (crit) this.floaters.spawn(z.pos, "CRIT", "#ffe14a", 1, true);
+          this.damageZombie(z, dmg, sMul, crit);
           if (b.splashRadius > 0) {
             this.puffs.burst(z.pos, 0xffd0a0, 6);
             this.splash(z.pos, b.splashRadius, b.splashDamage * dmgMul, z.id, sMul);
@@ -501,12 +551,21 @@ class Game implements GameApi {
   }
 
   /** Apply damage to one zombie and handle the score/FX if it dies. */
-  private damageZombie(z: Zombie, dmg: number, scoreMul: number) {
+  private damageZombie(z: Zombie, dmg: number, scoreMul: number, crit = false) {
     const killed = z.hit(dmg);
     if (killed) {
-      this.addPoints(Math.round(SCORE.kill * z.scoreMul * scoreMul));
+      const mult = this.combo.onKill();
+      const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult);
+      this.addPoints(pts);
+      this.floaters.spawn(z.pos, `+${pts}`, mult > 1 ? "#ffd24a" : "#ffffff", mult > 1 ? 1.2 : 1);
       this.puffs.burst(z.pos, z.puffColor);
-      if (z.explodes) this.detonate(z);
+      this.audio.kill();
+      // a satisfying micro-freeze on crits / combo kills (local visual only)
+      if (crit || mult >= 2) this.hitStop = Math.min(0.07, this.hitStop + 0.045);
+      if (z.explodes) {
+        this.detonate(z);
+        this.audio.boom();
+      }
     }
   }
 
@@ -517,7 +576,10 @@ class Game implements GameApi {
       if (!z.alive || z.id === exceptId) continue;
       const dx = z.pos.x - center.x;
       const dz = z.pos.z - center.z;
-      if (dx * dx + dz * dz < r2) this.damageZombie(z, dmg, scoreMul);
+      if (dx * dx + dz * dz < r2) {
+        z.knockback(center.x, center.z, 4);
+        this.damageZombie(z, dmg, scoreMul);
+      }
     }
   }
 
@@ -539,7 +601,10 @@ class Game implements GameApi {
         if (dx * dx + dz * dz < reach * reach) {
           victim.damage(z.touchDamage);
           z.touchCooldown = ZOMBIE.touchInterval;
-          if (victim === this.player) this.shake = Math.min(0.5, this.shake + 0.25);
+          if (victim === this.player) {
+            this.shake = Math.min(0.5, this.shake + 0.25);
+            this.audio.hurt();
+          }
           break;
         }
       }
