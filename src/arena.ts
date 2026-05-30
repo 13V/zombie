@@ -66,9 +66,6 @@ export class Arena {
   // Campfire flames that flicker (emissive + scale), plus rising smoke puffs.
   private flames: { mesh: THREE.Mesh; baseY: number; phase: number }[] = [];
   private smoke: { mesh: THREE.Mesh; baseX: number; baseY: number; baseZ: number; phase: number; speed: number; rise: number }[] = [];
-  // Soft drifting light motes (pollen / fireflies) that catch the bloom — the
-  // single coziest atmospheric touch, gently bobbing through the warm air.
-  private motes: { sprite: THREE.Sprite; baseX: number; baseY: number; baseZ: number; phase: number; bob: number; sway: number; speed: number }[] = [];
   private t = 0;
 
   constructor(scene: THREE.Scene) {
@@ -89,7 +86,6 @@ export class Arena {
 
     this.buildRV();
     this.buildClouds(scene);
-    this.buildMotes(scene);
     scene.add(this.group);
   }
 
@@ -213,73 +209,80 @@ export class Arena {
   }
 
   /**
-   * The camper van as clean, crisp panels (not a fine voxel grid — that just
-   * quilts the surfaces with seams). Built from a modest set of solid boxes
-   * baked into instanced batches (a few draw calls), with sharp edges that SMAA
-   * smooths. Smooth white shell + blue stripe, glass-like windows, fat wheels.
+   * The camper van as a genuinely high-density voxel model. The trick that makes
+   * dense voxels look *premium* instead of a quilt: voxels are placed on a fine
+   * grid but scaled to slightly **overlap** (so surfaces read solid — no
+   * see-through gaps), with small even bevels; ambient occlusion then settles
+   * into the grooves. Baked into instanced batches (a few draw calls).
    */
   private buildRV() {
     const solid = new VoxelBatch();
     const glow = new VoxelBatch();
-    // Plain (un-beveled) boxes: large beveled boxes balloon their rounded edges
-    // when scaled, which reads as soft/blobby. Sharp panels look crisp + clean.
-    const geo = new THREE.BoxGeometry(1, 1, 1);
-    const S = (x: number, y: number, z: number, color: number, sx: number, sy: number, sz: number) =>
-      solid.add(x, y, z, color, sx, sy, sz);
-    const G = (x: number, y: number, z: number, color: number, sx: number, sy: number, sz: number) =>
-      glow.add(x, y, z, color, sx, sy, sz);
+    const geo = new RoundedBoxGeometry(1, 1, 1, 2, 0.06);
+    const s = 0.34;        // grid spacing — fine enough to read as detailed
+    const v = s * 1.16;    // voxel size > spacing => overlap => no holes
+    const eps = s * 0.25;
 
-    // chassis + fat wheels with steel hubs + dark arches
-    S(0.3, 1.0, 0, VOX.rvTrim, 6.8, 0.4, 2.7);
-    for (const wx of [-2.4, 2.6]) for (const wz of [-1.1, 1.1]) {
-      S(wx, 0.5, wz, VOX.tire, 1.0, 0.95, 0.72);
-      S(wx, 0.5, wz, VOX.rim, 0.44, 0.44, 0.76);
-      S(wx, 1.15, wz, VOX.rvTrim, 1.4, 0.55, 0.86);
+    const region = (
+      x0: number, x1: number, y0: number, y1: number, z0: number, z1: number,
+      colorFn: (x: number, y: number, z: number) => number | null, shell = true,
+    ) => {
+      for (let x = x0 + s / 2; x < x1 - eps; x += s)
+        for (let y = y0 + s / 2; y < y1 - eps; y += s)
+          for (let z = z0 + s / 2; z < z1 - eps; z += s) {
+            if (shell && x > x0 + s && x < x1 - s && y > y0 + s && y < y1 - s && z > z0 + s && z < z1 - s) continue;
+            const col = colorFn(x, y, z);
+            if (col !== null) solid.add(x, y, z, col, v, v, v);
+          }
+    };
+    const fill = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, color: number) =>
+      region(x0, x1, y0, y1, z0, z1, () => color, false);
+    const win = (x0: number, x1: number, y0: number, y1: number, z: number, color: number) => {
+      for (let x = x0 + s / 2; x < x1 - eps; x += s)
+        for (let y = y0 + s / 2; y < y1 - eps; y += s) glow.add(x, y, z, color, v, v, s * 0.7);
+    };
+    // body: white shell with a blue stripe band wrapping the walls
+    const body = (_x: number, y: number) => (y > 1.5 && y < 1.95 ? VOX.rvStripe : VOX.rvBody);
+
+    // shells: rear living box, lower cab, cab-over bunk
+    region(-1.7, 3.3, 1.2, 3.3, -1.4, 1.4, body);
+    region(-3.85, -1.7, 1.0, 2.45, -1.3, 1.3, body);
+    region(-3.85, -1.7, 2.45, 3.3, -1.4, 1.4, () => VOX.rvBody);
+    // chassis skirt + lighter two-tone roof caps
+    fill(-3.7, 3.5, 0.82, 1.18, -1.25, 1.25, VOX.rvTrim);
+    fill(-1.7, 3.3, 3.3, 3.6, -1.45, 1.45, VOX.rvBodyShade);
+    fill(-3.85, -1.7, 3.3, 3.6, -1.42, 1.42, VOX.rvBodyShade);
+    // windows (gentle glow = glass), door, windshield
+    win(-0.65, 0.65, 2.2, 2.95, 1.42, VOX.rvWindow);
+    win(1.35, 2.65, 2.2, 2.95, 1.42, VOX.rvWindow);
+    win(-3.5, -2.1, 1.55, 2.25, 1.32, VOX.rvWindow);   // cab side glass
+    for (let z = -1.0; z <= 1.0; z += s) glow.add(-3.88, 1.95, z, VOX.rvWindow, 0.12, 0.7, v);
+    fill(-1.5, -0.7, 1.2, 2.45, 1.38, 1.5, VOX.rvDoor);
+    win(-1.4, -0.8, 2.45, 2.85, 1.5, VOX.rvWindow);    // door porthole
+    // wheels: fat tire blocks, steel hubs, dark arches
+    for (const wx of [-2.4, 2.6]) for (const wz of [-1.12, 1.12]) {
+      fill(wx - 0.5, wx + 0.5, 0.2, 1.0, wz - 0.36, wz + 0.36, VOX.tire);
+      solid.add(wx, 0.55, wz, VOX.rim, 0.42, 0.42, 0.8);
+      fill(wx - 0.66, wx + 0.66, 1.0, 1.22, wz - 0.42, wz + 0.42, VOX.rvTrim);
     }
-    // smooth shell: rear living box, lower cab, cab-over bunk
-    S(0.8, 2.25, 0, VOX.rvBody, 5.0, 2.1, 2.8);
-    S(-2.9, 1.7, 0, VOX.rvBody, 1.9, 1.5, 2.6);
-    S(-2.9, 2.85, 0, VOX.rvBody, 1.9, 0.95, 2.7);
-    // lighter roof cap (soft two-tone shading) + a subtle panel shade line
-    S(0.8, 3.35, 0, VOX.rvBodyShade, 5.25, 0.28, 2.9);
-    S(-2.9, 3.35, 0, VOX.rvBodyShade, 1.95, 0.28, 2.78);
-    S(0.8, 2.74, 0, VOX.rvBodyShade, 5.0, 0.06, 2.83);
-    // blue accent stripe wrapping body + cab
-    S(0.8, 1.92, 0, VOX.rvStripe, 5.06, 0.4, 2.84);
-    S(-2.9, 1.52, 0, VOX.rvStripe, 1.94, 0.4, 2.64);
-    // glass-like windows (gentle glow so they read as glass, not lamps)
-    G(0.0, 2.55, 1.43, VOX.rvWindow, 1.3, 0.72, 0.06);
-    G(2.3, 2.55, 1.43, VOX.rvWindow, 1.3, 0.72, 0.06);
-    G(-3.0, 1.95, 1.32, VOX.rvWindow, 1.35, 0.66, 0.06); // cab side
-    G(-3.86, 1.98, 0, VOX.rvWindow, 0.06, 0.78, 2.0);    // windshield
-    // crisp window frames
-    for (const fx of [0.0, 2.3]) {
-      S(fx, 2.93, 1.45, VOX.rvTrim, 1.5, 0.09, 0.08);
-      S(fx, 2.17, 1.45, VOX.rvTrim, 1.5, 0.09, 0.08);
-      S(fx, 2.55, 1.45, VOX.rvTrim, 0.08, 0.82, 0.08);
-    }
-    // door + porthole + step
-    S(-1.0, 1.92, 1.43, VOX.rvDoor, 1.0, 1.66, 0.09);
-    G(-1.0, 2.42, 1.49, VOX.rvWindow, 0.4, 0.4, 0.06);
-    S(-1.0, 1.05, 1.6, VOX.steelDark, 0.9, 0.2, 0.4);
-    // bumpers + grille + head/taillights
-    S(-4.0, 1.2, 0, VOX.rvTrim, 0.5, 0.5, 2.6);
-    S(3.5, 1.2, 0, VOX.rvTrim, 0.5, 0.5, 2.6);
-    S(-3.9, 1.4, 0, VOX.steelDark, 0.14, 0.5, 1.5);
-    for (const hz of [-0.85, 0.85]) G(-3.95, 1.45, hz, VOX.windowGlow, 0.12, 0.3, 0.34);
-    for (const tz of [-1.05, 1.05]) G(3.45, 1.7, tz, VOX.toolbox, 0.12, 0.34, 0.34);
+    // bumpers, grille, head/taillights
+    fill(-4.05, -3.8, 1.05, 1.45, -1.2, 1.2, VOX.rvTrim);
+    fill(3.35, 3.6, 1.05, 1.45, -1.2, 1.2, VOX.rvTrim);
+    fill(-3.9, -3.78, 1.2, 1.55, -0.7, 0.7, VOX.steelDark);
+    for (const hz of [-0.85, 0.85]) glow.add(-3.9, 1.45, hz, VOX.windowGlow, 0.14, 0.32, 0.36);
+    for (const tz of [-1.05, 1.05]) glow.add(3.42, 1.7, tz, VOX.toolbox, 0.14, 0.36, 0.36);
     // wing mirrors
     for (const mz of [-1.5, 1.5]) {
-      S(-3.5, 2.05, mz, VOX.steelDark, 0.3, 0.1, 0.1);
-      S(-3.66, 1.95, mz, VOX.steelDark, 0.12, 0.32, 0.16);
+      solid.add(-3.45, 2.05, mz, VOX.steelDark, 0.34, 0.12, 0.12);
+      solid.add(-3.62, 1.95, mz, VOX.steelDark, 0.16, 0.34, 0.18);
     }
     // back ladder, roof rails, AC unit, deck chair
-    for (const lz of [-0.7, 0.7]) S(3.5, 2.4, lz, VOX.steelDark, 0.12, 1.8, 0.12);
-    for (let r = 0; r < 4; r++) S(3.5, 1.7 + r * 0.45, 0, VOX.steelDark, 0.12, 0.1, 1.5);
-    for (const rz of [-1.05, 1.05]) S(0.8, 3.54, rz, VOX.steelDark, 4.6, 0.1, 0.12);
-    S(-0.4, 3.62, 0.3, VOX.rvTrim, 1.1, 0.36, 1.1);
-    S(1.6, 3.56, -0.3, VOX.woodTrim, 0.9, 0.12, 0.9);
-    S(2.05, 3.86, -0.3, VOX.woodTrim, 0.12, 0.7, 0.9);
+    for (const lz of [-0.7, 0.7]) for (let y = 1.4; y < 3.25; y += s) solid.add(3.45, y, lz, VOX.steelDark, 0.14, v, 0.14);
+    for (let r = 0; r < 4; r++) solid.add(3.45, 1.65 + r * 0.45, 0, VOX.steelDark, 0.14, 0.12, 1.4);
+    for (const rz of [-1.08, 1.08]) for (let x = -1.5; x < 3.2; x += s) solid.add(x, 3.6, rz, VOX.steelDark, v, 0.12, 0.14);
+    fill(-0.9, 0.1, 3.6, 3.95, -0.25, 0.75, VOX.rvTrim);
+    fill(1.2, 2.0, 3.6, 3.72, -0.7, 0.1, VOX.woodTrim);
+    fill(1.9, 2.05, 3.72, 4.25, -0.7, 0.1, VOX.woodTrim);
 
     solid.build(this.group, geo, true, true);
     glow.build(this.group, geo, false, false, (col) => glowMaterial(col, 0.4));
@@ -378,29 +381,46 @@ export class Arena {
     this.crateBody(props, x, 0.5, z, 1.0);
     if (stacked) this.crateBody(props, x + 0.1, 1.45, z - 0.05, 0.9);
   }
-  private crateBody(props: VoxelBatch, x: number, y: number, z: number, s: number) {
-    props.add(x, y, z, VOX.crate, s, s, s);
-    // plank frame on the camera-facing (+z) face
-    const f = z + s * 0.5;
-    props.add(x, y + s * 0.4, f, VOX.crateDark, s, s * 0.12, 0.06); // top rail
-    props.add(x, y - s * 0.4, f, VOX.crateDark, s, s * 0.12, 0.06); // bottom rail
-    props.add(x - s * 0.4, y, f, VOX.crateDark, s * 0.12, s, 0.06); // left stile
-    props.add(x + s * 0.4, y, f, VOX.crateDark, s * 0.12, s, 0.06); // right stile
-    props.add(x, y, f, VOX.crateDark, s * 0.12, s * 1.2, 0.05);     // centre brace
+  /**
+   * A shell of overlapping fine voxels (scale > spacing so it reads solid, not
+   * a quilt) — the same premium-voxel technique as the RV, for detailed props.
+   */
+  private denseShell(
+    b: VoxelBatch, cx: number, cy: number, cz: number, w: number, h: number, d: number, step: number,
+    colorFn: (vx: number, vy: number, vz: number) => number | null,
+  ) {
+    const v = step * 1.18;
+    const eps = step * 0.25;
+    for (let x = -w / 2 + step / 2; x < w / 2 - eps; x += step)
+      for (let y = -h / 2 + step / 2; y < h / 2 - eps; y += step)
+        for (let z = -d / 2 + step / 2; z < d / 2 - eps; z += step) {
+          if (Math.abs(x) < w / 2 - step && Math.abs(y) < h / 2 - step && Math.abs(z) < d / 2 - step) continue;
+          const col = colorFn(x, y, z);
+          if (col !== null) b.add(cx + x, cy + y, cz + z, col, v, v, v);
+        }
   }
 
-  /** A barrel with vertical staves + two steel hoops. */
+  /** A planked wooden crate built from fine voxels (slats + dark frame). */
+  private crateBody(props: VoxelBatch, x: number, y: number, z: number, s: number) {
+    const step = s * 0.26; // ~4 voxels per edge
+    this.denseShell(props, x, y, z, s, s, s, step, (vx, vy, vz) => {
+      const frame =
+        Math.abs(vy) > s / 2 - step * 1.2 || Math.abs(vx) > s / 2 - step * 1.2 || Math.abs(vz) > s / 2 - step * 1.2;
+      if (frame) return VOX.crateDark; // plank frame around the edges
+      return Math.round(vx / step) % 2 === 0 ? VOX.crate : VOX.crateDark; // vertical slats
+    });
+  }
+
+  /** A barrel built from fine voxels with three steel hoop bands + a lid. */
   private propBarrel(props: VoxelBatch, x: number, z: number, color: number) {
-    props.add(x, 0.6, z, color, 0.75, 1.2, 0.75);
-    // staves: slim ribs around the rim catch the light as fine detail
-    for (let a = 0; a < 8; a++) {
-      const an = (a / 8) * Math.PI * 2;
-      props.add(x + Math.cos(an) * 0.36, 0.6, z + Math.sin(an) * 0.36, color === VOX.barrel ? VOX.barrelRust : VOX.barrel, 0.1, 1.16, 0.1);
-    }
-    props.add(x, 0.95, z, VOX.steelDark, 0.82, 0.14, 0.82); // top hoop
-    props.add(x, 0.6, z, VOX.steelDark, 0.84, 0.12, 0.84);  // mid hoop
-    props.add(x, 0.3, z, VOX.steelDark, 0.82, 0.14, 0.82);  // bottom hoop
-    props.add(x, 1.22, z, VOX.steel, 0.5, 0.1, 0.5);        // lid
+    const w = 0.8, h = 1.2, step = w * 0.27; // ~3 voxels across, ~4 tall
+    this.denseShell(props, x, 0.6, z, w, h, w, step, (_vx, vy, _vz) => {
+      // hoops at local heights ≈ +0.35, 0, -0.35
+      if (Math.abs(vy - 0.35) < step * 0.65 || Math.abs(vy) < step * 0.55 || Math.abs(vy + 0.35) < step * 0.65)
+        return VOX.steelDark;
+      return color;
+    });
+    props.add(x, 1.22, z, VOX.steel, 0.52, 0.12, 0.52); // lid
   }
 
   private propSandbags(props: VoxelBatch, x: number, z: number) {
@@ -477,14 +497,15 @@ export class Arena {
   private buildTrees(props: VoxelBatch) {
     const placed: [number, number][] = [];
     let attempts = 0;
-    while (placed.length < 16 && attempts++ < 300) {
+    while (placed.length < 9 && attempts++ < 300) {
       const i = Math.floor((Math.random() * 2 - 1) * (this.half - 3));
       const j = Math.floor((Math.random() * 2 - 1) * (this.half - 3));
       if (!this.inArena(i, j)) continue;
       if (Math.max(Math.abs(i), Math.abs(j)) <= this.plaza + 1) continue; // keep plaza clear
       if (Math.abs(i) <= 1 || Math.abs(j) <= 1) continue; // keep paths clear
       if (this.insideObstacle(i, j, 2)) continue;
-      if (placed.some(([pi, pj]) => Math.abs(pi - i) < 3 && Math.abs(pj - j) < 3)) continue;
+      // wider spacing so trees feel placed, not cluttered
+      if (placed.some(([pi, pj]) => Math.abs(pi - i) < 5 && Math.abs(pj - j) < 5)) continue;
       placed.push([i, j]);
       this.buildTree(props, i, j);
     }
@@ -529,78 +550,9 @@ export class Arena {
     }
   }
 
-  // ---- floating light motes (pollen / fireflies) ----
-  /** A soft round falloff sprite texture, generated once for all motes. */
-  private static moteTexture?: THREE.Texture;
-  private moteSprite(): THREE.Texture {
-    if (Arena.moteTexture) return Arena.moteTexture;
-    const s = 64;
-    const cv = document.createElement("canvas");
-    cv.width = cv.height = s;
-    const ctx = cv.getContext("2d")!;
-    const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-    g.addColorStop(0, "rgba(255,255,255,1)");
-    g.addColorStop(0.35, "rgba(255,248,224,0.7)");
-    g.addColorStop(1, "rgba(255,244,210,0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, s, s);
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    Arena.moteTexture = tex;
-    return tex;
-  }
-
-  /**
-   * Slow, soft motes of light drifting through the air — sunlit pollen that
-   * bobs and sways. Picked up by the bloom pass, this is the coziest, most
-   * comforting atmospheric layer in the scene.
-   */
-  private buildMotes(scene: THREE.Scene) {
-    const tex = this.moteSprite();
-    const R = this.half - 2;
-    for (let n = 0; n < 22; n++) {
-      const mat = new THREE.SpriteMaterial({
-        map: tex,
-        color: Math.random() < 0.25 ? 0xfff0c0 : 0xffffff,
-        transparent: true,
-        opacity: 0.25 + Math.random() * 0.4,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        fog: true,
-      });
-      const sprite = new THREE.Sprite(mat);
-      const x = (Math.random() * 2 - 1) * R;
-      const z = (Math.random() * 2 - 1) * R;
-      const y = 1.2 + Math.random() * 7;
-      const sc = 0.12 + Math.random() * 0.22;
-      sprite.position.set(x, y, z);
-      sprite.scale.setScalar(sc);
-      scene.add(sprite);
-      this.motes.push({
-        sprite,
-        baseX: x, baseY: y, baseZ: z,
-        phase: Math.random() * Math.PI * 2,
-        bob: 0.4 + Math.random() * 0.8,
-        sway: 0.5 + Math.random() * 1.2,
-        speed: 0.25 + Math.random() * 0.4,
-      });
-    }
-  }
-
   // ---- per-frame ----
   update(dt: number) {
     this.t += dt;
-    for (const m of this.motes) {
-      const p = this.t * m.speed + m.phase;
-      m.sprite.position.set(
-        m.baseX + Math.sin(p) * m.sway,
-        m.baseY + Math.sin(p * 1.3) * m.bob,
-        m.baseZ + Math.cos(p * 0.8) * m.sway,
-      );
-      // a gentle twinkle so they shimmer rather than sit static
-      (m.sprite.material as THREE.SpriteMaterial).opacity =
-        0.3 + 0.25 * (0.5 + 0.5 * Math.sin(p * 2.1));
-    }
     for (const c of this.clouds) {
       c.group.position.x += c.speed * dt;
       if (c.group.position.x > 95) c.group.position.x = -95;
