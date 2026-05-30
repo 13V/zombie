@@ -117,6 +117,7 @@ class Game implements GameApi {
   private pets: Pet[] = [];
   private _petTgt = { x: 0, z: 0 };
   private _petDir = new THREE.Vector3();
+  private _petGold = 0; // fractional gold accumulator for banker pets
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
@@ -1318,8 +1319,25 @@ class Game implements GameApi {
     const px = this.player.pos.x;
     const pz = this.player.pos.z;
     const grid = this.rounds.grid;
+    // Power Totem(s): sum their buff so combat pets hit harder (+roleValue x level).
+    let petBuff = 1;
+    for (const p of this.pets) {
+      if (p.def.role === "buffer") petBuff += (p.def.roleValue ?? 0) * p.level;
+    }
     for (let i = 0; i < this.pets.length; i++) {
       const pet = this.pets[i];
+      // Banker (Piggy Bank): earn gold over time — the idle-economy hook.
+      if (pet.def.role === "banker") {
+        this._petGold += (pet.def.roleValue ?? 0) * pet.level * dt;
+        if (this._petGold >= 1) {
+          const g = Math.floor(this._petGold);
+          this._petGold -= g;
+          this.save.gold += g;
+          this.save.goldEarned += g;
+        }
+        pet.update(dt, px, pz, i, this.pets.length, null); // orbit/animate only
+        continue;
+      }
       // nearest zombie to the pet, within its range
       const near = grid.nearest(pet.group.position.x, pet.group.position.z, pet.def.range);
       let tgt: { x: number; z: number } | null = null;
@@ -1335,7 +1353,7 @@ class Game implements GameApi {
         this._petDir.set(shot.dx, 0, shot.dz);
         this.bullets.spawn(this.hitTmp, this._petDir, {
           // pet level x its own dmg x 60% of your damage scaling (every upgrade buffs the squad)
-          speed: 56, damage: d.damage * pet.damageMul * (1 + (this.mods.damageMul - 1) * 0.6), pierce: d.pierce + this.mods.pierceBonus, splashRadius: d.splashRadius,
+          speed: 56, damage: d.damage * pet.damageMul * petBuff * (1 + (this.mods.damageMul - 1) * 0.6), pierce: d.pierce + this.mods.pierceBonus, splashRadius: d.splashRadius,
           splashDamage: d.splashDamage, color: d.bulletColor, scale: d.bulletScale, homing: d.homing,
         });
       }

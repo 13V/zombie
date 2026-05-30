@@ -28,8 +28,13 @@ export interface PetDef {
   splashDamage: number;
   homing: number;
   /** Visual builder tag. */
-  shape: "bee" | "drone" | "dragon" | "ghost" | "turret" | "wisp";
+  shape: "bee" | "drone" | "dragon" | "ghost" | "turret" | "wisp" | "piggy" | "totem";
   range: number; // how far it will engage
+  /** Non-combat roles. "banker": earns gold over time + on kills nearby.
+   *  "buffer": boosts other pets' damage. (default = combat shooter) */
+  role?: "banker" | "buffer";
+  /** banker: gold per second passively. buffer: +damage fraction to other pets. */
+  roleValue?: number;
 }
 
 export const PETS: PetDef[] = [
@@ -52,6 +57,17 @@ export const PETS: PetDef[] = [
   {
     id: "dragon", name: "Baby Dragon", desc: "Spits explosive fireballs", cost: 1600, color: 0xff5a3a, accent: 0xffd24a,
     damage: 70, interval: 0.6, bulletColor: 0xff7a3a, bulletScale: 1.5, pierce: 2, splashRadius: 2.6, splashDamage: 60, homing: 1, shape: "dragon", range: 20,
+  },
+  // ---- non-combat roles (the idle-economy hooks) ----
+  {
+    id: "piggy", name: "Piggy Bank", desc: "Earns gold while you play", cost: 600, color: 0xff9ec7, accent: 0xffd6e6,
+    damage: 0, interval: 1, bulletColor: 0xffd24a, bulletScale: 0.5, pierce: 0, splashRadius: 0, splashDamage: 0, homing: 0, shape: "piggy", range: 0,
+    role: "banker", roleValue: 1.2, // gold/sec at level 1
+  },
+  {
+    id: "totem", name: "Power Totem", desc: "+25% damage to your other pets", cost: 1200, color: 0x7be0c0, accent: 0xffd24a,
+    damage: 0, interval: 1, bulletColor: 0x7be0c0, bulletScale: 0.5, pierce: 0, splashRadius: 0, splashDamage: 0, homing: 0, shape: "totem", range: 0,
+    role: "buffer", roleValue: 0.25,
   },
 ];
 
@@ -197,6 +213,26 @@ export class Pet {
         this.wingL = box(0.5, 0.06, 0.42, -0.5, 0.22, -0.08, glowMaterial(acc, 0.5));
         this.wingR = box(0.5, 0.06, 0.42, 0.5, 0.22, -0.08, glowMaterial(acc, 0.5));
         this.muzzle = box(0.16, 0.16, 0.16, 0, 0.12, 0.86, glowMaterial(0xffd24a, 1.4));
+        break;
+      case "piggy":
+        box(0.6, 0.46, 0.7, 0, 0, 0, body); // round body
+        box(0.18, 0.18, 0.14, 0, 0.02, 0.4, accent); // snout
+        box(0.05, 0.05, 0.04, -0.05, 0.02, 0.47, dark); // nostrils
+        box(0.05, 0.05, 0.04, 0.05, 0.02, 0.47, dark);
+        box(0.07, 0.08, 0.04, -0.12, 0.06, 0.34, dark); // eyes
+        box(0.07, 0.08, 0.04, 0.12, 0.06, 0.34, dark);
+        box(0.12, 0.12, 0.04, -0.16, 0.26, 0.18, body); // ears
+        box(0.12, 0.12, 0.04, 0.16, 0.26, 0.18, body);
+        box(0.22, 0.06, 0.02, 0, 0.16, -0.02, glowMaterial(0xffd24a, 1.0)); // coin slot
+        box(0.12, 0.1, 0.02, 0, 0, -0.36, accent); // curly tail
+        break;
+      case "totem":
+        box(0.4, 0.2, 0.4, 0, -0.3, 0, accent); // base
+        box(0.46, 0.46, 0.46, 0, 0, 0, body); // mask block
+        box(0.5, 0.12, 0.5, 0, 0.26, 0, glowMaterial(this.def.color, 0.9)); // glowing top ring
+        box(0.1, 0.14, 0.05, -0.12, 0.04, 0.24, glowMaterial(0xffd24a, 1.2)); // glowing eyes
+        box(0.1, 0.14, 0.05, 0.12, 0.04, 0.24, glowMaterial(0xffd24a, 1.2));
+        this.aura = box(0.7, 0.7, 0.7, 0, 0, 0, glowMaterial(this.def.color, 0.3)); // buff aura
         break;
       default:
         box(0.5, 0.5, 0.5, 0, 0, 0, body);
