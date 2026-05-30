@@ -53,7 +53,9 @@ export class FloatingText {
     }
     let ft = this.pool.pop();
     if (!ft) {
-      const mat = new THREE.SpriteMaterial({ transparent: true, depthTest: false });
+      // depthWrite:false + toneMapped:false keep the ambient-occlusion (GTAO)
+      // pass from darkening the transparent quad into a black box.
+      const mat = new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false, toneMapped: false });
       const sprite = new THREE.Sprite(mat);
       ft = { sprite, vel: new THREE.Vector3(), life: 0, maxLife: 0 };
     }

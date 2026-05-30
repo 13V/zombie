@@ -86,12 +86,18 @@ export class Player {
         transparent: true,
         opacity: 0,
         depthWrite: false,
+        depthTest: false,
+        toneMapped: false,
+        // Additive: the texture's transparent/black areas add nothing, so the
+        // ambient-occlusion (GTAO) pass can't darken it into a black box; reads
+        // as a soft glow on the ground.
+        blending: THREE.AdditiveBlending,
       }),
     );
     this.aimGuide.rotation.x = -Math.PI / 2; // lie flat on the ground
     this.aimGuide.position.set(0, 0.06, 0.6); // start just in front of the player
     this.aimGuide.scale.set(this.guideBaseW, this.guideLen, 1);
-    this.aimGuide.renderOrder = 2;
+    this.aimGuide.renderOrder = 3;
     this.group.add(this.aimGuide);
 
     scene.add(this.group);
