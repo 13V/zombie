@@ -14,6 +14,9 @@ export class Audio {
   private unlocked = false;
   private lastGunAt = 0;
   private lastGroanAt = 0;
+  private lastHitAt = 0;
+  private lastKillAt = 0;
+  private lastBoomAt = 0;
   private musicOsc: OscillatorNode[] = [];
   private musicTimer?: number;
   enabled = true;
@@ -116,12 +119,20 @@ export class Audio {
   /** Confirms a bullet connected — crisp tick. `crit` for headshots. */
   hit(crit = false) {
     if (!this.ok()) return;
+    // Throttle: AoE (explosive/splash/chain) can fire many hits per frame —
+    // creating an audio node each would jank the main thread.
+    if (this.t - this.lastHitAt < 0.02) return;
+    this.lastHitAt = this.t;
     this.blip("triangle", crit ? 1400 : 900, 0.05, crit ? 0.22 : 0.14, { sweepTo: crit ? 700 : 500 });
   }
 
   /** Zombie dies. */
   kill() {
     if (!this.ok()) return;
+    // Throttle: explosive/nuke/detonate can kill dozens in one frame; each kill
+    // allocates a noise buffer + oscillator, so cap the rate to avoid FPS drops.
+    if (this.t - this.lastKillAt < 0.04) return;
+    this.lastKillAt = this.t;
     this.noise(0.18, 0.25, "lowpass", 600, 1, 120);
     this.blip("sawtooth", 160, 0.18, 0.12, { sweepTo: 60 });
   }
@@ -146,6 +157,8 @@ export class Audio {
   /** Big explosion (bomber/grenade). */
   boom() {
     if (!this.ok()) return;
+    if (this.t - this.lastBoomAt < 0.06) return; // throttle multi-explosion frames
+    this.lastBoomAt = this.t;
     this.noise(0.5, 0.5, "lowpass", 800, 1, 60);
     this.blip("sine", 90, 0.4, 0.3, { sweepTo: 30 });
   }
