@@ -1428,6 +1428,18 @@ class Game implements GameApi {
       this.camera.position.y += (Math.random() - 0.5) * this.shake;
       this.shake *= Math.pow(0.0001, dt); // fast decay
     }
+
+    // punch-zoom: briefly zoom the ortho view in on boss death, then ease back
+    if (this.zoomPunch > 0.001) {
+      this.zoomPunch *= Math.pow(0.02, dt);
+      const aspect = innerWidth / innerHeight;
+      const vs = this.viewSize * (1 - this.zoomPunch * 0.18);
+      this.camera.left = -vs * aspect;
+      this.camera.right = vs * aspect;
+      this.camera.top = vs;
+      this.camera.bottom = -vs;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   private onResize = () => {
