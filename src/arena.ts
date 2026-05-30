@@ -66,9 +66,6 @@ export class Arena {
   // Campfire flames that flicker (emissive + scale), plus rising smoke puffs.
   private flames: { mesh: THREE.Mesh; baseY: number; phase: number }[] = [];
   private smoke: { mesh: THREE.Mesh; baseX: number; baseY: number; baseZ: number; phase: number; speed: number; rise: number }[] = [];
-  // Soft drifting light motes (pollen / fireflies) that catch the bloom — the
-  // single coziest atmospheric touch, gently bobbing through the warm air.
-  private motes: { sprite: THREE.Sprite; baseX: number; baseY: number; baseZ: number; phase: number; bob: number; sway: number; speed: number }[] = [];
   private t = 0;
 
   constructor(scene: THREE.Scene) {
@@ -89,7 +86,6 @@ export class Arena {
 
     this.buildRV();
     this.buildClouds(scene);
-    this.buildMotes(scene);
     scene.add(this.group);
   }
 
@@ -385,29 +381,46 @@ export class Arena {
     this.crateBody(props, x, 0.5, z, 1.0);
     if (stacked) this.crateBody(props, x + 0.1, 1.45, z - 0.05, 0.9);
   }
-  private crateBody(props: VoxelBatch, x: number, y: number, z: number, s: number) {
-    props.add(x, y, z, VOX.crate, s, s, s);
-    // plank frame on the camera-facing (+z) face
-    const f = z + s * 0.5;
-    props.add(x, y + s * 0.4, f, VOX.crateDark, s, s * 0.12, 0.06); // top rail
-    props.add(x, y - s * 0.4, f, VOX.crateDark, s, s * 0.12, 0.06); // bottom rail
-    props.add(x - s * 0.4, y, f, VOX.crateDark, s * 0.12, s, 0.06); // left stile
-    props.add(x + s * 0.4, y, f, VOX.crateDark, s * 0.12, s, 0.06); // right stile
-    props.add(x, y, f, VOX.crateDark, s * 0.12, s * 1.2, 0.05);     // centre brace
+  /**
+   * A shell of overlapping fine voxels (scale > spacing so it reads solid, not
+   * a quilt) — the same premium-voxel technique as the RV, for detailed props.
+   */
+  private denseShell(
+    b: VoxelBatch, cx: number, cy: number, cz: number, w: number, h: number, d: number, step: number,
+    colorFn: (vx: number, vy: number, vz: number) => number | null,
+  ) {
+    const v = step * 1.18;
+    const eps = step * 0.25;
+    for (let x = -w / 2 + step / 2; x < w / 2 - eps; x += step)
+      for (let y = -h / 2 + step / 2; y < h / 2 - eps; y += step)
+        for (let z = -d / 2 + step / 2; z < d / 2 - eps; z += step) {
+          if (Math.abs(x) < w / 2 - step && Math.abs(y) < h / 2 - step && Math.abs(z) < d / 2 - step) continue;
+          const col = colorFn(x, y, z);
+          if (col !== null) b.add(cx + x, cy + y, cz + z, col, v, v, v);
+        }
   }
 
-  /** A barrel with vertical staves + two steel hoops. */
+  /** A planked wooden crate built from fine voxels (slats + dark frame). */
+  private crateBody(props: VoxelBatch, x: number, y: number, z: number, s: number) {
+    const step = s * 0.26; // ~4 voxels per edge
+    this.denseShell(props, x, y, z, s, s, s, step, (vx, vy, vz) => {
+      const frame =
+        Math.abs(vy) > s / 2 - step * 1.2 || Math.abs(vx) > s / 2 - step * 1.2 || Math.abs(vz) > s / 2 - step * 1.2;
+      if (frame) return VOX.crateDark; // plank frame around the edges
+      return Math.round(vx / step) % 2 === 0 ? VOX.crate : VOX.crateDark; // vertical slats
+    });
+  }
+
+  /** A barrel built from fine voxels with three steel hoop bands + a lid. */
   private propBarrel(props: VoxelBatch, x: number, z: number, color: number) {
-    props.add(x, 0.6, z, color, 0.75, 1.2, 0.75);
-    // staves: slim ribs around the rim catch the light as fine detail
-    for (let a = 0; a < 8; a++) {
-      const an = (a / 8) * Math.PI * 2;
-      props.add(x + Math.cos(an) * 0.36, 0.6, z + Math.sin(an) * 0.36, color === VOX.barrel ? VOX.barrelRust : VOX.barrel, 0.1, 1.16, 0.1);
-    }
-    props.add(x, 0.95, z, VOX.steelDark, 0.82, 0.14, 0.82); // top hoop
-    props.add(x, 0.6, z, VOX.steelDark, 0.84, 0.12, 0.84);  // mid hoop
-    props.add(x, 0.3, z, VOX.steelDark, 0.82, 0.14, 0.82);  // bottom hoop
-    props.add(x, 1.22, z, VOX.steel, 0.5, 0.1, 0.5);        // lid
+    const w = 0.8, h = 1.2, step = w * 0.27; // ~3 voxels across, ~4 tall
+    this.denseShell(props, x, 0.6, z, w, h, w, step, (_vx, vy, _vz) => {
+      // hoops at local heights ≈ +0.35, 0, -0.35
+      if (Math.abs(vy - 0.35) < step * 0.65 || Math.abs(vy) < step * 0.55 || Math.abs(vy + 0.35) < step * 0.65)
+        return VOX.steelDark;
+      return color;
+    });
+    props.add(x, 1.22, z, VOX.steel, 0.52, 0.12, 0.52); // lid
   }
 
   private propSandbags(props: VoxelBatch, x: number, z: number) {
@@ -484,14 +497,15 @@ export class Arena {
   private buildTrees(props: VoxelBatch) {
     const placed: [number, number][] = [];
     let attempts = 0;
-    while (placed.length < 16 && attempts++ < 300) {
+    while (placed.length < 9 && attempts++ < 300) {
       const i = Math.floor((Math.random() * 2 - 1) * (this.half - 3));
       const j = Math.floor((Math.random() * 2 - 1) * (this.half - 3));
       if (!this.inArena(i, j)) continue;
       if (Math.max(Math.abs(i), Math.abs(j)) <= this.plaza + 1) continue; // keep plaza clear
       if (Math.abs(i) <= 1 || Math.abs(j) <= 1) continue; // keep paths clear
       if (this.insideObstacle(i, j, 2)) continue;
-      if (placed.some(([pi, pj]) => Math.abs(pi - i) < 3 && Math.abs(pj - j) < 3)) continue;
+      // wider spacing so trees feel placed, not cluttered
+      if (placed.some(([pi, pj]) => Math.abs(pi - i) < 5 && Math.abs(pj - j) < 5)) continue;
       placed.push([i, j]);
       this.buildTree(props, i, j);
     }
@@ -536,78 +550,9 @@ export class Arena {
     }
   }
 
-  // ---- floating light motes (pollen / fireflies) ----
-  /** A soft round falloff sprite texture, generated once for all motes. */
-  private static moteTexture?: THREE.Texture;
-  private moteSprite(): THREE.Texture {
-    if (Arena.moteTexture) return Arena.moteTexture;
-    const s = 64;
-    const cv = document.createElement("canvas");
-    cv.width = cv.height = s;
-    const ctx = cv.getContext("2d")!;
-    const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-    g.addColorStop(0, "rgba(255,255,255,1)");
-    g.addColorStop(0.35, "rgba(255,248,224,0.7)");
-    g.addColorStop(1, "rgba(255,244,210,0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, s, s);
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    Arena.moteTexture = tex;
-    return tex;
-  }
-
-  /**
-   * Slow, soft motes of light drifting through the air — sunlit pollen that
-   * bobs and sways. Picked up by the bloom pass, this is the coziest, most
-   * comforting atmospheric layer in the scene.
-   */
-  private buildMotes(scene: THREE.Scene) {
-    const tex = this.moteSprite();
-    const R = this.half - 2;
-    for (let n = 0; n < 22; n++) {
-      const mat = new THREE.SpriteMaterial({
-        map: tex,
-        color: Math.random() < 0.25 ? 0xfff0c0 : 0xffffff,
-        transparent: true,
-        opacity: 0.25 + Math.random() * 0.4,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        fog: true,
-      });
-      const sprite = new THREE.Sprite(mat);
-      const x = (Math.random() * 2 - 1) * R;
-      const z = (Math.random() * 2 - 1) * R;
-      const y = 1.2 + Math.random() * 7;
-      const sc = 0.12 + Math.random() * 0.22;
-      sprite.position.set(x, y, z);
-      sprite.scale.setScalar(sc);
-      scene.add(sprite);
-      this.motes.push({
-        sprite,
-        baseX: x, baseY: y, baseZ: z,
-        phase: Math.random() * Math.PI * 2,
-        bob: 0.4 + Math.random() * 0.8,
-        sway: 0.5 + Math.random() * 1.2,
-        speed: 0.25 + Math.random() * 0.4,
-      });
-    }
-  }
-
   // ---- per-frame ----
   update(dt: number) {
     this.t += dt;
-    for (const m of this.motes) {
-      const p = this.t * m.speed + m.phase;
-      m.sprite.position.set(
-        m.baseX + Math.sin(p) * m.sway,
-        m.baseY + Math.sin(p * 1.3) * m.bob,
-        m.baseZ + Math.cos(p * 0.8) * m.sway,
-      );
-      // a gentle twinkle so they shimmer rather than sit static
-      (m.sprite.material as THREE.SpriteMaterial).opacity =
-        0.3 + 0.25 * (0.5 + 0.5 * Math.sin(p * 2.1));
-    }
     for (const c of this.clouds) {
       c.group.position.x += c.speed * dt;
       if (c.group.position.x > 95) c.group.position.x = -95;
