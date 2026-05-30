@@ -22,6 +22,8 @@ const FRAG = /* glsl */ `
   uniform float band;       // half-height of the sharp region
   uniform float strength;   // max blur, in texels
   uniform float vignette;   // 0 = off
+  uniform float saturation; // 1 = unchanged; >1 = punchier colors
+  uniform float warmth;     // gentle warm color grade (0 = off)
   varying vec2 vUv;
 
   void main() {
@@ -40,16 +42,34 @@ const FRAG = /* glsl */ `
     c += texture2D(tDiffuse, vUv + off * 4.0) * 0.0162162;
     c += texture2D(tDiffuse, vUv - off * 4.0) * 0.0162162;
 
+    // Color grade (applied once, on the vertical pass): lift saturation for the
+    // punchy, cheerful toy-diorama palette and nudge the highlights warm.
+    if (saturation != 1.0) {
+      float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+      c.rgb = mix(vec3(l), c.rgb, saturation);
+    }
+    if (warmth > 0.0) {
+      c.rgb += warmth * vec3(0.025, 0.012, -0.02);
+    }
+
     if (vignette > 0.0) {
       vec2 q = vUv - 0.5;
-      float v = smoothstep(0.85, 0.32, length(q));
+      float v = smoothstep(0.9, 0.34, length(q));
       c.rgb *= mix(1.0, v, vignette);
     }
     gl_FragColor = c;
   }
 `;
 
-function makePass(direction: THREE.Vector2, vignette: number, focus: number, band: number, strength: number) {
+function makePass(
+  direction: THREE.Vector2,
+  vignette: number,
+  focus: number,
+  band: number,
+  strength: number,
+  saturation: number,
+  warmth: number,
+) {
   return new ShaderPass({
     uniforms: {
       tDiffuse: { value: null },
@@ -58,6 +78,8 @@ function makePass(direction: THREE.Vector2, vignette: number, focus: number, ban
       band: { value: band },
       strength: { value: strength },
       vignette: { value: vignette },
+      saturation: { value: saturation },
+      warmth: { value: warmth },
     },
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -71,14 +93,17 @@ export class TiltShift {
   constructor(
     width: number,
     height: number,
-    opts: { focus?: number; band?: number; strength?: number; vignette?: number } = {},
+    opts: { focus?: number; band?: number; strength?: number; vignette?: number; saturation?: number; warmth?: number } = {},
   ) {
     const focus = opts.focus ?? 0.56;
     const band = opts.band ?? 0.16;
     const strength = opts.strength ?? 4.0;
     const vignette = opts.vignette ?? 0.45;
-    this.horizontal = makePass(new THREE.Vector2(1 / width, 0), 0, focus, band, strength);
-    this.vertical = makePass(new THREE.Vector2(0, 1 / height), vignette, focus, band, strength);
+    const saturation = opts.saturation ?? 1.0;
+    const warmth = opts.warmth ?? 0.0;
+    // Grade (saturation/warmth) is applied once, on the vertical (final) pass.
+    this.horizontal = makePass(new THREE.Vector2(1 / width, 0), 0, focus, band, strength, 1.0, 0.0);
+    this.vertical = makePass(new THREE.Vector2(0, 1 / height), vignette, focus, band, strength, saturation, warmth);
   }
 
   setSize(width: number, height: number) {

@@ -144,7 +144,7 @@ class Game implements GameApi {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.12;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     // Orthographic = true isometric look (no perspective convergence), like both refs.
@@ -158,13 +158,17 @@ class Game implements GameApi {
     // Soft image-based ambient light — the key to the "soft 3D" cozy look.
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.55;
+    this.scene.environmentIntensity = 0.68;
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.45, 0.6, 0.86);
+    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.5, 0.65, 0.82);
     this.composer.addPass(bloom);
-    this.tilt = new TiltShift(innerWidth, innerHeight, { focus: 0.58, band: 0.2, strength: 3.0, vignette: 0.4 });
+    // Stronger tilt-shift + a punchy, warm color grade to land the bright,
+    // saturated "miniature toy world" look of the reference render.
+    this.tilt = new TiltShift(innerWidth, innerHeight, {
+      focus: 0.58, band: 0.18, strength: 4.6, vignette: 0.34, saturation: 1.18, warmth: 0.5,
+    });
     this.composer.addPass(this.tilt.horizontal);
     this.composer.addPass(this.tilt.vertical);
     this.composer.addPass(new OutputPass());
