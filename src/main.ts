@@ -4,6 +4,7 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 import { CAMERA, COSTS, PLAYER, SCORE, ZOMBIE } from "./config";
@@ -161,12 +162,6 @@ class Game implements GameApi {
     this.scene.environmentIntensity = 0.5;
 
     this.composer = new EffectComposer(this.renderer);
-    // MSAA on the composer targets: `antialias:true` is bypassed once we render
-    // through post passes, so without this every voxel edge is hard-aliased.
-    // 4x multisampling smooths every edge — the biggest single quality lever.
-    const maxSamples = this.renderer.capabilities.maxSamples ?? 4;
-    this.composer.renderTarget1.samples = Math.min(8, maxSamples);
-    this.composer.renderTarget2.samples = Math.min(8, maxSamples);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     // Gentle bloom — only the brightest emissives (windows, fire, pickups) glow,
     // so the grass and props stay crisp instead of washing out.
@@ -180,6 +175,9 @@ class Game implements GameApi {
     });
     this.composer.addPass(this.tilt.horizontal);
     this.composer.addPass(this.tilt.vertical);
+    // Cheap, reliable edge anti-aliasing through the composer (replaces costly
+    // MSAA): smooths the voxel stair-stepping without the framerate hit.
+    this.composer.addPass(new SMAAPass(innerWidth, innerHeight));
     this.composer.addPass(new OutputPass());
 
     this.input = new Input(canvas);

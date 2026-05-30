@@ -59,8 +59,9 @@ export class Arena {
   readonly obstacles: Obstacle[] = [];
   readonly plaza = 6; // half-extent of the central clearing (camp pad)
 
-  // 3 bevel segments + a small radius = smooth, clean voxel edges (higher-res feel).
-  private geo = new RoundedBoxGeometry(1, 1, 1, 3, 0.06);
+  // Cheap, clean voxel edges — kept to 2 bevel segments so the thousands of
+  // instanced voxels stay light (SMAA handles edge smoothing in post).
+  private geo = new RoundedBoxGeometry(1, 1, 1, 2, 0.07);
   private clouds: { group: THREE.Group; speed: number }[] = [];
   // Campfire flames that flicker (emissive + scale), plus rising smoke puffs.
   private flames: { mesh: THREE.Mesh; baseY: number; phase: number }[] = [];
@@ -134,7 +135,7 @@ export class Arena {
     const key = new THREE.DirectionalLight(0xfff4dc, 1.32);
     key.position.set(20, 34, 16);
     key.castShadow = true;
-    key.shadow.mapSize.set(4096, 4096); // crisper contact shadows
+    key.shadow.mapSize.set(2048, 2048);
     const d = this.half + 8;
     const cam = key.shadow.camera;
     cam.left = -d; cam.right = d; cam.top = d; cam.bottom = -d;
@@ -566,7 +567,7 @@ export class Arena {
   private buildMotes(scene: THREE.Scene) {
     const tex = this.moteSprite();
     const R = this.half - 2;
-    for (let n = 0; n < 46; n++) {
+    for (let n = 0; n < 22; n++) {
       const mat = new THREE.SpriteMaterial({
         map: tex,
         color: Math.random() < 0.25 ? 0xfff0c0 : 0xffffff,
