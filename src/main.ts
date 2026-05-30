@@ -24,7 +24,7 @@ import { Audio } from "./audio";
 import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
-import { Pet, PETS, findPet } from "./pets";
+import { Pet, PETS, findPet, petLevelCost } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
@@ -384,29 +384,46 @@ class Game implements GameApi {
     // Pets: buy companions with gold (the gold sink + late-game chaos).
     this.hud.renderPets(
       this.save.gold,
-      PETS.map((p) => ({
-        id: p.id, name: p.name, desc: p.desc, cost: p.cost,
-        color: `#${p.color.toString(16).padStart(6, "0")}`,
-        owned: this.save.pets.includes(p.id),
-        affordable: this.save.gold >= p.cost,
-      })),
-      (id) => this.buyPet(id),
+      PETS.map((p) => {
+        const owned = this.save.pets.includes(p.id);
+        const level = this.save.petLevels[p.id] ?? 1;
+        const upCost = petLevelCost(p, level);
+        return {
+          id: p.id, name: p.name, desc: p.desc, cost: p.cost,
+          color: `#${p.color.toString(16).padStart(6, "0")}`,
+          owned, level,
+          upCost,
+          affordable: owned ? this.save.gold >= upCost : this.save.gold >= p.cost,
+        };
+      }),
+      (id) => this.buyOrLevelPet(id),
     );
   }
 
   /** Buy a companion pet with gold; it joins you on the next run (and this one). */
-  private buyPet(id: string) {
+  /** Buy a pet if unowned, else spend gold to level it up (the idle loop). */
+  private buyOrLevelPet(id: string) {
     const def = findPet(id);
-    if (!def || this.save.pets.includes(id)) return;
-    if (this.save.gold < def.cost) {
-      this.audio.deny();
-      return;
+    if (!def) return;
+    const owned = this.save.pets.includes(id);
+    if (!owned) {
+      if (this.save.gold < def.cost) { this.audio.deny(); return; }
+      this.save.gold -= def.cost;
+      this.save.pets.push(id);
+      this.save.petLevels[id] = 1;
+    } else {
+      const level = this.save.petLevels[id] ?? 1;
+      const cost = petLevelCost(def, level);
+      if (this.save.gold < cost) { this.audio.deny(); return; }
+      this.save.gold -= cost;
+      this.save.petLevels[id] = level + 1;
+      // live-grow the matching pet so the upgrade is visible immediately
+      const live = this.pets.find((p) => p.def.id === id);
+      if (live) live.setLevel(level + 1);
     }
-    this.save.gold -= def.cost;
-    this.save.pets.push(id);
     writeSave(this.save);
     this.audio.powerup();
-    this.spawnPets(); // live update so a mid-menu purchase shows immediately
+    if (!owned) this.spawnPets();
     this.renderShop();
   }
 
@@ -1288,7 +1305,8 @@ class Game implements GameApi {
     this.save.pets.forEach((id, i) => {
       const def = findPet(id);
       if (!def) return;
-      const pet = new Pet(def, (i / Math.max(1, this.save.pets.length)) * Math.PI * 2);
+      const lvl = this.save.petLevels[id] ?? 1;
+      const pet = new Pet(def, (i / Math.max(1, this.save.pets.length)) * Math.PI * 2, lvl);
       this.scene.add(pet.group);
       this.pets.push(pet);
     });
@@ -1316,8 +1334,8 @@ class Game implements GameApi {
         this.hitTmp.set(shot.ox, 1.0, shot.oz);
         this._petDir.set(shot.dx, 0, shot.dz);
         this.bullets.spawn(this.hitTmp, this._petDir, {
-          // pets inherit 60% of your damage scaling so every upgrade buffs the squad
-          speed: 56, damage: d.damage * (1 + (this.mods.damageMul - 1) * 0.6), pierce: d.pierce + this.mods.pierceBonus, splashRadius: d.splashRadius,
+          // pet level x its own dmg x 60% of your damage scaling (every upgrade buffs the squad)
+          speed: 56, damage: d.damage * pet.damageMul * (1 + (this.mods.damageMul - 1) * 0.6), pierce: d.pierce + this.mods.pierceBonus, splashRadius: d.splashRadius,
           splashDamage: d.splashDamage, color: d.bulletColor, scale: d.bulletScale, homing: d.homing,
         });
       }

@@ -59,6 +59,20 @@ export function findPet(id: string): PetDef | undefined {
   return PETS.find((p) => p.id === id);
 }
 
+/** Gold cost to take a pet from `level` to `level+1` (escalating). */
+export function petLevelCost(def: PetDef, level: number): number {
+  return Math.round(def.cost * 0.5 * Math.pow(1.35, level - 1));
+}
+
+/** Damage multiplier from a pet's level (+18%/level, compounding feel). */
+export function petDamageMul(level: number): number {
+  return 1 + (level - 1) * 0.18;
+}
+/** Fire-rate (interval) multiplier — pets fire faster as they level (caps). */
+export function petIntervalMul(level: number): number {
+  return Math.max(0.5, 1 - (level - 1) * 0.04);
+}
+
 /** Darken a hex color by `f` (0..1). */
 function darken(c: number, f: number): number {
   const r = ((c >> 16) & 255) * (1 - f);
@@ -80,14 +94,43 @@ export class Pet {
   private flap = 0;
   private recoil = 0; // 0..1, decays — pulls the body back when firing
   private flashLife = 0;
+  level: number;
+  private baseScale = 0.7;
 
-  constructor(readonly def: PetDef, private orbitAngle: number) {
+  constructor(readonly def: PetDef, private orbitAngle: number, level = 1) {
+    this.level = Math.max(1, level);
     this.cd = Math.random() * def.interval;
     this.bob = Math.random() * Math.PI * 2;
     this.flap = Math.random() * Math.PI * 2;
     this.group.add(this.body);
     this.build();
-    this.group.scale.setScalar(0.7);
+    this.applyLevelVisuals();
+  }
+
+  /** Pet fires faster + (in main) hits harder as it levels. */
+  get interval(): number {
+    return this.def.interval * petIntervalMul(this.level);
+  }
+  get damageMul(): number {
+    return petDamageMul(this.level);
+  }
+
+  /** Visible growth: pet gets bigger + glows brighter with level. */
+  setLevel(level: number) {
+    this.level = Math.max(1, level);
+    this.applyLevelVisuals();
+  }
+  private applyLevelVisuals() {
+    // grows ~6%/level up to ~+60%; emissive ramps so high pets glow hot.
+    this.baseScale = 0.7 * (1 + Math.min(0.6, (this.level - 1) * 0.06));
+    this.group.scale.setScalar(this.baseScale);
+    const glowBoost = Math.min(1.6, 0.9 + (this.level - 1) * 0.12);
+    this.group.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+      if (m && m.emissive && (m.emissive.r + m.emissive.g + m.emissive.b) > 0) {
+        m.emissiveIntensity = glowBoost;
+      }
+    });
   }
 
   private build() {
@@ -212,7 +255,7 @@ export class Pet {
       const dist = Math.hypot(dx, dz);
       this.group.rotation.y = Math.atan2(dx, dz);
       if (dist <= this.def.range && this.cd <= 0) {
-        this.cd = this.def.interval;
+        this.cd = this.interval;
         this.onFire();
         const len = dist || 1;
         return { ox, oz, dx: dx / len, dz: dz / len };

@@ -343,25 +343,28 @@ export class Hud {
   /** Pets tab: buy companion pets with gold. */
   renderPets(
     gold: number,
-    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; affordable: boolean }[],
-    onBuy: (id: string) => void,
+    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; level: number; upCost: number; affordable: boolean }[],
+    onAction: (id: string) => void,
   ) {
     this.q("#tab-pets").innerHTML = `
-      <div class="mkt-head"><span>Gold: <b>⛀ ${gold}</b></span><span class="pets-hint">Pets fight beside you</span></div>
+      <div class="mkt-head"><span>Gold: <b>⛀ ${gold}</b></span><span class="pets-hint">Buy, then level up with gold</span></div>
       <div class="pets-grid">
         ${rows
-          .map(
-            (r) => `<button class="pet-card ${r.owned ? "owned" : r.affordable ? "" : "locked"}" data-id="${r.id}" ${r.owned ? "disabled" : ""} style="--pc:${r.color}">
-              <span class="pet-dot"></span>
+          .map((r) => {
+            const cls = r.affordable ? "" : "locked";
+            const action = r.owned ? `Lv ${r.level} → ⛀ ${r.upCost}` : `⛀ ${r.cost}`;
+            const lvlBadge = r.owned ? `<span class="pet-lvl">Lv ${r.level}</span>` : "";
+            return `<button class="pet-card ${r.owned ? "owned" : ""} ${cls}" data-id="${r.id}" style="--pc:${r.color}">
+              <span class="pet-dot"></span>${lvlBadge}
               <span class="pet-name">${r.name}</span>
               <span class="pet-desc">${r.desc}</span>
-              <span class="pet-cost">${r.owned ? "OWNED" : `⛀ ${r.cost}`}</span>
-            </button>`,
-          )
+              <span class="pet-cost">${action}</span>
+            </button>`;
+          })
           .join("")}
       </div>`;
     this.q("#tab-pets").querySelectorAll<HTMLButtonElement>(".pet-card").forEach((btn) => {
-      btn.addEventListener("click", () => onBuy(btn.dataset.id!));
+      btn.addEventListener("click", () => onAction(btn.dataset.id!));
     });
   }
 

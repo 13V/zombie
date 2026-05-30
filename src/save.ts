@@ -31,6 +31,7 @@ export interface SaveData {
   claimed: string[]; // completed challenge ids
   stash: SavedItem[]; // tradable loot inventory
   pets: string[]; // owned companion pet ids (bought with gold)
+  petLevels: Record<string, number>; // pet id -> level (1+), leveled with gold
   stats: LifetimeStats;
   muted: boolean;
 }
@@ -54,6 +55,7 @@ function blank(): SaveData {
     claimed: [],
     stash: [],
     pets: [],
+    petLevels: {},
     stats: blankStats(),
     muted: false,
   };
@@ -83,6 +85,17 @@ function strArray(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
 }
 
+function sanitizeLevels(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (raw && typeof raw === "object") {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      const n = typeof v === "number" ? v : Number(v);
+      if (Number.isFinite(n) && n >= 1) out[k] = Math.floor(n);
+    }
+  }
+  return out;
+}
+
 export function loadSave(): SaveData {
   try {
     const raw = localStorage.getItem(KEY);
@@ -101,6 +114,7 @@ export function loadSave(): SaveData {
       claimed: strArray(data.claimed),
       stash: sanitizeStash(data.stash),
       pets: strArray(data.pets),
+      petLevels: sanitizeLevels(data.petLevels),
       stats: {
         kills: num(data.stats?.kills),
         crits: num(data.stats?.crits),

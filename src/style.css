@@ -184,6 +184,9 @@ body.touch .controls { display: none; }
 .pet-desc { font-size: 11px; opacity: 0.8; }
 .pet-cost { font-size: 12px; font-weight: 800; color: #ffd24a; margin-top: 2px; }
 .pet-card.owned .pet-cost { color: #7be08a; }
+.pet-card.owned { opacity: 1; cursor: pointer; border-color: rgba(255,210,74,0.45); }
+.pet-lvl { position: absolute; top: 6px; right: 8px; font-size: 10px; font-weight: 800; color: #ffd24a; background: rgba(0,0,0,0.35); padding: 1px 6px; border-radius: 999px; }
+.pet-card { position: relative; }
 
 #ui {
   position: absolute;
