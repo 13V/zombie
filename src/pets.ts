@@ -36,6 +36,21 @@ export interface PetAbility {
   frac?: number; // execute: instakill zombies under this HP fraction
 }
 
+/**
+ * Evolution trial. A pet evolves only once it reaches `evolveLevel` AND clears
+ * every goal here. Goals are tracked "while equipped" — they accumulate across
+ * runs for as long as the pet is in your squad (so it's a journey, not a dump).
+ */
+export type TrialStat = "kills" | "bosses" | "crits" | "bestRound" | "runs" | "casts";
+export interface PetTrialGoal {
+  stat: TrialStat;
+  goal: number;
+  label: string;
+}
+export interface PetTrial {
+  goals: PetTrialGoal[];
+}
+
 export const RARITY_ORDER: Rarity[] = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
 export const RARITY_COLOR: Record<Rarity, string> = {
   common: "#b8c2cc",
@@ -82,6 +97,8 @@ export interface PetDef {
   evolvesTo?: string;
   /** Signature special (Epic+). Triggered on a cooldown in the game loop. */
   ability?: PetAbility;
+  /** Evolution trial (gates `evolvesTo` alongside `evolveLevel`). */
+  trial?: PetTrial;
 }
 
 type PetInit = Partial<PetDef> &
@@ -266,6 +283,115 @@ const PET_ABILITIES: Record<string, PetAbility> = {
 for (const p of PETS) {
   const a = PET_ABILITIES[p.id];
   if (a) p.ability = a;
+}
+
+// ─────────────────────────── Evolution trials ───────────────────────────
+// The 4 early-game evolvers (already have bespoke evolved forms + evolveLevel)
+// get hand-authored trials. Every Epic+ pet gains a generated evolved form
+// ("ascended"), an evolveLevel, and a trial themed around its signature move.
+
+function g(stat: TrialStat, goal: number, label: string): PetTrialGoal {
+  return { stat, goal, label };
+}
+
+const FIXED_TRIALS: Record<string, PetTrial> = {
+  beebot: { goals: [g("kills", 600, "Zombies stung"), g("bestRound", 8, "Reach round 8")] },
+  turret: { goals: [g("kills", 800, "Zombies pierced"), g("bestRound", 9, "Reach round 9")] },
+  ghost: { goals: [g("kills", 700, "Souls reaped"), g("bosses", 1, "Slay a boss")] },
+  dragon: { goals: [g("kills", 1000, "Burned to ash"), g("bosses", 2, "Slay 2 bosses")] },
+};
+
+/** Build a themed trial for an Epic+ ability pet (or fall back to fixed ones). */
+function makeTrial(def: PetDef): PetTrial {
+  if (FIXED_TRIALS[def.id]) return FIXED_TRIALS[def.id];
+  const tiers = { epic: { k: 1500, c: 40 }, legendary: { k: 3000, c: 80 }, mythic: { k: 6000, c: 150 } } as const;
+  const t = tiers[(def.rarity as "epic" | "legendary" | "mythic") ?? "epic"] ?? tiers.epic;
+  const abName = def.ability?.name ?? "its power";
+  return { goals: [g("casts", t.c, `Cast ${abName}`), g("kills", t.k, "Zombies slain together")] };
+}
+
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Derive a stronger "ascended" evolved form from a base pet. */
+function ascend(base: PetDef, name: string, color: number, accent?: number): PetDef {
+  const ab = base.ability;
+  return {
+    ...base,
+    id: base.id + "_evo",
+    name,
+    desc: "Ascended " + base.name,
+    cost: 0,
+    color,
+    accent: accent ?? base.accent,
+    damage: Math.round(base.damage * 1.7),
+    interval: r2(base.interval * 0.85),
+    bulletScale: r2(base.bulletScale * 1.2),
+    pierce: base.pierce + 2,
+    splashRadius: base.splashRadius ? r2(base.splashRadius * 1.2) : 0,
+    splashDamage: Math.round(base.splashDamage * 1.7),
+    roleValue: base.roleValue !== undefined ? r2(base.roleValue * 1.8) : undefined,
+    range: base.range > 0 ? base.range + 2 : 0,
+    evolveLevel: undefined,
+    evolvesTo: undefined,
+    trial: undefined,
+    ability: ab
+      ? {
+          ...ab,
+          name: ab.name + "+",
+          power: Math.round(ab.power * 1.6),
+          count: ab.count !== undefined ? Math.round(ab.count * 1.4) : undefined,
+          cd: Math.max(3, r2(ab.cd * 0.8)),
+          gold: ab.gold !== undefined ? Math.round(ab.gold * 1.8) : undefined,
+          radius: ab.radius !== undefined ? r2(ab.radius * 1.2) : undefined,
+        }
+      : undefined,
+  };
+}
+
+// [evolvedName, evolvedColor, evolvedAccent?] for each Epic+ pet.
+const ASCENSIONS: Record<string, [string, number, number?]> = {
+  // EPIC
+  specter: ["Wraith King", 0x7a3aff, 0xf3e6ff],
+  thunder_orb: ["Storm Core", 0xeaffff, 0x9fe8ff],
+  inferno_drake: ["Cinder Tyrant", 0xff2a1a, 0xffd24a],
+  prism_totem: ["Spectrum Totem", 0xff7af0],
+  heavy_turret: ["Siege Turret", 0xaab8d0, 0x2a3450],
+  void_eye: ["Abyss Eye", 0x7a2ad6, 0x1a1030],
+  golden_piggy: ["Diamond Piggy", 0xeaffff, 0xfff0b0],
+  seraph_star: ["Archseraph", 0xffffff, 0xffe14a],
+  crystal_wyrm: ["Prism Wyrm", 0x8af0ff, 0xeaffff],
+  solar_phoenix: ["Sunflare Phoenix", 0xffd24a, 0xff5a3a],
+  // LEGENDARY
+  reaper_lord: ["Death Sovereign", 0x9a3aff, 0xf3e6ff],
+  celestial_dragon: ["Astral Dragon", 0xbfeaff, 0xffd24a],
+  divine_totem: ["Celestial Totem", 0xffffff, 0xffe14a],
+  omni_cannon: ["Apex Cannon", 0xffe07a, 0x2a3450],
+  galaxy_orb: ["Nebula Orb", 0xe0a0ff, 0xffffff],
+  fortune_dragon: ["Dragon of Avarice", 0xffe07a, 0xff5a3a],
+  eclipse_phoenix: ["Twilight Phoenix", 0xff5a7a, 0xffd24a],
+  // MYTHIC
+  cosmic_serpent: ["Worldeater Serpent", 0x9a5aff, 0x9fe8ff],
+  midas_golem: ["Aurum Colossus", 0xfff0a0, 0xfff8d0],
+  void_sovereign: ["Null Emperor", 0x1a0a3a, 0xff3aff],
+};
+
+for (const [id, meta] of Object.entries(ASCENSIONS)) {
+  const base = PETS.find((p) => p.id === id);
+  if (!base) continue;
+  const evo = ascend(base, meta[0], meta[1], meta[2]);
+  PET_EVOLUTIONS.push(evo);
+  base.evolvesTo = evo.id;
+  base.evolveLevel = 12; // Epic+ evolve a touch later than the early pets
+}
+// Attach trials to every evolvable pet (early 4 + all Epic+).
+for (const p of PETS) {
+  if (p.evolvesTo) p.trial = makeTrial(p);
+}
+
+/** True if `prog` clears every goal of `def`'s trial (or there is no trial). */
+export function isTrialComplete(def: PetDef, prog: Record<string, number> | undefined): boolean {
+  if (!def.trial) return true;
+  return def.trial.goals.every((go) => (prog?.[go.stat] ?? 0) >= go.goal);
 }
 
 export function findPet(id: string): PetDef | undefined {

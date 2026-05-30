@@ -343,22 +343,40 @@ export class Hud {
   /** Pets tab: buy companion pets with gold. */
   renderPets(
     gold: number,
-    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; level: number; upCost: number; affordable: boolean; rarity: string; rarityColor: string; ability?: string }[],
+    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; level: number; upCost: number; affordable: boolean; rarity: string; rarityColor: string; ability?: string; trial?: { label: string; cur: number; goal: number; done: boolean }[] }[],
     onAction: (id: string) => void,
   ) {
     const order = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
     const label = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
+    const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k` : `${n}`);
     const card = (r: (typeof rows)[number]) => {
       const cls = r.affordable ? "" : "locked";
       const action = r.owned ? `Lv ${r.level} → ⛀ ${r.upCost}` : `⛀ ${r.cost}`;
       const lvlBadge = r.owned ? `<span class="pet-lvl">Lv ${r.level}</span>` : "";
       const abilityTag = r.ability ? `<span class="pet-ability">✦ ${r.ability}</span>` : "";
+      let trialBlock = "";
+      if (r.trial && r.trial.length) {
+        const allDone = r.trial.every((t) => t.done);
+        const goals = r.trial
+          .map((t) => {
+            const pct = Math.max(0, Math.min(100, (t.cur / t.goal) * 100));
+            return `<div class="pet-goal ${t.done ? "done" : ""}">
+              <span class="pet-goal-row"><span>${t.done ? "✓" : "◦"} ${t.label}</span><span>${fmt(t.cur)}/${fmt(t.goal)}</span></span>
+              <span class="pet-goal-bar"><span style="width:${pct}%"></span></span>
+            </div>`;
+          })
+          .join("");
+        trialBlock = `<div class="pet-trial ${allDone ? "ready" : ""}">
+          <span class="pet-trial-head">${allDone ? "✦ EVOLUTION READY" : "Evolution Trial"}</span>${goals}
+        </div>`;
+      }
       return `<button class="pet-card ${r.owned ? "owned" : ""} ${cls}" data-id="${r.id}" style="--pc:${r.color};--rc:${r.rarityColor}">
         <span class="pet-dot"></span>${lvlBadge}
         <span class="pet-name">${r.name}</span>
         <span class="pet-desc">${r.desc}</span>
         ${abilityTag}
         <span class="pet-cost">${action}</span>
+        ${trialBlock}
       </button>`;
     };
     // Group into rarity sections so a deep roster stays browsable.

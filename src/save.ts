@@ -32,6 +32,7 @@ export interface SaveData {
   stash: SavedItem[]; // tradable loot inventory
   pets: string[]; // owned companion pet ids (bought with gold)
   petLevels: Record<string, number>; // pet id -> level (1+), leveled with gold
+  petProgress: Record<string, Record<string, number>>; // pet id -> evolution-trial counters
   stats: LifetimeStats;
   muted: boolean;
 }
@@ -56,6 +57,7 @@ function blank(): SaveData {
     stash: [],
     pets: [],
     petLevels: {},
+    petProgress: {},
     stats: blankStats(),
     muted: false,
   };
@@ -83,6 +85,23 @@ function sanitizeStash(raw: unknown): SavedItem[] {
 
 function strArray(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** Nested pet-id -> { stat -> finite count } map; drops anything malformed. */
+function sanitizePetProgress(raw: unknown): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  if (raw && typeof raw === "object") {
+    for (const [id, counters] of Object.entries(raw as Record<string, unknown>)) {
+      if (!counters || typeof counters !== "object") continue;
+      const inner: Record<string, number> = {};
+      for (const [k, v] of Object.entries(counters as Record<string, unknown>)) {
+        const n = typeof v === "number" ? v : Number(v);
+        if (Number.isFinite(n) && n >= 0) inner[k] = n;
+      }
+      out[id] = inner;
+    }
+  }
+  return out;
 }
 
 function sanitizeLevels(raw: unknown): Record<string, number> {
@@ -115,6 +134,7 @@ export function loadSave(): SaveData {
       stash: sanitizeStash(data.stash),
       pets: strArray(data.pets),
       petLevels: sanitizeLevels(data.petLevels),
+      petProgress: sanitizePetProgress(data.petProgress),
       stats: {
         kills: num(data.stats?.kills),
         crits: num(data.stats?.crits),

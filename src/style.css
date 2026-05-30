@@ -191,6 +191,17 @@ body.touch .controls { display: none; }
 .pet-name { font-weight: 800; font-size: 14px; color: var(--pc); }
 .pet-desc { font-size: 11px; opacity: 0.8; }
 .pet-ability { font-size: 10px; font-weight: 800; letter-spacing: 0.02em; color: var(--rc, #ffd24a); opacity: 0.95; margin-top: 1px; }
+.pet-trial { width: 100%; margin-top: 5px; padding: 5px 6px; border-radius: 7px; background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.08); display: flex; flex-direction: column; gap: 3px; }
+.pet-trial.ready { border-color: rgba(255,210,74,0.7); background: rgba(255,210,74,0.12); box-shadow: 0 0 10px rgba(255,210,74,0.25); }
+.pet-trial-head { font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
+.pet-trial.ready .pet-trial-head { color: #ffd24a; opacity: 1; animation: pet-ready-pulse 1.1s ease-in-out infinite; }
+.pet-goal { display: flex; flex-direction: column; gap: 2px; font-size: 10px; }
+.pet-goal-row { display: flex; justify-content: space-between; gap: 6px; opacity: 0.85; }
+.pet-goal.done .pet-goal-row { color: #7be08a; opacity: 1; }
+.pet-goal-bar { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; }
+.pet-goal-bar > span { display: block; height: 100%; border-radius: 2px; background: var(--rc, #ffd24a); }
+.pet-goal.done .pet-goal-bar > span { background: #7be08a; }
+@keyframes pet-ready-pulse { 0%,100% { opacity: 0.7; } 50% { opacity: 1; } }
 .pet-cost { font-size: 12px; font-weight: 800; color: #ffd24a; margin-top: 2px; }
 .pet-card.owned .pet-cost { color: #7be08a; }
 .pet-card.owned { opacity: 1; cursor: pointer; border-color: rgba(255,210,74,0.45); }

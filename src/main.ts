@@ -25,7 +25,7 @@ import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
 import { Sparks } from "./particles";
-import { Pet, PETS, findAnyPet, petLevelCost, RARITY_COLOR, type Rarity } from "./pets";
+import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
@@ -134,6 +134,7 @@ class Game implements GameApi {
   private rerollCost = 0;
   private levelPicking = false;
   private runStats: RunStats = blankRunStats();
+  private _runCasts: Record<string, number> = {}; // per-pet ability casts this run (trial tracking)
 
   points = 0;
   private weapons: Weapon[] = [];
@@ -325,6 +326,7 @@ class Game implements GameApi {
     this.zoomPunch = 0;
     this.nukeCharge = 1;
     this.runStats = blankRunStats();
+    this._runCasts = {};
     this.combo.windowBonus = this.mods.comboWindowBonus;
     this.hud.setPowerups([]);
     this.shake = 0;
@@ -399,6 +401,18 @@ class Game implements GameApi {
         const level = this.save.petLevels[ownId] ?? 1;
         const upCost = petLevelCost(base, level); // cost curve keyed off the base
         const rarity = (base.rarity ?? "common") as Rarity;
+        // Evolution-trial progress (only for an owned, not-yet-evolved evolver).
+        let trial: { label: string; cur: number; goal: number; done: boolean }[] | undefined;
+        if (owned && !isEvolved && base.trial && base.evolveLevel) {
+          const prog = this.save.petProgress[ownId] ?? {};
+          trial = [
+            { label: `Reach Lv ${base.evolveLevel}`, cur: Math.min(level, base.evolveLevel), goal: base.evolveLevel, done: level >= base.evolveLevel },
+            ...base.trial.goals.map((go) => {
+              const cur = prog[go.stat] ?? 0;
+              return { label: go.label, cur: Math.min(cur, go.goal), goal: go.goal, done: cur >= go.goal };
+            }),
+          ];
+        }
         return {
           id: ownId, name: p.name, desc: p.desc, cost: base.cost,
           color: `#${p.color.toString(16).padStart(6, "0")}`,
@@ -408,6 +422,7 @@ class Game implements GameApi {
           rarity,
           rarityColor: RARITY_COLOR[rarity],
           ability: p.ability?.name ?? base.ability?.name,
+          trial,
         };
       }),
       (id) => this.buyOrLevelPet(id),
@@ -434,24 +449,62 @@ class Game implements GameApi {
       this.save.gold -= cost;
       const newLevel = level + 1;
       this.save.petLevels[id] = newLevel;
-      // EVOLUTION: crossing the evolve level transforms the pet into its evolved
-      // form (new id swapped into the owned list; level carries over).
-      if (def.evolvesTo && def.evolveLevel && newLevel >= def.evolveLevel) {
-        const idx = this.save.pets.indexOf(id);
-        if (idx >= 0) this.save.pets[idx] = def.evolvesTo;
-        this.save.petLevels[def.evolvesTo] = newLevel;
-        delete this.save.petLevels[id];
-        this.spawnPets();
-        this.hud.toast("Evolved into " + (findAnyPet(def.evolvesTo)?.name ?? "?") + "!");
-      } else {
-        const live = this.pets.find((p) => p.def.id === id);
-        if (live) live.setLevel(newLevel);
-      }
+      const live = this.pets.find((p) => p.def.id === id);
+      if (live) live.setLevel(newLevel);
+      // Evolution is gated on level + trial — only fires when both are met.
+      this.checkPetEvolutions();
     }
     writeSave(this.save);
     this.audio.powerup();
     if (!owned) this.spawnPets();
     this.renderShop();
+  }
+
+  /** Accumulate this run's "while-equipped" totals into each owned pet's trial. */
+  private foldPetTrials() {
+    for (const id of this.save.pets) {
+      const def = findAnyPet(id);
+      if (!def || !def.trial) continue; // evolved already, or never evolves
+      const pr = (this.save.petProgress[id] ??= {});
+      pr.kills = (pr.kills ?? 0) + this.runStats.kills;
+      pr.bosses = (pr.bosses ?? 0) + this.runStats.bossKills;
+      pr.crits = (pr.crits ?? 0) + this.runStats.crits;
+      pr.runs = (pr.runs ?? 0) + 1;
+      pr.casts = (pr.casts ?? 0) + (this._runCasts[id] ?? 0);
+      pr.bestRound = Math.max(pr.bestRound ?? 0, this.runStats.round);
+    }
+  }
+
+  /** Evolve any owned pet that has met BOTH its level and trial requirements. */
+  private checkPetEvolutions() {
+    let evolved = false;
+    for (const id of [...this.save.pets]) {
+      const def = findAnyPet(id);
+      if (!def || !def.evolvesTo || !def.evolveLevel) continue;
+      if ((this.save.petLevels[id] ?? 1) < def.evolveLevel) continue;
+      if (!isTrialComplete(def, this.save.petProgress[id])) continue;
+      this.evolvePet(id, def);
+      evolved = true;
+    }
+    if (evolved) {
+      writeSave(this.save);
+      this.spawnPets();
+      this.renderShop();
+    }
+  }
+
+  /** Swap an owned base pet for its evolved form (level carries over). */
+  private evolvePet(id: string, def: PetDef) {
+    if (!def.evolvesTo) return;
+    const idx = this.save.pets.indexOf(id);
+    if (idx < 0) return;
+    const lvl = this.save.petLevels[id] ?? 1;
+    this.save.pets[idx] = def.evolvesTo;
+    this.save.petLevels[def.evolvesTo] = lvl;
+    delete this.save.petLevels[id];
+    delete this.save.petProgress[id];
+    this.audio.levelUp();
+    this.hud.toast("✦ Evolved into " + (findAnyPet(def.evolvesTo)?.name ?? "?") + "!");
   }
 
   /** Add a freshly-dropped item to the stash + announce it in-run. */
@@ -627,6 +680,8 @@ class Game implements GameApi {
     s.drops += this.runStats.drops;
     s.games += 1;
     const bonus = this.settleChallenges();
+    this.foldPetTrials();
+    this.checkPetEvolutions();
 
     writeSave(this.save);
     this.renderShop();
@@ -1407,6 +1462,8 @@ class Game implements GameApi {
     const dmg = ab.power * pet.damageMul * petBuff;
     const col = pet.def.bulletColor;
     const near = grid.nearest(px, pz, 64);
+    // count this cast toward the pet's evolution trial (per-pet, free to attribute)
+    this._runCasts[pet.def.id] = (this._runCasts[pet.def.id] ?? 0) + 1;
     // distinct, power-scaled cast sound per ability kind
     this.audio.ability(ab.kind, ab.power / 200);
 
