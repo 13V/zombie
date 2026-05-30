@@ -40,6 +40,10 @@ export class FloatingText {
     g.fillText(text, 64, 32);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
+    // Sprites don't need mipmaps; generating them makes the GPU upload far more
+    // expensive (a per-new-texture stall — the cause of mid-play frame hitches).
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
     this.cache.set(key, tex);
     return tex;
   }

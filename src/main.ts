@@ -718,6 +718,15 @@ class Game implements GameApi {
     this.points += n;
     this.hud.setPoints(this.points);
   }
+
+  /** Quantize a points value for the floating "+N" text so we don't mint a
+   *  unique GPU texture for every exact number (that churn caused frame hitches).
+   *  Buckets keep the distinct-string count small and stable. */
+  private floatNum(n: number): string {
+    if (n < 100) return `+${Math.round(n / 5) * 5}`;
+    if (n < 1000) return `+${Math.round(n / 25) * 25}`;
+    return `+${(Math.round(n / 100) / 10).toFixed(1)}k`;
+  }
   /** Weapon inventory of whoever is currently acting (host or a guest). */
   private actorWeapons(): Weapon[] {
     return this.acting ? this.acting.weapons : this.weapons;
@@ -1297,7 +1306,7 @@ class Game implements GameApi {
       const mult = this.combo.onKill();
       const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult);
       this.addPoints(pts);
-      this.floaters.spawn(z.pos, `+${pts}`, mult > 1 ? "#ffd24a" : "#ffffff", mult > 1 ? 1.2 : 1);
+      this.floaters.spawn(z.pos, this.floatNum(pts), mult > 1 ? "#ffd24a" : "#ffffff", mult > 1 ? 1.2 : 1);
       // beefier, warmer burst on crit / combo kills; ragdoll fling on big hits
       const burstN = crit ? 13 : mult >= 3 ? 11 : 8;
       this.puffs.burst(z.pos, crit ? 0xffe14a : z.puffColor, burstN);
