@@ -343,7 +343,7 @@ export class Hud {
   /** Pets tab: buy companion pets with gold. */
   renderPets(
     gold: number,
-    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; level: number; upCost: number; affordable: boolean; rarity: string; rarityColor: string }[],
+    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; level: number; upCost: number; affordable: boolean; rarity: string; rarityColor: string; ability?: string }[],
     onAction: (id: string) => void,
   ) {
     const order = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
@@ -352,10 +352,12 @@ export class Hud {
       const cls = r.affordable ? "" : "locked";
       const action = r.owned ? `Lv ${r.level} → ⛀ ${r.upCost}` : `⛀ ${r.cost}`;
       const lvlBadge = r.owned ? `<span class="pet-lvl">Lv ${r.level}</span>` : "";
+      const abilityTag = r.ability ? `<span class="pet-ability">✦ ${r.ability}</span>` : "";
       return `<button class="pet-card ${r.owned ? "owned" : ""} ${cls}" data-id="${r.id}" style="--pc:${r.color};--rc:${r.rarityColor}">
         <span class="pet-dot"></span>${lvlBadge}
         <span class="pet-name">${r.name}</span>
         <span class="pet-desc">${r.desc}</span>
+        ${abilityTag}
         <span class="pet-cost">${action}</span>
       </button>`;
     };

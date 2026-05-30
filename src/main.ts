@@ -403,6 +403,7 @@ class Game implements GameApi {
           affordable: owned ? this.save.gold >= upCost : this.save.gold >= base.cost,
           rarity,
           rarityColor: RARITY_COLOR[rarity],
+          ability: p.ability?.name ?? base.ability?.name,
         };
       }),
       (id) => this.buyOrLevelPet(id),
@@ -1347,6 +1348,8 @@ class Game implements GameApi {
     }
     for (let i = 0; i < this.pets.length; i++) {
       const pet = this.pets[i];
+      // Signature ability (Epic+): periodic special, fires regardless of role.
+      if (pet.tickAbility(dt)) this.firePetAbility(pet, petBuff);
       // Banker (Piggy Bank): earn gold over time — the idle-economy hook.
       if (pet.def.role === "banker") {
         this._petGold += (pet.def.roleValue ?? 0) * pet.level * dt;
@@ -1377,6 +1380,149 @@ class Game implements GameApi {
           speed: 56, damage: d.damage * pet.damageMul * petBuff * (1 + (this.mods.damageMul - 1) * 0.6), pierce: d.pierce + this.mods.pierceBonus, splashRadius: d.splashRadius,
           splashDamage: d.splashDamage, color: d.bulletColor, scale: d.bulletScale, homing: d.homing,
         });
+      }
+    }
+  }
+
+  private _abilTmp = new THREE.Vector3();
+  /**
+   * Resolve a pet's signature ability. Everything routes through the existing
+   * bullet / splash / explosion / damageZombie machinery so kills still count
+   * toward combo, loot, stats and challenges. Damage scales with the pet's
+   * level (damageMul) and any Power Totem buff — so abilities snowball too.
+   */
+  private firePetAbility(pet: Pet, petBuff: number) {
+    const ab = pet.def.ability;
+    if (!ab) return;
+    const grid = this.rounds.grid;
+    const px = pet.group.position.x;
+    const pz = pet.group.position.z;
+    const sMul = this.powerups.scoreMul();
+    const dmg = ab.power * pet.damageMul * petBuff;
+    const col = pet.def.bulletColor;
+    const near = grid.nearest(px, pz, 64);
+    this.audio.powerup();
+
+    switch (ab.kind) {
+      case "nova": {
+        const n = ab.count ?? 10;
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2;
+          this._abilTmp.set(px, 1.0, pz);
+          this._petDir.set(Math.cos(a), 0, Math.sin(a));
+          this.bullets.spawn(this._abilTmp, this._petDir, {
+            speed: 50, damage: dmg, pierce: 3, splashRadius: ab.radius ?? 0,
+            splashDamage: ab.radius ? dmg * 0.5 : 0, color: col, scale: pet.def.bulletScale * 1.25, homing: 0,
+          });
+        }
+        this._abilTmp.set(px, 0.6, pz);
+        this.explosions.burst(this._abilTmp, 2.4, col);
+        if (ab.slow) for (const z of this.rounds.zombies) if (z.alive) z.applySlow(ab.slow, 2.5);
+        break;
+      }
+      case "volley": {
+        if (!near) break;
+        const n = ab.count ?? 12;
+        for (let k = 0; k < n; k++) {
+          const dx = near.pos.x - px;
+          const dz = near.pos.z - pz;
+          const len = Math.hypot(dx, dz) || 1;
+          this._abilTmp.set(px, 1.0, pz);
+          this._petDir.set(dx / len + (Math.random() - 0.5) * 0.5, 0, dz / len + (Math.random() - 0.5) * 0.5).normalize();
+          this.bullets.spawn(this._abilTmp, this._petDir, {
+            speed: 66, damage: dmg, pierce: 4, splashRadius: 0, splashDamage: 0, color: col, scale: pet.def.bulletScale, homing: 1,
+          });
+        }
+        break;
+      }
+      case "chain": {
+        let cur = near;
+        const hit = new Set<number>();
+        let jumps = ab.count ?? 6;
+        while (cur && jumps-- > 0) {
+          hit.add(cur.id);
+          this.explosions.burst(cur.pos, 1.1, 0x9fe8ff);
+          this.damageZombie(cur, dmg, sMul);
+          cur = this.nearestZombie(cur.pos.x, cur.pos.z, 7, hit);
+        }
+        break;
+      }
+      case "meteor": {
+        const n = ab.count ?? 4;
+        const r = ab.radius ?? 2.6;
+        const pool = this.rounds.zombies.filter((z) => z.alive && !z.isBoss);
+        for (let k = 0; k < n; k++) {
+          const z = pool.length ? pool[(Math.random() * pool.length) | 0] : null;
+          const cx = z ? z.pos.x : px + (Math.random() - 0.5) * 12;
+          const cz = z ? z.pos.z : pz + (Math.random() - 0.5) * 12;
+          this._abilTmp.set(cx, 0.6, cz);
+          this.explosions.burst(this._abilTmp, r * 1.2, 0xff7a3a);
+          this.splash(this._abilTmp, r, dmg, -1, sMul);
+        }
+        this.shake = Math.min(0.6, this.shake + 0.18);
+        break;
+      }
+      case "smite": {
+        const r = ab.radius ?? 5;
+        const cx = near ? near.pos.x : px;
+        const cz = near ? near.pos.z : pz;
+        this._abilTmp.set(cx, 0.6, cz);
+        this.explosions.burst(this._abilTmp, r * 1.1, col);
+        this.splash(this._abilTmp, r, dmg, -1, sMul);
+        if (ab.slow) grid.forNear(cx, cz, r, (z) => { if (z.alive) z.applySlow(ab.slow!, 2.5); });
+        if (ab.heal) this.player.heal(ab.heal);
+        this.shake = Math.min(0.6, this.shake + 0.14);
+        break;
+      }
+      case "execute": {
+        const r = ab.radius ?? 6;
+        const thr = ab.frac ?? 0.35;
+        const r2 = r * r;
+        this._abilTmp.set(px, 0.6, pz);
+        this.explosions.burst(this._abilTmp, r, 0x9a5ad6);
+        grid.forNear(px, pz, r, (z) => {
+          if (!z.alive) return;
+          const dx = z.pos.x - px;
+          const dz = z.pos.z - pz;
+          if (dx * dx + dz * dz > r2) return;
+          const lethal = !z.isBoss && z.health <= z.maxHealth * thr;
+          this.damageZombie(z, lethal ? 1e9 : dmg, sMul);
+        });
+        break;
+      }
+      case "jackpot": {
+        const g = Math.round((ab.gold ?? 200) * (1 + (pet.level - 1) * 0.15));
+        this.save.gold += g;
+        this.save.goldEarned += g;
+        this.floaters.spawn(pet.group.position, `+⛀${g}`, "#ffd24a", 1.5, true);
+        // a damaging shower of coins so even the bankers join the carnage
+        const n = ab.count ?? 8;
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2;
+          this._abilTmp.set(px, 1.0, pz);
+          this._petDir.set(Math.cos(a), 0, Math.sin(a));
+          this.bullets.spawn(this._abilTmp, this._petDir, {
+            speed: 48, damage: dmg, pierce: 2, splashRadius: 0, splashDamage: 0, color: 0xffd24a, scale: 0.8, homing: 0,
+          });
+        }
+        // Midas-tier banker also pulps everything nearby into gold.
+        if (ab.radius) {
+          this._abilTmp.set(px, 0.6, pz);
+          this.explosions.burst(this._abilTmp, ab.radius, 0xffd24a);
+          this.splash(this._abilTmp, ab.radius, dmg, -1, sMul);
+        }
+        break;
+      }
+      case "obliterate": {
+        const r = ab.radius ?? 14;
+        this.audio.boom();
+        this.shake = Math.min(0.75, this.shake + 0.5);
+        this._abilTmp.set(px, 0.6, pz);
+        this.explosions.burst(this._abilTmp, r, 0xff3aff);
+        this.explosions.burst(this._abilTmp, r * 0.6, 0xffffff);
+        this.splash(this._abilTmp, r, dmg, -1, sMul);
+        this.floaters.spawn(pet.group.position, "ANNIHILATE!", "#ff3aff", 1.7, true);
+        break;
       }
     }
   }

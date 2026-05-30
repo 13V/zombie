@@ -190,6 +190,7 @@ body.touch .controls { display: none; }
 .pet-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--pc); box-shadow: 0 0 8px var(--pc); }
 .pet-name { font-weight: 800; font-size: 14px; color: var(--pc); }
 .pet-desc { font-size: 11px; opacity: 0.8; }
+.pet-ability { font-size: 10px; font-weight: 800; letter-spacing: 0.02em; color: var(--rc, #ffd24a); opacity: 0.95; margin-top: 1px; }
 .pet-cost { font-size: 12px; font-weight: 800; color: #ffd24a; margin-top: 2px; }
 .pet-card.owned .pet-cost { color: #7be08a; }
 .pet-card.owned { opacity: 1; cursor: pointer; border-color: rgba(255,210,74,0.45); }

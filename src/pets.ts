@@ -18,6 +18,24 @@ export type PetShape =
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic";
 
+/**
+ * Signature special move. Every Epic+ pet has one — a periodic, screen-shaking
+ * effect on top of its normal fire. Legendary tiers hit harder/wider and Mythic
+ * abilities are deliberately overpowered (near board-clears, fountains of gold).
+ */
+export interface PetAbility {
+  name: string;
+  kind: "nova" | "volley" | "chain" | "meteor" | "smite" | "execute" | "jackpot" | "obliterate";
+  cd: number; // seconds between activations
+  power: number; // base damage (further scaled by pet level + totem buff)
+  count?: number; // projectiles / chain jumps / meteor strikes
+  radius?: number; // AoE radius
+  slow?: number; // 0..1 slow strength applied to caught zombies
+  heal?: number; // HP restored to the player on proc
+  gold?: number; // bonus gold minted on proc (jackpot)
+  frac?: number; // execute: instakill zombies under this HP fraction
+}
+
 export const RARITY_ORDER: Rarity[] = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
 export const RARITY_COLOR: Record<Rarity, string> = {
   common: "#b8c2cc",
@@ -62,6 +80,8 @@ export interface PetDef {
    *  stronger model + new behavior). The big idle payoff. */
   evolveLevel?: number;
   evolvesTo?: string;
+  /** Signature special (Epic+). Triggered on a cooldown in the game loop. */
+  ability?: PetAbility;
 }
 
 type PetInit = Partial<PetDef> &
@@ -213,6 +233,41 @@ export const PETS: PetDef[] = [
     damage: 800, interval: 0.5, bulletColor: 0xff3aff, bulletScale: 2.2, pierce: 8, splashRadius: 4.0, splashDamage: 400, homing: 1, shape: "dragon", range: 28 }),
 ];
 
+/**
+ * Signature abilities for every Epic+ pet. Merged onto the defs below so the
+ * roster entries stay readable. Power ramps hard by tier — Mythic moves are
+ * meant to feel broken (that's the point of grinding to them).
+ */
+const PET_ABILITIES: Record<string, PetAbility> = {
+  // ── EPIC ──
+  specter: { name: "Soul Nova", kind: "nova", cd: 8, power: 120, count: 10, radius: 1.6 },
+  thunder_orb: { name: "Chain Lightning", kind: "chain", cd: 6, power: 110, count: 8 },
+  inferno_drake: { name: "Meteor Storm", kind: "meteor", cd: 8, power: 220, count: 5, radius: 2.6 },
+  prism_totem: { name: "Prism Nova", kind: "nova", cd: 7, power: 90, count: 12 },
+  heavy_turret: { name: "Barrage", kind: "volley", cd: 7, power: 130, count: 14 },
+  void_eye: { name: "Void Gaze", kind: "smite", cd: 8, power: 260, radius: 4, slow: 0.5 },
+  golden_piggy: { name: "Jackpot", kind: "jackpot", cd: 9, power: 60, count: 8, gold: 250 },
+  seraph_star: { name: "Starfall", kind: "nova", cd: 8, power: 120, count: 12, heal: 8 },
+  crystal_wyrm: { name: "Shard Burst", kind: "nova", cd: 7, power: 140, count: 14 },
+  solar_phoenix: { name: "Flare Nova", kind: "nova", cd: 7, power: 150, count: 12, radius: 1.8 },
+  // ── LEGENDARY ──
+  reaper_lord: { name: "Reap", kind: "execute", cd: 8, power: 240, radius: 6, frac: 0.35 },
+  celestial_dragon: { name: "Starfire Rain", kind: "meteor", cd: 8, power: 380, count: 9, radius: 3 },
+  divine_totem: { name: "Judgment", kind: "smite", cd: 9, power: 360, radius: 7, heal: 15 },
+  omni_cannon: { name: "Mega Barrage", kind: "volley", cd: 8, power: 320, count: 26 },
+  galaxy_orb: { name: "Supernova", kind: "nova", cd: 7, power: 240, count: 24, radius: 1.6 },
+  fortune_dragon: { name: "Gold Rush", kind: "jackpot", cd: 9, power: 200, count: 16, gold: 1200 },
+  eclipse_phoenix: { name: "Eclipse", kind: "smite", cd: 9, power: 420, radius: 8, slow: 0.4 },
+  // ── MYTHIC (overpowered on purpose) ──
+  cosmic_serpent: { name: "Cosmic Storm", kind: "nova", cd: 7, power: 520, count: 36, radius: 1.6, slow: 0.5 },
+  midas_golem: { name: "Midas Touch", kind: "jackpot", cd: 9, power: 600, count: 24, gold: 5000, radius: 9 },
+  void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 4000, radius: 16 },
+};
+for (const p of PETS) {
+  const a = PET_ABILITIES[p.id];
+  if (a) p.ability = a;
+}
+
 export function findPet(id: string): PetDef | undefined {
   return PETS.find((p) => p.id === id);
 }
@@ -255,12 +310,15 @@ export class Pet {
   private flap = 0;
   private recoil = 0; // 0..1, decays — pulls the body back when firing
   private flashLife = 0;
+  private abilityTimer = 0; // counts down to the next signature-ability proc
   level: number;
   private baseScale = 0.7;
 
   constructor(readonly def: PetDef, private orbitAngle: number, level = 1) {
     this.level = Math.max(1, level);
     this.cd = Math.random() * def.interval;
+    // stagger first cast so a fresh squad doesn't all fire abilities in sync
+    if (def.ability) this.abilityTimer = def.ability.cd * (0.4 + Math.random() * 0.6);
     this.bob = Math.random() * Math.PI * 2;
     this.flap = Math.random() * Math.PI * 2;
     this.group.add(this.body);
@@ -575,6 +633,19 @@ export class Pet {
         box(0.5, 0.5, 0.5, 0, 0, 0, body);
     }
     if (this.muzzle) this.muzzle.scale.setScalar(0.01); // hidden until firing
+  }
+
+  /** Tick the signature-ability cooldown; returns true on the frame it fires. */
+  tickAbility(dt: number): boolean {
+    const ab = this.def.ability;
+    if (!ab) return false;
+    this.abilityTimer -= dt;
+    if (this.abilityTimer <= 0) {
+      this.abilityTimer = ab.cd;
+      this.onFire(); // recoil/flash punch on the cast too
+      return true;
+    }
+    return false;
   }
 
   /** Visually react to firing — recoil punch + muzzle flash. */
