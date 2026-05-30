@@ -918,7 +918,9 @@ class Game implements GameApi {
       );
     }
     // Camera looks down the -Z axis, so W (axis.y +1) moves toward -Z.
-    this.player.update(dt, axis.x, -axis.y, this.input.aimPoint);
+    // Face the aim while firing; otherwise face the movement direction.
+    const aiming = this.input.firing || this.input.touchAim != null;
+    this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, aiming);
     this.arena.clamp(this.player.pos, PLAYER.radius);
     this.arena.resolveObstacles(this.player.pos, PLAYER.radius);
     this.player.group.position.copy(this.player.pos);
