@@ -95,19 +95,31 @@ class WallBuy implements Interactable {
  */
 const CYCLE_STYLES: GunStyle[] = ["pistol", "smg", "shotgun", "cannon", "rifle", "arc", "singularity", "pyroclasm"];
 type ChestPhase = "idle" | "opening" | "cycling" | "reveal" | "closing";
-const LID_OPEN = -1.95; // radians
+const LID_OPEN = -2.1; // radians
+
+const easeOutCubic = (k: number) => 1 - Math.pow(1 - Math.max(0, Math.min(1, k)), 3);
+/** Overshoots past 1 then settles — a springy "pop". */
+const easeOutBack = (k: number) => {
+  const c = 2.2;
+  const u = Math.max(0, Math.min(1, k)) - 1;
+  return 1 + (c + 1) * u * u * u + c * u * u;
+};
 
 class MysteryChest implements Interactable {
   readonly group = new THREE.Group();
-  range = 2.9;
+  range = 3.3;
   private lidPivot = new THREE.Group();
   private prizeAnchor = new THREE.Group();
   private gun?: THREE.Group;
   private glow: THREE.PointLight;
+  private beam: THREE.Mesh;
+  private beamInner: THREE.Mesh;
+  private idleMark: THREE.Group;
   private t = 0;
   private phase: ChestPhase = "idle";
   private timer = 0;
   private swapAccum = 0;
+  private pop = 0; // scale-punch on each cycle swap
   private awardStyle: GunStyle = "pistol";
   private pending?: () => void;
 
@@ -115,32 +127,50 @@ class MysteryChest implements Interactable {
     const { x, z } = pos;
     const wood = voxelMaterial(VOX.crate);
     const woodDark = voxelMaterial(VOX.crateDark);
-    const gold = glowMaterial(COLORS.boxGold, 0.6);
+    const gold = glowMaterial(COLORS.boxGold, 0.7);
 
-    // chunky voxel chest body
-    const base = vox(1.5, 0.85, 1.05, x, 0.45, z, wood, true);
+    // BIG chunky voxel chest body (sized so it reads clearly across the plaza)
+    const base = vox(2.3, 1.25, 1.6, x, 0.62, z, wood, true);
     base.receiveShadow = true;
     this.group.add(base);
-    // gold trim bands on the body
-    for (const dx of [-0.62, 0.62]) {
-      this.group.add(vox(0.14, 0.9, 1.12, x + dx, 0.45, z, gold));
-    }
-    this.group.add(vox(0.28, 0.32, 0.12, x, 0.7, z + 0.56, gold)); // front clasp
+    for (const dx of [-0.96, 0.96]) this.group.add(vox(0.22, 1.35, 1.72, x + dx, 0.62, z, gold)); // corner bands
+    this.group.add(vox(2.34, 0.2, 1.66, x, 1.2, z, gold)); // top rim
+    this.group.add(vox(0.44, 0.5, 0.18, x, 1.0, z + 0.84, gold)); // front clasp
 
     // lid on a hinge at the back-top edge (local coords inside the pivot)
-    this.lidPivot.position.set(x, 0.86, z - 0.52);
+    this.lidPivot.position.set(x, 1.24, z - 0.8);
     this.group.add(this.lidPivot);
-    this.lidPivot.add(vox(1.5, 0.32, 1.05, 0, 0.16, 0.52, woodDark, true));
-    for (const dx of [-0.62, 0.62]) {
-      this.lidPivot.add(vox(0.14, 0.36, 1.1, dx, 0.16, 0.52, gold));
-    }
+    this.lidPivot.add(vox(2.3, 0.5, 1.6, 0, 0.25, 0.8, woodDark, true));
+    for (const dx of [-0.96, 0.96]) this.lidPivot.add(vox(0.22, 0.56, 1.66, dx, 0.25, 0.8, gold));
 
-    // where the prize floats while cycling
-    this.prizeAnchor.position.set(x, 1.7, z);
+    // prize hovers + rises here while cycling
+    this.prizeAnchor.position.set(x, 1.5, z);
     this.group.add(this.prizeAnchor);
 
-    this.glow = new THREE.PointLight(COLORS.boxGold, 5, 9, 2);
-    this.glow.position.set(x, 1.5, z + 0.4);
+    // light-beam column (opacity animated; the iconic "box is open" shaft)
+    this.beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.6, 0.95, 4.6, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: COLORS.boxGold, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }),
+    );
+    this.beam.position.set(x, 3.3, z);
+    this.group.add(this.beam);
+    this.beamInner = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.22, 0.36, 4.6, 14, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xfff6d8, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }),
+    );
+    this.beamInner.position.set(x, 3.3, z);
+    this.group.add(this.beamInner);
+
+    // idle marker: a glowing gold gem bobbing above, so the box is easy to spot
+    this.idleMark = new THREE.Group();
+    const gem = vox(0.46, 0.46, 0.46, 0, 0, 0, glowMaterial(COLORS.boxGold, 1.4));
+    gem.rotation.set(Math.PI / 4, Math.PI / 4, 0);
+    this.idleMark.add(gem);
+    this.idleMark.position.set(x, 2.3, z);
+    this.group.add(this.idleMark);
+
+    this.glow = new THREE.PointLight(COLORS.boxGold, 6, 12, 2);
+    this.glow.position.set(x, 2.0, z + 0.4);
     this.group.add(this.glow);
   }
 
@@ -174,25 +204,52 @@ class MysteryChest implements Interactable {
     this.disposeGun();
     this.prizeAnchor.clear();
     this.gun = buildGun(style);
-    this.gun.scale.setScalar(1.7);
     this.prizeAnchor.add(this.gun);
+    this.pop = 1; // punch the scale on swap
+  }
+
+  /** Ease the two beam shafts toward a target brightness + give them a slow swirl. */
+  private setBeam(target: number, dt: number) {
+    const k = Math.min(1, dt * 6);
+    const m = this.beam.material as THREE.MeshBasicMaterial;
+    const mi = this.beamInner.material as THREE.MeshBasicMaterial;
+    m.opacity += (target - m.opacity) * k;
+    mi.opacity += (Math.min(1, target * 1.4) - mi.opacity) * k;
+    this.beam.rotation.y += dt * 0.7;
+    this.beamInner.rotation.y -= dt * 1.1;
+  }
+
+  /** Position/spin/scale the floating prize gun (base height + spin speed). */
+  private placeGun(baseY: number, spin: number, dt: number, pulse = 0) {
+    if (!this.gun) return;
+    this.gun.rotation.y += spin * dt;
+    this.pop = Math.max(0, this.pop - dt * 4);
+    this.gun.scale.setScalar(2.1 * (1 + this.pop * 0.3 + pulse));
+    this.gun.position.y = baseY + Math.sin(this.t * 5) * 0.05;
   }
 
   update(dt: number) {
     this.t += dt;
-    this.glow.intensity = 4 + Math.sin(this.t * 3) * 1.5;
+    this.idleMark.visible = this.phase === "idle";
 
     switch (this.phase) {
-      case "idle":
+      case "idle": {
+        this.glow.intensity = 4 + Math.sin(this.t * 2.5) * 1.2;
+        this.idleMark.rotation.y += dt * 1.4;
+        this.idleMark.position.y = 2.3 + Math.sin(this.t * 2) * 0.12;
+        this.setBeam(0, dt);
         break;
+      }
 
       case "opening": {
         this.timer -= dt;
-        const k = 1 - Math.max(0, this.timer) / 0.45;
-        this.lidPivot.rotation.x = LID_OPEN * (1 - (1 - k) * (1 - k)); // ease-out
+        const k = 1 - Math.max(0, this.timer) / 0.5;
+        this.lidPivot.rotation.x = LID_OPEN * easeOutBack(k); // springy pop open
+        this.glow.intensity = 5 + k * 4;
+        this.setBeam(0.3, dt);
         if (this.timer <= 0) {
           this.phase = "cycling";
-          this.timer = 2.2;
+          this.timer = 2.4;
           this.swapAccum = 0;
         }
         break;
@@ -200,16 +257,19 @@ class MysteryChest implements Interactable {
 
       case "cycling": {
         this.timer -= dt;
-        if (this.gun) this.gun.rotation.y += dt * 9;
+        const prog = 1 - Math.max(0, this.timer) / 2.4; // 0→1
+        // gun rises up out of the chest into the beam as the cycle progresses
+        this.placeGun(0.4 + easeOutCubic(prog) * 1.3, 10, dt);
+        this.setBeam(0.42, dt);
+        this.glow.intensity = 7 + Math.sin(this.t * 8) * 2;
         this.swapAccum -= dt;
         if (this.swapAccum <= 0) {
           this.showGun(CYCLE_STYLES[Math.floor(Math.random() * CYCLE_STYLES.length)]);
-          const prog = 1 - Math.max(0, this.timer) / 2.2; // 0→1; intervals grow (decel)
-          this.swapAccum = 0.05 + prog * prog * 0.28;
+          this.swapAccum = 0.045 + prog * prog * 0.34; // decelerate
         }
         if (this.timer <= 0) {
           this.phase = "reveal";
-          this.timer = 1.3;
+          this.timer = 1.5;
           this.showGun(this.awardStyle); // land on the actual prize
         }
         break;
@@ -217,25 +277,31 @@ class MysteryChest implements Interactable {
 
       case "reveal": {
         this.timer -= dt;
-        const rk = 1 - Math.max(0, this.timer) / 1.3;
-        if (this.gun) {
-          this.gun.rotation.y += dt * 3;
-          this.gun.position.y = rk * 0.45;
-          this.gun.scale.setScalar(1.7 + Math.sin(this.t * 6) * 0.1);
-        }
-        this.glow.intensity = 8 + Math.sin(this.t * 10) * 3;
+        const rk = easeOutCubic(1 - Math.max(0, this.timer) / 1.5);
+        // rises a touch higher, spins slow + grand, throbbing scale
+        this.placeGun(1.7 + rk * 0.35, 2.5, dt, Math.sin(this.t * 6) * 0.12);
+        this.setBeam(0.7, dt);
+        this.glow.intensity = 10 + Math.sin(this.t * 12) * 4;
         if (this.timer <= 0) {
           this.pending?.(); // hand over the weapon
           this.pending = undefined;
           this.phase = "closing";
-          this.timer = 0.4;
+          this.timer = 0.45;
         }
         break;
       }
 
       case "closing": {
         this.timer -= dt;
-        this.lidPivot.rotation.x = LID_OPEN * Math.max(0, this.timer) / 0.4;
+        const k = Math.max(0, this.timer) / 0.45;
+        this.lidPivot.rotation.x = LID_OPEN * k;
+        // prize sinks back down + shrinks away as the lid shuts
+        if (this.gun) {
+          this.gun.position.y = 1.7 * k - (1 - k) * 0.6;
+          this.gun.scale.setScalar(2.1 * k);
+        }
+        this.setBeam(0, dt);
+        this.glow.intensity = 4 + k * 4;
         if (this.timer <= 0) {
           this.lidPivot.rotation.x = 0;
           this.disposeGun();
