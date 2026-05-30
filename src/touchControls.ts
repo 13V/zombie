@@ -1,13 +1,11 @@
 import * as THREE from "three";
 import { Input } from "./input";
 
-/** True on phones/tablets (or any coarse-pointer touch device). */
+/** True only on touch-primary devices (phones/tablets) — NOT touch-capable
+ *  laptops/monitors, which have a mouse and must keep desktop mouse aiming. */
 export function isTouchDevice(): boolean {
-  return (
-    (typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches) ||
-    "ontouchstart" in window ||
-    navigator.maxTouchPoints > 0
-  );
+  if (typeof matchMedia !== "function") return "ontouchstart" in window;
+  return matchMedia("(pointer: coarse)").matches && matchMedia("(hover: none)").matches;
 }
 
 const RADIUS = 56; // px travel of a stick knob

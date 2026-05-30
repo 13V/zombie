@@ -5,6 +5,23 @@ import { AssetManager, CharacterRig } from "./assets";
 import { VoxelChar } from "./voxelChar";
 import { GunStyle } from "./gunModels";
 
+/** Soft gradient strip texture for the aim guide (bright near the player, faint at the tip). */
+function makeGuideTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = 8;
+  c.height = 64;
+  const g = c.getContext("2d")!;
+  const grad = g.createLinearGradient(0, 64, 0, 0); // bottom (near) -> top (far)
+  grad.addColorStop(0, "rgba(255,255,255,0.85)");
+  grad.addColorStop(0.6, "rgba(255,255,255,0.35)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 8, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /**
  * The little hero. Driven by a CharacterRig — a voxel blocky figure by default
  * (the committed style), or a KayKit GLB if one is dropped in. Handles movement,
@@ -31,6 +48,7 @@ export class Player {
   private char: CharacterRig;
   private muzzleFlash: THREE.Sprite;
   private flashLife = 0;
+  private aimGuide: THREE.Mesh;
 
   constructor(scene: THREE.Scene, assets: AssetManager) {
     this.char =
@@ -52,7 +70,33 @@ export class Player {
     this.muzzleFlash.position.set(0, 1.0, 0.9);
     this.group.add(this.muzzleFlash);
 
+    // Brawl-Stars-style aim guide: a soft beam on the ground from the player
+    // toward where they're aiming. Child of the group, so it inherits the
+    // facing rotation and extends forward (+Z = aim direction).
+    const guideLen = 9;
+    this.aimGuide = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.62, guideLen),
+      new THREE.MeshBasicMaterial({
+        map: makeGuideTexture(),
+        color: 0xfff0c8,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      }),
+    );
+    this.aimGuide.rotation.x = -Math.PI / 2; // lie flat on the ground
+    this.aimGuide.position.set(0, 0.06, guideLen / 2 + 0.6);
+    this.aimGuide.renderOrder = 2;
+    this.group.add(this.aimGuide);
+
     scene.add(this.group);
+  }
+
+  /** Fade the aim guide in/out (shown only during active play). */
+  showAimGuide(on: boolean) {
+    const mat = this.aimGuide.material as THREE.MeshBasicMaterial;
+    const target = on ? 0.18 : 0;
+    mat.opacity += (target - mat.opacity) * 0.3;
   }
 
   /** Pop the muzzle flash (called when a shot actually fires). */

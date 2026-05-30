@@ -782,6 +782,7 @@ class Game implements GameApi {
     }
 
     this.touch?.setActive(this.state === "playing" || this.state === "paused");
+    this.player.showAimGuide(this.state === "playing");
     if (this.state === "playing") {
       if (this.netplay && !this.netplay.isHost) this.simulateGuest(dt);
       else this.simulate(dt);
