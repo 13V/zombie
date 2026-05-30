@@ -165,7 +165,7 @@ class Game implements GameApi {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     // Gentle bloom — only the brightest emissives (windows, fire, pickups) glow,
     // so the grass and props stay crisp instead of washing out.
-    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.28, 0.5, 0.9);
+    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.16, 0.5, 0.92);
     this.composer.addPass(bloom);
     // Tilt-shift kept SUBTLE: a wide sharp band so the play area stays crisp
     // (blur only creeps in at the very top/bottom edges, like the reference),

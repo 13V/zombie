@@ -132,7 +132,7 @@ export class Arena {
     // Soft sky-dome fill — keeps shadows from crushing to black without washing
     // the scene out (the clean, cheerful daylight of the toy-diorama reference).
     scene.add(new THREE.HemisphereLight(0xdcefff, 0x8fa05a, 0.5));
-    const key = new THREE.DirectionalLight(0xfff4dc, 1.32);
+    const key = new THREE.DirectionalLight(0xfff4dc, 1.55);
     key.position.set(20, 34, 16);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -175,7 +175,9 @@ export class Arena {
         const onPath = !onPlaza && (Math.abs(i) <= 1 || Math.abs(j) <= 1);
 
         if (onPlaza) {
-          terrain.add(i, -0.5, j, (i + j) % 2 === 0 ? VOX.cobble : VOX.cobbleDark);
+          // calm gravel pad (mostly one tone, a few darker flecks) — no harsh
+          // checkerboard under the van.
+          terrain.add(i, -0.5, j, (i * 5 + j * 3) % 7 === 0 ? VOX.cobbleDark : VOX.cobble);
         } else if (onPath) {
           terrain.add(i, -0.5, j, VOX.path);
         } else {
@@ -211,92 +213,79 @@ export class Arena {
   }
 
   /**
-   * The camper van, built from hundreds of small (0.4u) voxels for fine detail
-   * but baked into instanced meshes (one draw call per color) so it's actually
-   * *cheaper* than the old ~50-mesh version. Two batches: opaque + emissive.
+   * The camper van as clean, crisp panels (not a fine voxel grid — that just
+   * quilts the surfaces with seams). Built from a modest set of solid boxes
+   * baked into instanced batches (a few draw calls), with sharp edges that SMAA
+   * smooths. Smooth white shell + blue stripe, glass-like windows, fat wheels.
    */
   private buildRV() {
-    const c = 0.4; // voxel size — small enough to read as detailed
     const solid = new VoxelBatch();
     const glow = new VoxelBatch();
-    const eps = c * 0.25;
+    // Plain (un-beveled) boxes: large beveled boxes balloon their rounded edges
+    // when scaled, which reads as soft/blobby. Sharp panels look crisp + clean.
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const S = (x: number, y: number, z: number, color: number, sx: number, sy: number, sz: number) =>
+      solid.add(x, y, z, color, sx, sy, sz);
+    const G = (x: number, y: number, z: number, color: number, sx: number, sy: number, sz: number) =>
+      glow.add(x, y, z, color, sx, sy, sz);
 
-    // fill a world-space box with c-voxels; mode "shell" keeps only the outer
-    // crust, "solid" fills it; colorFn can vary the color per voxel.
-    const fill = (
-      x0: number, x1: number, y0: number, y1: number, z0: number, z1: number,
-      colorFn: (x: number, y: number, z: number) => number | null,
-      shell = true,
-    ) => {
-      for (let x = x0 + c / 2; x < x1 - eps; x += c)
-        for (let y = y0 + c / 2; y < y1 - eps; y += c)
-          for (let z = z0 + c / 2; z < z1 - eps; z += c) {
-            if (shell && x > x0 + c && x < x1 - c && y > y0 + c && y < y1 - c && z > z0 + c && z < z1 - c) continue;
-            const col = colorFn(x, y, z);
-            if (col !== null) solid.add(x, y, z, col, c, c, c);
-          }
-    };
-    const slab = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, color: number) =>
-      fill(x0, x1, y0, y1, z0, z1, () => color, false);
-    const panes = (x0: number, x1: number, y0: number, y1: number, z: number, color: number) => {
-      for (let x = x0 + c / 2; x < x1 - eps; x += c)
-        for (let y = y0 + c / 2; y < y1 - eps; y += c) glow.add(x, y, z, color, c, c, c * 0.6);
-    };
-
-    // body colors: a blue accent stripe band wraps the walls
-    const body = (_x: number, y: number) => (y > 1.95 && y < 2.4 ? VOX.rvStripe : VOX.rvBody);
-
-    // rear living box, lower front cab, cab-over bunk (shells)
-    fill(-1.8, 3.4, 1.1, 3.45, -1.4, 1.4, body);
-    fill(-4.0, -1.8, 1.0, 2.5, -1.3, 1.3, body);
-    fill(-4.0, -1.8, 2.5, 3.45, -1.4, 1.4, (_x, _y) => VOX.rvBody);
-    // chassis skirt + roof cap
-    slab(-4.0, 3.5, 0.95, 1.15, -1.25, 1.25, VOX.rvTrim);
-    slab(-1.8, 3.4, 3.45, 3.7, -1.45, 1.45, VOX.rvTrim);
-
-    // camera-facing side windows + door + cab windshield (emissive, set proud)
-    panes(-0.7, 0.7, 2.35, 3.05, 1.45, VOX.rvWindow);
-    panes(1.3, 2.7, 2.35, 3.05, 1.45, VOX.rvWindow);
-    panes(-3.6, -2.1, 1.55, 2.3, 1.35, VOX.rvWindow); // cab side glass
-    slab(-1.7, -0.7, 1.15, 2.5, 1.4, 1.5, VOX.rvDoor); // door, proud of wall
-    panes(-1.5, -0.9, 2.6, 2.95, 1.5, VOX.rvWindow);   // door porthole
-    // windshield + headlights on the cab front
-    panes(-4.05, -3.95, 1.6, 2.35, 0, VOX.rvWindow);   // (thin x via single column)
-    for (let z = -1.0; z <= 1.0; z += c) glow.add(-4.02, 1.95, z, VOX.rvWindow, 0.12, 0.7, c);
-    for (const hz of [-0.85, 0.85]) glow.add(-4.05, 1.4, hz, VOX.windowGlow, 0.14, c, c * 1.4);
-    // red taillights
-    for (const tz of [-1.05, 1.05]) glow.add(3.45, 1.7, tz, VOX.toolbox, 0.14, c * 1.4, c * 1.4);
-
-    // wheels: fat tire blocks with steel hubs
-    for (const wx of [-2.4, 2.6]) for (const wz of [-1.15, 1.15]) {
-      slab(wx - 0.5, wx + 0.5, 0.2, 1.0, wz - 0.35, wz + 0.35, VOX.tire);
-      solid.add(wx, 0.55, wz, VOX.rim, 0.36, 0.36, 0.74);
-      slab(wx - 0.65, wx + 0.65, 1.0, 1.2, wz - 0.42, wz + 0.42, VOX.rvTrim); // arch
+    // chassis + fat wheels with steel hubs + dark arches
+    S(0.3, 1.0, 0, VOX.rvTrim, 6.8, 0.4, 2.7);
+    for (const wx of [-2.4, 2.6]) for (const wz of [-1.1, 1.1]) {
+      S(wx, 0.5, wz, VOX.tire, 1.0, 0.95, 0.72);
+      S(wx, 0.5, wz, VOX.rim, 0.44, 0.44, 0.76);
+      S(wx, 1.15, wz, VOX.rvTrim, 1.4, 0.55, 0.86);
     }
-    // bumpers + grille
-    slab(-4.2, -3.95, 1.1, 1.45, -1.2, 1.2, VOX.rvTrim);
-    slab(3.45, 3.7, 1.1, 1.45, -1.2, 1.2, VOX.rvTrim);
-    slab(-4.0, -3.9, 1.2, 1.55, -0.7, 0.7, VOX.steelDark);
+    // smooth shell: rear living box, lower cab, cab-over bunk
+    S(0.8, 2.25, 0, VOX.rvBody, 5.0, 2.1, 2.8);
+    S(-2.9, 1.7, 0, VOX.rvBody, 1.9, 1.5, 2.6);
+    S(-2.9, 2.85, 0, VOX.rvBody, 1.9, 0.95, 2.7);
+    // lighter roof cap (soft two-tone shading) + a subtle panel shade line
+    S(0.8, 3.35, 0, VOX.rvBodyShade, 5.25, 0.28, 2.9);
+    S(-2.9, 3.35, 0, VOX.rvBodyShade, 1.95, 0.28, 2.78);
+    S(0.8, 2.74, 0, VOX.rvBodyShade, 5.0, 0.06, 2.83);
+    // blue accent stripe wrapping body + cab
+    S(0.8, 1.92, 0, VOX.rvStripe, 5.06, 0.4, 2.84);
+    S(-2.9, 1.52, 0, VOX.rvStripe, 1.94, 0.4, 2.64);
+    // glass-like windows (gentle glow so they read as glass, not lamps)
+    G(0.0, 2.55, 1.43, VOX.rvWindow, 1.3, 0.72, 0.06);
+    G(2.3, 2.55, 1.43, VOX.rvWindow, 1.3, 0.72, 0.06);
+    G(-3.0, 1.95, 1.32, VOX.rvWindow, 1.35, 0.66, 0.06); // cab side
+    G(-3.86, 1.98, 0, VOX.rvWindow, 0.06, 0.78, 2.0);    // windshield
+    // crisp window frames
+    for (const fx of [0.0, 2.3]) {
+      S(fx, 2.93, 1.45, VOX.rvTrim, 1.5, 0.09, 0.08);
+      S(fx, 2.17, 1.45, VOX.rvTrim, 1.5, 0.09, 0.08);
+      S(fx, 2.55, 1.45, VOX.rvTrim, 0.08, 0.82, 0.08);
+    }
+    // door + porthole + step
+    S(-1.0, 1.92, 1.43, VOX.rvDoor, 1.0, 1.66, 0.09);
+    G(-1.0, 2.42, 1.49, VOX.rvWindow, 0.4, 0.4, 0.06);
+    S(-1.0, 1.05, 1.6, VOX.steelDark, 0.9, 0.2, 0.4);
+    // bumpers + grille + head/taillights
+    S(-4.0, 1.2, 0, VOX.rvTrim, 0.5, 0.5, 2.6);
+    S(3.5, 1.2, 0, VOX.rvTrim, 0.5, 0.5, 2.6);
+    S(-3.9, 1.4, 0, VOX.steelDark, 0.14, 0.5, 1.5);
+    for (const hz of [-0.85, 0.85]) G(-3.95, 1.45, hz, VOX.windowGlow, 0.12, 0.3, 0.34);
+    for (const tz of [-1.05, 1.05]) G(3.45, 1.7, tz, VOX.toolbox, 0.12, 0.34, 0.34);
     // wing mirrors
-    for (const mz of [-1.45, 1.45]) {
-      solid.add(-3.5, 2.05, mz, VOX.steelDark, 0.3, c * 0.5, c * 0.5);
-      solid.add(-3.65, 1.95, mz, VOX.steelDark, c * 0.5, 0.3, c * 0.6);
+    for (const mz of [-1.5, 1.5]) {
+      S(-3.5, 2.05, mz, VOX.steelDark, 0.3, 0.1, 0.1);
+      S(-3.66, 1.95, mz, VOX.steelDark, 0.12, 0.32, 0.16);
     }
-    // back ladder
-    for (const lz of [-0.7, 0.7]) for (let y = 1.4; y < 3.3; y += c) solid.add(3.5, y, lz, VOX.steelDark, c * 0.4, c, c * 0.4);
-    for (let r = 0; r < 4; r++) solid.add(3.5, 1.6 + r * 0.45, 0, VOX.steelDark, c * 0.4, c * 0.3, 1.4);
-    // rooftop AC unit + roof rails
-    slab(-0.9, 0.1, 3.7, 4.05, -0.2, 0.8, VOX.rvBodyShade);
-    for (const rz of [-1.1, 1.1]) for (let x = -1.6; x < 3.3; x += c) solid.add(x, 3.75, rz, VOX.steelDark, c, c * 0.3, c * 0.3);
-    // a little deck chair lounging on the roof
-    slab(1.2, 2.0, 3.7, 3.82, -0.7, 0.1, VOX.woodTrim);
-    slab(1.9, 2.05, 3.82, 4.35, -0.7, 0.1, VOX.woodTrim);
+    // back ladder, roof rails, AC unit, deck chair
+    for (const lz of [-0.7, 0.7]) S(3.5, 2.4, lz, VOX.steelDark, 0.12, 1.8, 0.12);
+    for (let r = 0; r < 4; r++) S(3.5, 1.7 + r * 0.45, 0, VOX.steelDark, 0.12, 0.1, 1.5);
+    for (const rz of [-1.05, 1.05]) S(0.8, 3.54, rz, VOX.steelDark, 4.6, 0.1, 0.12);
+    S(-0.4, 3.62, 0.3, VOX.rvTrim, 1.1, 0.36, 1.1);
+    S(1.6, 3.56, -0.3, VOX.woodTrim, 0.9, 0.12, 0.9);
+    S(2.05, 3.86, -0.3, VOX.woodTrim, 0.12, 0.7, 0.9);
 
-    solid.build(this.group, this.geo, true, true);
-    glow.build(this.group, this.geo, false, false, (col) => glowMaterial(col, 0.85));
+    solid.build(this.group, geo, true, true);
+    glow.build(this.group, geo, false, false, (col) => glowMaterial(col, 0.4));
 
     // central obstacle so the horde funnels around the van
-    this.obstacles.push({ minX: -4.2, maxX: 3.8, minZ: -1.6, maxZ: 1.6 });
+    this.obstacles.push({ minX: -4.1, maxX: 3.8, minZ: -1.6, maxZ: 1.6 });
   }
 
   // ---- survival camp dressing ----
