@@ -116,12 +116,14 @@ export class Hud {
               <button class="shop-tab active" data-tab="upgrades">Upgrades</button>
               <button class="shop-tab" data-tab="skins">Skins</button>
               <button class="shop-tab" data-tab="challenges">Challenges</button>
+              <button class="shop-tab" data-tab="market">Market</button>
             </div>
             <span class="shop-essence">✦ <span id="essence-bal">0</span></span>
           </div>
           <div class="tab" id="tab-upgrades"></div>
           <div class="tab hidden" id="tab-skins"></div>
           <div class="tab hidden" id="tab-challenges"></div>
+          <div class="tab hidden" id="tab-market"></div>
         </div>
         <div class="controls">
           <span class="k">WASD</span><span>Move</span>
