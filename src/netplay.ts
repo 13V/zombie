@@ -118,7 +118,7 @@ const PLAYER_COLORS = [COLORS.player, 0xe06a4a, 0x53b36a, 0xc78ad8];
 export class NetPlay {
   readonly net: NetClient;
   private snapAccum = 0;
-  private snapRate = 1 / 20; // 20 Hz
+  private snapRate = 1 / 30; // 30 Hz — smoother remote players + zombies
 
   // host state
   private guests = new Map<number, GuestSlot>();
@@ -130,6 +130,11 @@ export class NetPlay {
   netPoints = 0;
   myHp = 100;
   myMaxHp = 100;
+  // authoritative position of THIS guest's player (for client-side reconciliation)
+  myX = 0;
+  myZ = 9;
+  myAlive = true;
+  myHasAuth = false;
   // local guest's own weapon display (driven by the snapshot)
   myWeapon = "Peashooter";
   myAmmo = 0;
@@ -292,26 +297,27 @@ export class NetPlay {
     this.net.send(inp);
   }
 
-  /** Guest: advance interpolation of all networked views. */
-  guestRender(dt: number, localPlayer: Player, myId: number) {
+  /**
+   * Guest: advance interpolation of remote players + zombies, and capture this
+   * guest's own authoritative state. The local player itself is moved by the
+   * game with client-side prediction + reconciliation (not snapped here), so it
+   * feels responsive at 60fps instead of stepping at the snapshot rate.
+   */
+  guestRender(dt: number, myId: number) {
     if (this.isHost || !this.latest) return;
 
-    // local player + remotes from the latest snapshot
     for (const ps of this.latest.players) {
       if (ps.id === myId) {
-        localPlayer.pos.set(ps.x, 0, ps.z);
-        localPlayer.group.position.copy(localPlayer.pos);
-        localPlayer.group.rotation.y = ps.ry;
-        localPlayer.health = ps.hp;
-        localPlayer.maxHealth = ps.maxHp;
-        localPlayer.alive = ps.alive;
+        this.myX = ps.x;
+        this.myZ = ps.z;
+        this.myAlive = ps.alive;
+        this.myHasAuth = true;
         this.myHp = ps.hp;
         this.myMaxHp = ps.maxHp;
         if (ps.wn !== undefined) this.myWeapon = ps.wn;
         if (ps.am !== undefined) this.myAmmo = ps.am;
         if (ps.rs !== undefined) this.myReserve = ps.rs;
         this.myReloading = !!ps.rl;
-        localPlayer.netAnimate(dt, ps.walking);
       } else {
         let fig = this.remote.get(ps.id);
         if (!fig) {

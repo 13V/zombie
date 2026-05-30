@@ -955,7 +955,33 @@ class Game implements GameApi {
     };
     if (inp.fire) this.audio.shoot(0.4); // local fire feedback (host is authoritative)
     this.netplay!.guestSendInput(inp);
-    this.netplay!.guestRender(dt, this.player, this.myId);
+    this.netplay!.guestRender(dt, this.myId); // remotes + zombies + my auth state
+
+    // --- client-side prediction for the guest's OWN player ---
+    // Move locally at 60fps for instant response, then gently reconcile toward
+    // the host's authoritative position so collisions/damage stay host-ruled.
+    this.player.alive = this.netplay!.myAlive;
+    if (this.player.alive) {
+      this.player.update(dt, axis.x, -axis.y, aim);
+      this.arena.clamp(this.player.pos, PLAYER.radius);
+      this.arena.resolveObstacles(this.player.pos, PLAYER.radius);
+    } else {
+      this.player.idle(dt);
+    }
+    if (this.netplay!.myHasAuth) {
+      const ex = this.netplay!.myX - this.player.pos.x;
+      const ez = this.netplay!.myZ - this.player.pos.z;
+      if (Math.hypot(ex, ez) > 3) {
+        // large desync (spawn / knockback / teleport) → snap
+        this.player.pos.set(this.netplay!.myX, 0, this.netplay!.myZ);
+      } else {
+        const k = 1 - Math.exp(-7 * dt); // soft pull toward authoritative
+        this.player.pos.x += ex * k;
+        this.player.pos.z += ez * k;
+      }
+      this.player.group.position.copy(this.player.pos);
+    }
+
     this.bullets.update(dt); // moves the local tracer ghosts
 
     this.hud.setRound(this.netplay!.netRound);

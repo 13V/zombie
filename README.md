@@ -62,6 +62,11 @@ pick **Join**, type the code, and drop into your world. One player (the host) is
 the authoritative simulation; everyone shares the round, the horde, and a **team
 points pool**. Solo play needs none of this.
 
+Guests use **client-side prediction**: a guest moves its own character locally
+at 60fps and softly reconciles to the host's authoritative position (snapping
+only on big desyncs), so movement feels responsive instead of stepping at the
+30Hz snapshot rate. Remote players + zombies are interpolated.
+
 Guests are full participants: they have their own weapon inventory and can
 **buy from the Mystery Box / wall-buys, swap weapons (Q), Pack-a-Punch, grab
 perks, and chew Gobblegum**, with buy confirmations pushed back to them. Their
