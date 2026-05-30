@@ -95,7 +95,8 @@ export class VoxelChar implements CharacterRig {
     g.position.set(x, 1.45, 0); // shoulder pivot
     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.62, 0.26), mat);
     arm.position.y = -0.31;
-    arm.castShadow = true;
+    // arms/legs don't cast shadow — halves shadow draw calls for the horde;
+    // torso+head shadow already reads the silhouette fine.
     g.add(arm);
     return g;
   }
@@ -105,8 +106,7 @@ export class VoxelChar implements CharacterRig {
     g.position.set(x, 0.62, 0); // hip pivot
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.62, 0.32), mat);
     leg.position.y = -0.31;
-    leg.castShadow = true;
-    g.add(leg);
+    g.add(leg); // no shadow caster (see makeArm)
     return g;
   }
 

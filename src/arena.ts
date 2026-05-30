@@ -131,7 +131,7 @@ export class Arena {
     const key = new THREE.DirectionalLight(0xfff4dc, 1.55);
     key.position.set(20, 34, 16);
     key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.mapSize.set(1024, 1024); // 4× less shadow fill than 2048; barely visible at this art scale
     const d = this.half + 8;
     const cam = key.shadow.camera;
     cam.left = -d; cam.right = d; cam.top = d; cam.bottom = -d;

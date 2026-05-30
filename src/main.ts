@@ -134,6 +134,10 @@ class Game implements GameApi {
   private hitTmp = new THREE.Vector3();
   private readonly UP = new THREE.Vector3(0, 1, 0);
   private healKills = 0; // counts toward Heal Nova upgrade
+  // reused per-frame scratch to avoid GC churn in the hot loop
+  private _axis = new THREE.Vector2();
+  private _fire: FireMods = {};
+  private _victims: Player[] = [];
 
   private tilt: TiltShift;
 
@@ -145,8 +149,11 @@ class Game implements GameApi {
     const canvas = document.getElementById("scene") as HTMLCanvasElement;
     const ui = document.getElementById("ui") as HTMLElement;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // antialias:false — SMAA in the composer handles edges; MSAA here would be
+    // redundant cost. Cap pixelRatio at 1.5: every post pass runs at this res,
+    // so fill-rate (not geometry) is the bottleneck on hi-dpi screens.
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -172,9 +179,10 @@ class Game implements GameApi {
     // (the aim guide at the gun, floating hit/CRIT text) as solid black boxes,
     // because they wrote into the AO depth pass. Soft contact shadow comes from
     // the directional light's shadow map instead; no black-box class of bug.
-    // Gentle bloom — only the brightest emissives (windows, fire, pickups) glow,
-    // so the grass and props stay crisp instead of washing out.
-    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.16, 0.5, 0.92);
+    // Gentle bloom — only the brightest emissives (windows, fire, pickups) glow.
+    // Built at half-res: the blur is low-frequency so it's visually identical
+    // but costs ~4× less fill (bloom is ~11 internal passes — the priciest one).
+    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.16, 0.5, 0.92);
     this.composer.addPass(bloom);
     // Tilt-shift kept SUBTLE: a wide sharp band so the play area stays crisp
     // (blur only creeps in at the very top/bottom edges, like the reference),
@@ -883,7 +891,7 @@ class Game implements GameApi {
     // Sugar Rush stacks on the Quick perk + upgrades for movement speed.
     this.player.speedMul = (this.perks.has("quick") ? 1.35 : 1) * this.powerups.speedMul() * this.mods.moveSpeedMul;
 
-    const axis = this.input.moveAxis(new THREE.Vector2());
+    const axis = this.input.moveAxis(this._axis);
     // Touch aim stick points the reticle relative to the player (twin-stick).
     if (this.input.touchAim) {
       this.input.aimPoint.set(
@@ -903,23 +911,24 @@ class Game implements GameApi {
     w.update(dt, this.player.reloadMul * this.mods.reloadMul);
     // On touch, holding the aim stick fires (all weapons); cooldown gates rate.
     const wantFire = this.input.touchAim ? true : w.def.auto ? this.input.firing : this.input.clicked();
-    // Adrenaline: fire faster the lower your health is.
-    const adr = this.mods.adrenaline ? 1 + (1 - this.player.health / this.player.maxHealth) * 0.6 : 1;
-    const fire: FireMods = {
-      fireRateMul: this.powerups.fireRateMul() * this.mods.fireRateMul * adr,
-      bonusPellets: this.mods.bonusPellets,
-      pierceBonus: this.mods.pierceBonus,
-      scaleMul: this.mods.bulletScaleMul,
-      homing: this.mods.homing,
-      bounces: this.mods.ricochet,
-    };
-    if (wantFire && w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, fire)) {
-      this.player.flash();
-      this.audio.shoot(w.def.wonder ? 0.85 : 0.4);
-      this.netplay?.hostShot(
-        this.player.muzzle.x, this.player.muzzle.z, this.player.aimDir.x, this.player.aimDir.z,
-        w.def.bulletColor ?? COLORS.bullet, w.def.bulletScale ?? 1,
-      );
+    if (wantFire) {
+      // Adrenaline: fire faster the lower your health is. Reuse _fire (no alloc).
+      const adr = this.mods.adrenaline ? 1 + (1 - this.player.health / this.player.maxHealth) * 0.6 : 1;
+      const f = this._fire;
+      f.fireRateMul = this.powerups.fireRateMul() * this.mods.fireRateMul * adr;
+      f.bonusPellets = this.mods.bonusPellets;
+      f.pierceBonus = this.mods.pierceBonus;
+      f.scaleMul = this.mods.bulletScaleMul;
+      f.homing = this.mods.homing;
+      f.bounces = this.mods.ricochet;
+      if (w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, f)) {
+        this.player.flash();
+        this.audio.shoot(w.def.wonder ? 0.85 : 0.4);
+        this.netplay?.hostShot(
+          this.player.muzzle.x, this.player.muzzle.z, this.player.aimDir.x, this.player.aimDir.z,
+          w.def.bulletColor ?? COLORS.bullet, w.def.bulletScale ?? 1,
+        );
+      }
     }
     if (this.input.pressed("KeyR")) w.reload();
     if (this.input.pressed("KeyQ") && this.weapons.length > 1) {
@@ -1316,8 +1325,12 @@ class Game implements GameApi {
 
   private resolveZombieTouch(dt: number) {
     const r = ZOMBIE.radius + PLAYER.radius;
-    // candidate victims: local player + any guests (host-authoritative)
-    const victims = [this.player, ...(this.netplay ? this.netplay.hostGuestSlots().map((s) => s.player) : [])];
+    // candidate victims: local player + any guests (host-authoritative).
+    // Reuse a scratch array each frame to avoid GC churn.
+    const victims = this._victims;
+    victims.length = 0;
+    victims.push(this.player);
+    if (this.netplay) for (const s of this.netplay.hostGuestSlots()) victims.push(s.player);
     for (const z of this.rounds.zombies) {
       if (!z.alive) continue;
       if (z.touchCooldown > 0) {

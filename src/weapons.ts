@@ -198,6 +198,8 @@ export interface Bullet {
 
 const _UP = new THREE.Vector3(0, 1, 0);
 const _dir = new THREE.Vector3();
+const _base = new THREE.Vector3();
+const _dd = new THREE.Vector3();
 
 /** Spawns, moves, recycles bullet meshes. Collision is resolved by the caller. */
 export class BulletSystem {
@@ -208,7 +210,16 @@ export class BulletSystem {
 
   constructor(private scene: THREE.Scene) {}
 
+  /** Hard cap on live tracers — bounds the O(bullets×zombies) collision pass. */
+  private static readonly MAX_LIVE = 140;
+
   spawn(origin: THREE.Vector3, dir: THREE.Vector3, opts: SpawnOpts) {
+    // Cap live bullets: retire the oldest so collision cost stays bounded even
+    // with stacked fire-rate + multishot + pellet weapons.
+    if (this.bullets.length >= BulletSystem.MAX_LIVE) {
+      const oldest = this.bullets.find((x) => x.alive);
+      if (oldest) this.retire(oldest);
+    }
     let b = this.pool.pop();
     if (!b) {
       const mesh = new THREE.Mesh(this.geo, glowMaterial(opts.color, 1.8));
@@ -366,12 +377,12 @@ export class Weapon {
     };
 
     const pellets = d.pellets + (fire.bonusPellets ?? 0);
-    const base = new THREE.Vector3(dir.x, 0, dir.z).normalize();
+    _base.set(dir.x, 0, dir.z).normalize();
     for (let p = 0; p < pellets; p++) {
       const a = (Math.random() * 2 - 1) * d.spread;
-      const dd = base.clone().applyAxisAngle(_UP, a);
+      _dd.copy(_base).applyAxisAngle(_UP, a);
       if (d.rainbow) opts.color = RAINBOW[Math.floor(Math.random() * RAINBOW.length)];
-      bullets.spawn(origin, dd, opts);
+      bullets.spawn(origin, _dd, opts);
     }
     if (this.ammo <= 0) this.reload();
     return true;

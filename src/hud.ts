@@ -70,6 +70,17 @@ export class Hud {
   private overStats!: HTMLElement;
 
   private toastTimer?: number;
+  // Cached last-rendered values so the per-frame HUD updates skip redundant
+  // string building + DOM writes (these methods are called every frame).
+  private _cPoints = NaN;
+  private _cHpPct = -1;
+  private _cWeapon = "";
+  private _cAmmo = -1;
+  private _cReserve = "";
+  private _cReloading = false;
+  private _cComboMult = -1;
+  private _cComboFrac = -1;
+  private _cPowerSig = "";
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -445,25 +456,43 @@ export class Hud {
     this.roundEl.textContent = String(n);
   }
   setPoints(p: number) {
+    if (p === this._cPoints) return;
+    this._cPoints = p;
     this.pointsEl.textContent = String(p);
   }
   setHealth(hp: number, max: number) {
     const pct = Math.max(0, Math.min(1, hp / max));
+    if (Math.abs(pct - this._cHpPct) < 0.005) return; // skip sub-pixel changes
+    this._cHpPct = pct;
     this.healthFill.style.width = `${pct * 100}%`;
     this.healthFill.classList.toggle("low", pct < 0.35);
   }
   /** Show the kill-combo multiplier (0 = hide). `frac` drains the bar. */
   setCombo(mult: number, frac: number) {
-    const el = this.q("#hud-combo");
     if (mult <= 1) {
-      el.classList.remove("show");
+      if (this._cComboMult !== 0) {
+        this._cComboMult = 0;
+        this.q("#hud-combo").classList.remove("show");
+      }
       return;
     }
-    el.classList.add("show");
-    this.q("#hud-combo-x").textContent = `x${mult % 1 === 0 ? mult : mult.toFixed(2).replace(/0$/, "")}`;
-    this.q("#hud-combo-fill").style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+    if (mult !== this._cComboMult) {
+      this._cComboMult = mult;
+      this.q("#hud-combo").classList.add("show");
+      this.q("#hud-combo-x").textContent = `x${mult % 1 === 0 ? mult : mult.toFixed(2).replace(/0$/, "")}`;
+    }
+    const fr = Math.round(frac * 50); // ~2% steps — avoid a DOM write every frame
+    if (fr !== this._cComboFrac) {
+      this._cComboFrac = fr;
+      this.q("#hud-combo-fill").style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+    }
   }
   setPowerups(list: ActiveGum[]) {
+    // signature = ids + whole seconds remaining; only rebuild when it changes
+    let sig = "";
+    for (const a of list) sig += a.def.short + Math.ceil(a.remaining) + ",";
+    if (sig === this._cPowerSig) return;
+    this._cPowerSig = sig;
     this.powerupsEl.innerHTML = list
       .map((a) => {
         const c = `#${a.def.color.toString(16).padStart(6, "0")}`;
@@ -472,10 +501,23 @@ export class Hud {
       .join("");
   }
   setWeapon(name: string, ammo: number, reserve: string, reloading: boolean) {
-    this.weaponName.textContent = name;
-    this.weaponAmmo.textContent = String(ammo);
-    this.q("#hud-reserve").textContent = reserve;
-    this.q("#hud-reloading").textContent = reloading ? "RELOADING…" : "";
+    if (name === this._cWeapon && ammo === this._cAmmo && reserve === this._cReserve && reloading === this._cReloading) return;
+    if (name !== this._cWeapon) {
+      this._cWeapon = name;
+      this.weaponName.textContent = name;
+    }
+    if (ammo !== this._cAmmo) {
+      this._cAmmo = ammo;
+      this.weaponAmmo.textContent = String(ammo);
+    }
+    if (reserve !== this._cReserve) {
+      this._cReserve = reserve;
+      this.q("#hud-reserve").textContent = reserve;
+    }
+    if (reloading !== this._cReloading) {
+      this._cReloading = reloading;
+      this.q("#hud-reloading").textContent = reloading ? "RELOADING…" : "";
+    }
   }
 
   showPrompt(text: string, affordable: boolean) {
