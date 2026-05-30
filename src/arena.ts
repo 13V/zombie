@@ -411,7 +411,9 @@ export class Arena {
         m.scale.set(s, s * 0.7, s);
         g.add(m);
       }
-      g.position.set((Math.random() - 0.5) * 170, 10 + Math.random() * 30, (Math.random() - 0.5) * 170);
+      // Keep clouds well above the camera (y≈24) so they stay a sky backdrop and
+      // never drift between the lens and the player on the ground.
+      g.position.set((Math.random() - 0.5) * 170, 44 + Math.random() * 24, (Math.random() - 0.5) * 170);
       scene.add(g);
       this.clouds.push({ group: g, speed: 1 + Math.random() * 1.6 });
     }

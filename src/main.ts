@@ -475,15 +475,39 @@ class Game implements GameApi {
     return () => clearInterval(iv);
   }
 
+  /**
+   * Retry a connect attempt while the free server cold-starts. Render returns a
+   * fast 502 (instant onerror) until the dyno is up, so a single try fails
+   * immediately — we keep poking /health and retrying for up to ~55s.
+   */
+  private async connectWithRetry<T>(makeAttempt: () => Promise<T>, budgetMs = 55000): Promise<T> {
+    const t0 = Date.now();
+    let lastErr: unknown;
+    while (Date.now() - t0 < budgetMs) {
+      try {
+        return await makeAttempt();
+      } catch (e) {
+        lastErr = e;
+        this.net?.close();
+        if (Date.now() - t0 >= budgetMs) break;
+        warmServer(); // keep nudging the dyno awake
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+    }
+    throw lastErr ?? new Error("could not reach the server");
+  }
+
   private async hostGame() {
     warmServer(); // poke the dyno in case it's cold-starting
     const stop = this.connectingTicker("Connecting");
     try {
-      this.net = new NetClient();
-      this.net.onClose = (r) => this.onNetClose(r);
-      const { code } = await this.net.host();
+      const { code } = await this.connectWithRetry(() => {
+        this.net = new NetClient();
+        this.net.onClose = (r) => this.onNetClose(r);
+        return this.net.host();
+      });
       stop();
-      this.netplay = new NetPlay(this.net, this.scene, this.assets, this.bullets);
+      this.netplay = new NetPlay(this.net!, this.scene, this.assets, this.bullets);
       this.myId = 1;
       this.startRun();
       this.hud.showRoomCode(code);
@@ -492,7 +516,7 @@ class Game implements GameApi {
       stop();
       console.error("[coop] host failed:", e);
       this.teardownNet();
-      this.hud.setLobbyStatus(`Couldn't reach server: ${(e as Error).message}`);
+      this.hud.setLobbyStatus("Server unreachable — it may be asleep or down. Try again in a minute.");
     }
   }
 
@@ -504,24 +528,26 @@ class Game implements GameApi {
     warmServer();
     const stop = this.connectingTicker("Joining");
     try {
-      this.net = new NetClient();
-      this.net.onClose = (r) => this.onNetClose(r);
-      const { id } = await this.net.join(code);
+      const { id } = await this.connectWithRetry(() => {
+        this.net = new NetClient();
+        this.net.onClose = (r) => this.onNetClose(r);
+        return this.net!.join(code);
+      });
       stop();
       this.myId = id;
-      this.netplay = new NetPlay(this.net, this.scene, this.assets, this.bullets);
+      this.netplay = new NetPlay(this.net!, this.scene, this.assets, this.bullets);
       this.netplay.onToast = (m) => this.hud.toast(m); // host-pushed feedback
       // guests render the host's authoritative world; no local sim
       this.resetRun();
       this.hud.hideStart();
       this.hud.hideGameOver();
       this.state = "playing";
-      this.hud.toast(`Joined ${this.net.room}`);
+      this.hud.toast(`Joined ${this.net!.room}`);
     } catch (e) {
       stop();
       console.error("[coop] join failed:", e);
       this.teardownNet();
-      this.hud.setLobbyStatus(`Join failed: ${(e as Error).message}`);
+      this.hud.setLobbyStatus("Couldn't join — check the code, or the server may be down.");
     }
   }
 

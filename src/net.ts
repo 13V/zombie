@@ -206,8 +206,8 @@ export class NetClient {
         return;
       }
       this.ws = ws;
-      // Generous timeout: the free server may be cold-starting (~30–60s).
-      const to = setTimeout(() => reject(new Error("Connection timed out — the server may be waking up; try again")), 45000);
+      // Per-attempt timeout; the game layer retries while the dyno cold-starts.
+      const to = setTimeout(() => reject(new Error("timed out")), 12000);
       ws.onerror = () => reject(new Error("Could not reach the server"));
       ws.onclose = () => {
         if (this.connected) {
