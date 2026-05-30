@@ -94,6 +94,13 @@ export interface ZombieType {
   /** If set, detonates on death dealing AoE to a nearby player. */
   blastRadius?: number;
   blastDamage?: number;
+  // ---- flying mobs (the aerial threat layer) ----
+  /** Flies at `flyHeight` above the ground; ignores separation from grounded mobs. */
+  flying?: boolean;
+  flyHeight?: number;
+  /** "dive": swoops to the ground to attack then pulls up. "ranged": hovers at a
+   *  standoff distance and lobs a projectile. (default = drifts in like a melee flier) */
+  airMode?: "dive" | "ranged" | "swarm";
 }
 
 /**
@@ -112,6 +119,10 @@ export const ZOMBIE_TYPES: ZombieType[] = [
   { id: "armored", name: "Armored", from: 8, weight: 0.13, healthMul: 6.5, speedMul: 0.6, scale: 1.35, touchDamage: 22, scoreMul: 3.5, body: 0x6c7a8a, head: 0x44505c },
   { id: "banshee", name: "Banshee", from: 9, weight: 0.13, healthMul: 0.85, speedMul: 2.4, scale: 0.9, touchDamage: 16, scoreMul: 2.2, body: 0xe85aa6, head: 0xb53a7e },
   { id: "abomination", name: "Abomination", from: 10, weight: 0.15, healthMul: 13.0, speedMul: 0.6, scale: 2.0, touchDamage: 42, scoreMul: 6.0, body: 0x7a1f1f, head: 0x4a0f0f, blastRadius: 4.2, blastDamage: 55 },
+  // ---- flying mobs (aerial threat layer; forces dodging + priority targeting) ----
+  { id: "vulture", name: "Vulture", from: 6, weight: 0.13, healthMul: 0.8, speedMul: 1.6, scale: 0.9, touchDamage: 20, scoreMul: 2.2, body: 0x6a5a7a, head: 0x9a7aa0, flying: true, flyHeight: 3.2, airMode: "dive" },
+  { id: "gnat", name: "Gnat Swarm", from: 5, weight: 0.16, healthMul: 0.35, speedMul: 1.5, scale: 0.5, touchDamage: 7, scoreMul: 1.4, body: 0x9fb04a, head: 0x7a8a30, flying: true, flyHeight: 2.4, airMode: "swarm" },
+  { id: "stinger", name: "Stinger", from: 9, weight: 0.12, healthMul: 0.9, speedMul: 1.0, scale: 0.85, touchDamage: 12, scoreMul: 2.4, body: 0xd6a23a, head: 0xb5841f, flying: true, flyHeight: 3.0, airMode: "ranged" },
 ];
 
 /** Gobblegum-style power-ups from the bubblegum machine. `duration` 0 = instant. */

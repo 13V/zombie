@@ -41,6 +41,16 @@ export class Zombie {
   // ragdoll fling on death: vertical velocity + tumble spin
   private flingY = 0;
   private flingSpin = 0;
+  // ---- flying mob state ----
+  flying = false;
+  private flyHeight = 3;
+  private airMode: "dive" | "ranged" | "swarm" = "swarm";
+  private diveTimer = 0;
+  private diving = false;
+  private rangedTimer = 0;
+  private wobble = 0;
+  /** Set true on a frame a ranged flier wants to fire; main reads + clears it. */
+  wantsRangedShot = false;
 
   // per-spawn variant state
   touchDamage = ZOMBIE.touchDamage;
@@ -87,6 +97,14 @@ export class Zombie {
     this.explodes = type.blastRadius !== undefined;
     this.blastRadius = type.blastRadius ?? 0;
     this.blastDamage = type.blastDamage ?? 0;
+    // flying state
+    this.flying = !!type.flying;
+    this.flyHeight = type.flyHeight ?? 3;
+    this.airMode = type.airMode ?? "swarm";
+    this.diveTimer = 1.5 + Math.random() * 2; // first dive after a beat
+    this.diving = false;
+    this.rangedTimer = 1 + Math.random() * 1.5;
+    this.wobble = Math.random() * Math.PI * 2;
     this.group.scale.setScalar(type.scale);
     if (this.char instanceof VoxelChar) {
       this.char.setColor(type.body, type.head, this.explodes ? type.body : 0x000000);
@@ -156,6 +174,20 @@ export class Zombie {
       if (this.slowTimer <= 0) this.slowAmt = 0;
     }
 
+    if (this.flying) {
+      this.updateFlying(dt, target, speed);
+    } else {
+      this.updateGround(dt, target, grid, speed);
+    }
+
+    if (this.flash > 0) {
+      this.flash -= dt;
+      if (this.char instanceof VoxelChar) this.char.setHitFlash(Math.max(0, this.flash / 0.12));
+    }
+    this.char.update(dt);
+  }
+
+  private updateGround(dt: number, target: THREE.Vector3, grid: SpatialGrid, speed: number) {
     _tmp.copy(target).sub(this.pos);
     _tmp.y = 0;
     const dist = _tmp.length();
@@ -165,7 +197,7 @@ export class Zombie {
     // separation: only check zombies in nearby grid cells (was O(n²))
     const minD = ZOMBIE.separation;
     grid.forNear(this.pos.x, this.pos.z, minD, (o) => {
-      if (o === this || !o.alive) return;
+      if (o === this || !o.alive || o.flying) return;
       const dx = this.pos.x - o.pos.x;
       const dz = this.pos.z - o.pos.z;
       const d2 = dx * dx + dz * dz;
@@ -185,11 +217,61 @@ export class Zombie {
     this.pos.y = 0;
     this.group.position.copy(this.pos);
     this.group.rotation.y = Math.atan2(_tmp.x, _tmp.z);
-    if (this.flash > 0) {
-      this.flash -= dt;
-      if (this.char instanceof VoxelChar) this.char.setHitFlash(Math.max(0, this.flash / 0.12));
+  }
+
+  /** Flying behavior: hover at height, then dive / lob ranged / swarm-drift. */
+  private updateFlying(dt: number, target: THREE.Vector3, speed: number) {
+    this.wobble += dt * 4;
+    const dx = target.x - this.pos.x;
+    const dz = target.z - this.pos.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    const nx = dx / dist;
+    const nz = dz / dist;
+
+    let desiredY = this.flyHeight + Math.sin(this.wobble) * 0.3;
+
+    if (this.airMode === "dive") {
+      this.diveTimer -= dt;
+      if (this.diving) {
+        // swoop straight at the player on the ground, fast
+        this.pos.x += nx * speed * 2.2 * dt;
+        this.pos.z += nz * speed * 2.2 * dt;
+        desiredY = 0.4;
+        if (this.pos.y < 0.6 || dist < 0.8) {
+          this.diving = false;
+          this.diveTimer = 2 + Math.random() * 2;
+        }
+      } else {
+        // reposition above the player, then trigger a dive
+        this.pos.x += nx * speed * dt;
+        this.pos.z += nz * speed * dt;
+        if (this.diveTimer <= 0 && dist < 8) this.diving = true;
+      }
+    } else if (this.airMode === "ranged") {
+      // hover at a standoff distance and lob projectiles
+      const standoff = 8;
+      const closing = dist > standoff ? 1 : dist < standoff - 1.5 ? -0.8 : 0;
+      this.pos.x += nx * speed * closing * dt;
+      this.pos.z += nz * speed * closing * dt;
+      this.rangedTimer -= dt;
+      if (this.rangedTimer <= 0 && dist < 18) {
+        this.rangedTimer = 1.8 + Math.random();
+        this.wantsRangedShot = true;
+      }
+    } else {
+      // swarm: erratic zig-zag drift toward the player at head height
+      const zig = Math.sin(this.wobble * 1.7) * 0.6;
+      this.pos.x += (nx + -nz * zig) * speed * dt;
+      this.pos.z += (nz + nx * zig) * speed * dt;
     }
-    this.char.update(dt);
+
+    // ease height toward desired; apply light knockback drift
+    this.pos.y += (desiredY - this.pos.y) * Math.min(1, dt * 6);
+    this.pos.x += this.knock.x * dt;
+    this.pos.z += this.knock.z * dt;
+    this.knock.multiplyScalar(Math.pow(0.0008, dt));
+    this.group.position.copy(this.pos);
+    this.group.rotation.y = Math.atan2(nx, nz);
   }
 
   /** Advance the death animation; hide + recycle when the corpse times out. */

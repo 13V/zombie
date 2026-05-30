@@ -1020,6 +1020,7 @@ class Game implements GameApi {
     const targets = this.netplay ? this.netplay.hostPlayerPositions(this.player) : [this.player.pos];
     this.rounds.update(dt, this.arena, targets);
     this.updatePets(dt);
+    this.resolveRangedFliers();
 
     this.resolveBulletHits();
     this.resolveZombieTouch(dt);
@@ -1456,6 +1457,26 @@ class Game implements GameApi {
         this.damageZombie(z, dmg, scoreMul);
       }
     });
+  }
+
+  /** Stinger fliers spit a ranged hit at the player (a quick splash at the
+   *  player's spot — punishes ignoring them / standing still). */
+  private resolveRangedFliers() {
+    for (const z of this.rounds.zombies) {
+      if (!z.alive || !z.wantsRangedShot) continue;
+      z.wantsRangedShot = false;
+      // telegraph + hit: a goo splash under the player; partial damage if close.
+      this.hitTmp.set(this.player.pos.x, 0.1, this.player.pos.z);
+      this.explosions.burst(this.hitTmp, 1.6, 0x9fb04a);
+      const dx = this.player.pos.x - z.pos.x;
+      const dz = this.player.pos.z - z.pos.z;
+      if (dx * dx + dz * dz < 18 * 18 && this.player.alive) {
+        this.player.damage(z.touchDamage);
+        this.shake = Math.min(0.4, this.shake + 0.18);
+        this.audio.hurt();
+        this.runStats.tookDamage = true;
+      }
+    }
   }
 
   private resolveZombieTouch(dt: number) {
