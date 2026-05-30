@@ -386,6 +386,20 @@ export class NetPlay {
     if (msg.t === "input" && this.isHost) {
       const slot = this.guests.get(from);
       if (slot) {
+        // Sanitize untrusted guest input: reject NaN/Infinity (would poison the
+        // authoritative sim + everyone's view) and clamp movement to a unit
+        // vector + aim to the arena, so a guest can't teleport/speedhack/grief.
+        const fin = (v: unknown, d = 0) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+        let mx = fin(msg.mx);
+        let mz = fin(msg.mz);
+        const mlen = Math.hypot(mx, mz);
+        if (mlen > 1) { mx /= mlen; mz /= mlen; }
+        const LIM = 60;
+        msg.mx = mx;
+        msg.mz = mz;
+        msg.ax = Math.max(-LIM, Math.min(LIM, fin(msg.ax)));
+        msg.az = Math.max(-LIM, Math.min(LIM, fin(msg.az, -1)));
+        msg.fire = !!msg.fire;
         slot.input = msg;
         // latch discrete presses so they survive send/sim rate mismatch
         if (msg.swap) slot.pendingSwap = true;
