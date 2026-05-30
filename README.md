@@ -89,8 +89,13 @@ Solo play needs none of this.
 
 ### Progression hooks (the "addicting" loops)
 - **Meta-progression** (`save.ts`, `meta.ts`) — runs bank **Essence** (saved to
-  localStorage, even on death); spend it in the menu shop on permanent upgrades.
-  Personal best round/score is tracked and celebrated.
+  localStorage, even on death); spend it in the tabbed menu shop. Personal best
+  round/score is tracked and celebrated.
+- **Cosmetic skins** (`cosmetics.ts`) — visual-only hero recolors bought with
+  Essence and equipped from the **Skins** tab (no balance impact).
+- **Challenges** (`challenges.ts`) — one-time goals (lifetime kills/crits/bosses,
+  reach round 10/15, flawless boss kill) that pay Essence; progress shown on the
+  **Challenges** tab. Run stats are tracked live and settled on death.
 - **Level-up picker** (`upgrades.ts`, `mods.ts`) — clear a round and choose 1 of 3
   stacking upgrades on an animated card screen: icons, rarity tiers (common / rare /
   shimmering **legendary**), live stat-delta previews (e.g. `Damage 120% → 140%`), a

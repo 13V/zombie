@@ -58,6 +58,11 @@ export class Player {
     this.muzzleFlash.position.set(0, 1.0, 0.9);
   }
 
+  /** Apply a cosmetic skin (recolors the voxel hero; no-op for GLB rigs). */
+  setSkin(body: number, head: number) {
+    if (this.char instanceof VoxelChar) this.char.setColor(body, head);
+  }
+
   damage(amount: number) {
     if (!this.alive) return;
     this.health = Math.max(0, this.health - amount);

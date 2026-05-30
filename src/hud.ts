@@ -12,6 +12,28 @@ export interface MetaRow {
   affordable: boolean;
 }
 
+/** A cosmetic skin row for the skins tab. */
+export interface SkinRow {
+  id: string;
+  name: string;
+  body: number;
+  head: number;
+  cost: number;
+  owned: boolean;
+  equipped: boolean;
+  affordable: boolean;
+}
+
+/** A challenge row for the challenges tab. */
+export interface ChallengeRow {
+  name: string;
+  desc: string;
+  reward: number;
+  progress: number;
+  goal: number;
+  done: boolean;
+}
+
 /** One level-up card as the HUD renders it (view-model built by the game). */
 export interface LevelCardVM {
   id: string;
@@ -88,7 +110,19 @@ export class Hud {
            chew Bubblegum, and grab the loot the dead drop. Every run earns
            <b>Essence</b> — spend it below to come back stronger.</p>
         <div class="bestline" id="best-line"></div>
-        <div class="meta" id="meta-shop"></div>
+        <div class="shop">
+          <div class="shop-bar">
+            <div class="shop-tabs">
+              <button class="shop-tab active" data-tab="upgrades">Upgrades</button>
+              <button class="shop-tab" data-tab="skins">Skins</button>
+              <button class="shop-tab" data-tab="challenges">Challenges</button>
+            </div>
+            <span class="shop-essence">✦ <span id="essence-bal">0</span></span>
+          </div>
+          <div class="tab" id="tab-upgrades"></div>
+          <div class="tab hidden" id="tab-skins"></div>
+          <div class="tab hidden" id="tab-challenges"></div>
+        </div>
         <div class="controls">
           <span class="k">WASD</span><span>Move</span>
           <span class="k">Mouse</span><span>Aim</span>
@@ -141,6 +175,17 @@ export class Hud {
     this.startOverlay = this.q("#overlay-start");
     this.overOverlay = this.q("#overlay-over");
     this.overStats = this.q("#over-stats");
+
+    // menu shop tab switching
+    this.root.querySelectorAll<HTMLButtonElement>(".shop-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const tab = btn.dataset.tab!;
+        this.root.querySelectorAll(".shop-tab").forEach((b) => b.classList.toggle("active", b === btn));
+        for (const name of ["upgrades", "skins", "challenges"]) {
+          this.q(`#tab-${name}`).classList.toggle("hidden", name !== tab);
+        }
+      });
+    });
   }
 
   private q(sel: string): HTMLElement {
@@ -168,12 +213,15 @@ export class Hud {
     el.innerHTML = round > 0 ? `Best run · <b>Round ${round}</b> · ${score} pts` : "No runs yet — go make a mess.";
   }
 
-  /** Render the meta-upgrade shop. `onBuy` fires with the chosen id. */
+  private setEssenceBalance(essence: number) {
+    this.q("#essence-bal").textContent = String(essence);
+  }
+
+  /** Render the meta-upgrade shop tab. `onBuy` fires with the chosen id. */
   renderMeta(essence: number, rows: MetaRow[], onBuy: (id: string) => void) {
-    const shop = this.q("#meta-shop");
-    shop.innerHTML = `
-      <div class="meta-head"><span>Essence Shop</span><span class="essence">✦ ${essence}</span></div>
-      <div class="meta-grid">
+    this.setEssenceBalance(essence);
+    const tab = this.q("#tab-upgrades");
+    tab.innerHTML = `<div class="meta-grid">
         ${rows
           .map(
             (r) => `<button class="meta-card ${r.owned ? "owned" : r.affordable ? "" : "locked"}" data-id="${r.id}" ${r.owned ? "disabled" : ""}>
@@ -184,12 +232,57 @@ export class Hud {
           )
           .join("")}
       </div>`;
-    shop.querySelectorAll<HTMLButtonElement>(".meta-card").forEach((btn) => {
+    tab.querySelectorAll<HTMLButtonElement>(".meta-card").forEach((btn) => {
       btn.addEventListener("click", () => {
         const id = btn.dataset.id;
         if (id) onBuy(id);
       });
     });
+  }
+
+  /** Render the cosmetic skins tab. Click = equip (if owned) or buy. */
+  renderSkins(essence: number, rows: SkinRow[], onSelect: (id: string) => void) {
+    this.setEssenceBalance(essence);
+    const tab = this.q("#tab-skins");
+    tab.innerHTML = `<div class="skin-grid">
+        ${rows
+          .map((r) => {
+            const cls = r.equipped ? "equipped" : r.owned ? "owned" : r.affordable ? "" : "locked";
+            const tag = r.equipped ? "EQUIPPED" : r.owned ? "EQUIP" : `✦ ${r.cost}`;
+            const b = `#${r.body.toString(16).padStart(6, "0")}`;
+            const h = `#${r.head.toString(16).padStart(6, "0")}`;
+            return `<button class="skin-card ${cls}" data-id="${r.id}">
+                <span class="skin-fig"><span class="skin-head" style="background:${h}"></span><span class="skin-body" style="background:${b}"></span></span>
+                <span class="skin-name">${r.name}</span>
+                <span class="skin-tag">${tag}</span>
+              </button>`;
+          })
+          .join("")}
+      </div>`;
+    tab.querySelectorAll<HTMLButtonElement>(".skin-card").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.id;
+        if (id) onSelect(id);
+      });
+    });
+  }
+
+  /** Render the challenges tab (read-only progress list). */
+  renderChallenges(essence: number, rows: ChallengeRow[]) {
+    this.setEssenceBalance(essence);
+    this.q("#tab-challenges").innerHTML = `<div class="chal-list">
+        ${rows
+          .map((r) => {
+            const pct = Math.max(0, Math.min(1, r.progress / r.goal)) * 100;
+            return `<div class="chal ${r.done ? "done" : ""}">
+                <div class="chal-top"><span class="chal-name">${r.name}</span><span class="chal-reward">${r.done ? "✓ CLAIMED" : `✦ ${r.reward}`}</span></div>
+                <div class="chal-desc">${r.desc}</div>
+                <div class="chal-bar"><div class="chal-fill" style="width:${pct}%"></div></div>
+                <div class="chal-prog">${Math.min(r.progress, r.goal)} / ${r.goal}</div>
+              </div>`;
+          })
+          .join("")}
+      </div>`;
   }
 
   /**

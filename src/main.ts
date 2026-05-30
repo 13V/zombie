@@ -26,6 +26,8 @@ import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
+import { SKINS, findSkin } from "./cosmetics";
+import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap } from "./net";
 import { NetPlay } from "./netplay";
 import { COLORS } from "./palette";
@@ -106,6 +108,7 @@ class Game implements GameApi {
   private levelCards: RunUpgrade[] = [];
   private rerollCost = 0;
   private levelPicking = false;
+  private runStats: RunStats = blankRunStats();
 
   points = 0;
   private weapons: Weapon[] = [];
@@ -176,9 +179,11 @@ class Game implements GameApi {
     addEventListener("keydown", unlock, { once: true });
     this.audio.setEnabled(!this.save.muted);
 
-    // Menu progression UI (best run + Essence shop).
+    // Menu progression UI (best run + Essence shop) + equipped cosmetic skin.
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
-    this.renderMetaShop();
+    const skin = findSkin(this.save.skin);
+    this.player.setSkin(skin.body, skin.head);
+    this.renderShop();
 
     this.rounds.onRoundStart = (n) => {
       this.hud.setRound(n);
@@ -235,6 +240,7 @@ class Game implements GameApi {
     this.powerups.clear();
     this.levelNum = 0;
     this.levelPicking = false;
+    this.runStats = blankRunStats();
     this.combo.windowBonus = this.mods.comboWindowBonus;
     this.hud.setPowerups([]);
     this.shake = 0;
@@ -252,8 +258,9 @@ class Game implements GameApi {
   }
 
   // ---- progression / menus ----
-  private renderMetaShop() {
-    const rows = META_UPGRADES.map((u) => ({
+  /** Re-render all three menu shop tabs (upgrades / skins / challenges). */
+  private renderShop() {
+    const upgrades = META_UPGRADES.map((u) => ({
       id: u.id,
       name: u.name,
       desc: u.desc,
@@ -261,7 +268,29 @@ class Game implements GameApi {
       owned: this.save.owned.includes(u.id),
       affordable: this.save.essence >= u.cost,
     }));
-    this.hud.renderMeta(this.save.essence, rows, (id) => this.buyMeta(id));
+    this.hud.renderMeta(this.save.essence, upgrades, (id) => this.buyMeta(id));
+
+    const skins = SKINS.map((s) => ({
+      id: s.id,
+      name: s.name,
+      body: s.body,
+      head: s.head,
+      cost: s.cost,
+      owned: this.save.skins.includes(s.id),
+      equipped: this.save.skin === s.id,
+      affordable: this.save.essence >= s.cost,
+    }));
+    this.hud.renderSkins(this.save.essence, skins, (id) => this.selectSkin(id));
+
+    const chals = CHALLENGES.map((c) => ({
+      name: c.name,
+      desc: c.desc,
+      reward: c.reward,
+      progress: c.progress(this.save.stats, this.runStats),
+      goal: c.goal,
+      done: this.save.claimed.includes(c.id),
+    }));
+    this.hud.renderChallenges(this.save.essence, chals);
   }
 
   private buyMeta(id: string) {
@@ -275,7 +304,27 @@ class Game implements GameApi {
     this.save.owned.push(id);
     writeSave(this.save);
     this.audio.powerup();
-    this.renderMetaShop();
+    this.renderShop();
+  }
+
+  /** Equip an owned skin, or buy it with Essence then equip. */
+  private selectSkin(id: string) {
+    const skin = findSkin(id);
+    if (!this.save.skins.includes(id)) {
+      if (this.save.essence < skin.cost) {
+        this.audio.deny();
+        return;
+      }
+      this.save.essence -= skin.cost;
+      this.save.skins.push(id);
+      this.audio.powerup();
+    } else {
+      this.audio.ui();
+    }
+    this.save.skin = id;
+    writeSave(this.save);
+    this.player.setSkin(skin.body, skin.head);
+    this.renderShop();
   }
 
   /** Return to the main menu (from the game-over screen) to spend Essence. */
@@ -285,7 +334,7 @@ class Game implements GameApi {
     this.resetRun();
     this.hud.hideGameOver();
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
-    this.renderMetaShop();
+    this.renderShop();
     this.hud.showStart();
   }
 
@@ -371,10 +420,36 @@ class Game implements GameApi {
       this.save.bestRound = Math.max(this.save.bestRound, this.rounds.round);
       this.save.bestScore = Math.max(this.save.bestScore, this.points);
     }
+
+    // Fold this run into lifetime stats, then settle any newly-met challenges.
+    this.runStats.round = this.rounds.round;
+    const s = this.save.stats;
+    s.kills += this.runStats.kills;
+    s.crits += this.runStats.crits;
+    s.bossKills += this.runStats.bossKills;
+    s.drops += this.runStats.drops;
+    s.games += 1;
+    const bonus = this.settleChallenges();
+
     writeSave(this.save);
-    this.renderMetaShop();
+    this.renderShop();
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
-    this.hud.showGameOver(this.rounds.round, this.points, earned, newBest);
+    this.hud.showGameOver(this.rounds.round, this.points, earned + bonus, newBest);
+  }
+
+  /** Award Essence for any challenges completed this run. Returns the total. */
+  private settleChallenges(): number {
+    let total = 0;
+    for (const c of CHALLENGES) {
+      if (this.save.claimed.includes(c.id)) continue;
+      if (c.progress(this.save.stats, this.runStats) >= c.goal) {
+        this.save.claimed.push(c.id);
+        this.save.essence += c.reward;
+        total += c.reward;
+        this.hud.toast(`Challenge: ${c.name}  +${c.reward} ✦`);
+      }
+    }
+    return total;
   }
 
   // ---- multiplayer ----
@@ -660,6 +735,7 @@ class Game implements GameApi {
 
   /** Apply a collected loot drop. */
   private collectDrop(kind: DropKind, label: string, color: number) {
+    this.runStats.drops++;
     this.floaters.spawn(this.player.pos, label, `#${color.toString(16).padStart(6, "0")}`, 1.1, true);
     this.audio.powerup();
     switch (kind) {
@@ -752,7 +828,10 @@ class Game implements GameApi {
           this.addPoints(Math.round(SCORE.hit * sMul * (crit ? 2 : 1)));
           z.knockback(b.mesh.position.x, b.mesh.position.z, crit ? 5 : 3);
           this.audio.hit(crit);
-          if (crit) this.floaters.spawn(z.pos, "CRIT", "#ffe14a", 1, true);
+          if (crit) {
+            this.runStats.crits++;
+            this.floaters.spawn(z.pos, "CRIT", "#ffe14a", 1, true);
+          }
           this.damageZombie(z, dmg, sMul, crit);
           if (b.splashRadius > 0) {
             this.puffs.burst(z.pos, 0xffd0a0, 6);
@@ -774,6 +853,8 @@ class Game implements GameApi {
     const wasBoss = z.isBoss;
     const killed = z.hit(dmg);
     if (killed) {
+      this.runStats.kills++;
+      if (wasBoss) this.runStats.bossKills++;
       const mult = this.combo.onKill();
       const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult);
       this.addPoints(pts);
@@ -834,6 +915,7 @@ class Game implements GameApi {
           if (victim === this.player) {
             this.shake = Math.min(0.5, this.shake + 0.25);
             this.audio.hurt();
+            this.runStats.tookDamage = true;
           }
           break;
         }
@@ -849,6 +931,7 @@ class Game implements GameApi {
     if (dx * dx + dz * dz < z.blastRadius * z.blastRadius) {
       this.player.damage(z.blastDamage);
       this.shake = Math.min(0.7, this.shake + 0.4);
+      this.runStats.tookDamage = true;
     }
   }
 
