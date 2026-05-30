@@ -51,6 +51,14 @@ export class Zombie {
   private wobble = 0;
   /** Set true on a frame a ranged flier wants to fire; main reads + clears it. */
   wantsRangedShot = false;
+  // ---- anti-camp specials ----
+  splitInto?: string;
+  splitCount = 0;
+  private summonInterval = 0;
+  summonCount = 0;
+  private summonTimer = 0;
+  /** Set true on a frame a summoner wants to raise adds; main reads + clears it. */
+  wantsSummon = false;
 
   // per-spawn variant state
   touchDamage = ZOMBIE.touchDamage;
@@ -98,6 +106,11 @@ export class Zombie {
     this.blastRadius = type.blastRadius ?? 0;
     this.blastDamage = type.blastDamage ?? 0;
     // flying state
+    this.splitInto = type.splitInto;
+    this.splitCount = type.splitCount ?? 0;
+    this.summonInterval = type.summonInterval ?? 0;
+    this.summonCount = type.summonCount ?? 0;
+    this.summonTimer = type.summonInterval ?? 0;
     this.flying = !!type.flying;
     this.flyHeight = type.flyHeight ?? 3;
     this.airMode = type.airMode ?? "swarm";
@@ -192,7 +205,17 @@ export class Zombie {
     _tmp.y = 0;
     const dist = _tmp.length();
     if (dist > 0.0001) _tmp.divideScalar(dist);
-    this.vel.copy(_tmp).multiplyScalar(speed);
+    // Summoner keeps its distance (flees if the player gets close) + raises adds.
+    let approach = 1;
+    if (this.summonInterval > 0) {
+      if (dist < 7) approach = -0.6; // back away to stay a priority-but-annoying target
+      this.summonTimer -= dt;
+      if (this.summonTimer <= 0) {
+        this.summonTimer = this.summonInterval;
+        this.wantsSummon = true;
+      }
+    }
+    this.vel.copy(_tmp).multiplyScalar(speed * approach);
 
     // separation: only check zombies in nearby grid cells (was O(n²))
     const minD = ZOMBIE.separation;

@@ -155,6 +155,41 @@ export class RoundManager {
     this.toSpawn--;
   }
 
+  /** Grab an idle pooled zombie (or grow the pool). */
+  private freeZombie(): Zombie {
+    let z = this.zombies.find((q) => !q.alive && !q.dying) ?? this.zombies.find((q) => !q.alive);
+    if (!z) {
+      z = new Zombie(this.assets);
+      this.scene.add(z.group);
+      this.zombies.push(z);
+    }
+    return z;
+  }
+
+  /** Necromancer summon: raise a few fast crawlers near the summoner. */
+  private summonAdds(from: Zombie, count: number) {
+    if (this.aliveCount >= this.curMaxAlive + 6) return; // respect the cap (+small slack)
+    const crawler = ZOMBIE_TYPES.find((t) => t.id === "crawler") ?? ZOMBIE_TYPES[0];
+    for (let i = 0; i < count; i++) {
+      const z = this.freeZombie();
+      this.edge.set(from.pos.x + (Math.random() - 0.5) * 3, 0, from.pos.z + (Math.random() - 0.5) * 3);
+      z.spawn(this.edge, this.curHealth * 0.6, this.curSpeed * 1.1, crawler);
+    }
+  }
+
+  /** Splitter death: spawn its smaller copies at the corpse. Called by main. */
+  splitOn(z: Zombie) {
+    if (!z.splitInto || z.splitCount <= 0) return;
+    if (this.aliveCount >= this.curMaxAlive + 6) return;
+    const t = ZOMBIE_TYPES.find((q) => q.id === z.splitInto);
+    if (!t) return;
+    for (let i = 0; i < z.splitCount; i++) {
+      const c = this.freeZombie();
+      this.edge.set(z.pos.x + (Math.random() - 0.5) * 1.6, 0, z.pos.z + (Math.random() - 0.5) * 1.6);
+      c.spawn(this.edge, this.curHealth, this.curSpeed, t);
+    }
+  }
+
   update(dt: number, arena: Arena, playerPositions: THREE.Vector3[]) {
     // Rebuild the spatial grid once per frame; zombies + combat systems query it.
     this.grid.rebuild(this.zombies);
@@ -186,6 +221,10 @@ export class RoundManager {
           arena.resolveObstacles(z.pos, ZOMBIE.radius);
           z.group.position.x = z.pos.x;
           z.group.position.z = z.pos.z;
+          if (z.wantsSummon) {
+            z.wantsSummon = false;
+            this.summonAdds(z, z.summonCount);
+          }
         }
       } else if (z.dying) {
         z.updateDying(dt);

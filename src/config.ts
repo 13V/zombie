@@ -101,6 +101,12 @@ export interface ZombieType {
   /** "dive": swoops to the ground to attack then pulls up. "ranged": hovers at a
    *  standoff distance and lobs a projectile. (default = drifts in like a melee flier) */
   airMode?: "dive" | "ranged" | "swarm";
+  /** On death, spawn this many copies of `splitInto` (a type id) at reduced HP. */
+  splitInto?: string;
+  splitCount?: number;
+  /** Summoner: every `summonInterval`s, raise `summonCount` shamblers nearby. */
+  summonInterval?: number;
+  summonCount?: number;
 }
 
 /**
@@ -123,6 +129,10 @@ export const ZOMBIE_TYPES: ZombieType[] = [
   { id: "vulture", name: "Vulture", from: 6, weight: 0.13, healthMul: 0.8, speedMul: 1.6, scale: 0.9, touchDamage: 20, scoreMul: 2.2, body: 0x6a5a7a, head: 0x9a7aa0, flying: true, flyHeight: 3.2, airMode: "dive" },
   { id: "gnat", name: "Gnat Swarm", from: 5, weight: 0.16, healthMul: 0.35, speedMul: 1.5, scale: 0.5, touchDamage: 7, scoreMul: 1.4, body: 0x9fb04a, head: 0x7a8a30, flying: true, flyHeight: 2.4, airMode: "swarm" },
   { id: "stinger", name: "Stinger", from: 9, weight: 0.12, healthMul: 0.9, speedMul: 1.0, scale: 0.85, touchDamage: 12, scoreMul: 2.4, body: 0xd6a23a, head: 0xb5841f, flying: true, flyHeight: 3.0, airMode: "ranged" },
+  // ---- anti-camp grounded specials ----
+  { id: "splitter", name: "Splitter", from: 9, weight: 0.12, healthMul: 2.2, speedMul: 0.9, scale: 1.2, touchDamage: 16, scoreMul: 2.4, body: 0x4ec98f, head: 0x2f8a60, splitInto: "splitling", splitCount: 2 },
+  { id: "splitling", name: "Splitling", from: 999, weight: 0, healthMul: 0.6, speedMul: 1.4, scale: 0.7, touchDamage: 9, scoreMul: 0.8, body: 0x4ec98f, head: 0x2f8a60 },
+  { id: "necro", name: "Necromancer", from: 12, weight: 0.1, healthMul: 2.6, speedMul: 0.7, scale: 1.15, touchDamage: 14, scoreMul: 3.5, body: 0x6e4a9e, head: 0x3a2456, summonInterval: 5, summonCount: 3 },
 ];
 
 /** Gobblegum-style power-ups from the bubblegum machine. `duration` 0 = instant. */

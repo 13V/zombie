@@ -1453,6 +1453,8 @@ class Game implements GameApi {
         this.detonate(z);
         this.audio.boom();
       }
+      // Splitter: spawn its smaller copies at the corpse (anti-cluster pressure).
+      if (z.splitInto) this.rounds.splitOn(z);
     }
   }
 
