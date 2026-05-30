@@ -8,9 +8,13 @@
  * server.
  */
 
-/** Where the relay server lives. Set VITE_SERVER_URL at build time for prod. */
+/**
+ * Where the relay server lives. Defaults to the deployed Render instance;
+ * override with VITE_SERVER_URL at build time (e.g. ws://localhost:8080 for
+ * local server testing).
+ */
 export const SERVER_URL: string =
-  ((import.meta as any).env?.VITE_SERVER_URL as string | undefined) ?? "ws://localhost:8080";
+  ((import.meta as any).env?.VITE_SERVER_URL as string | undefined) ?? "wss://zombie-kwhm.onrender.com";
 
 // ---- application-level messages (carried inside relay `data`) ----
 
