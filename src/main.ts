@@ -23,6 +23,7 @@ import { FloatingText } from "./feedback";
 import { Audio } from "./audio";
 import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
+import { Explosions } from "./explosions";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
@@ -111,6 +112,7 @@ class Game implements GameApi {
   private puffs: Puffs;
   private floaters: FloatingText;
   private drops: Drops;
+  private explosions: Explosions;
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
@@ -223,6 +225,7 @@ class Game implements GameApi {
     this.puffs = new Puffs(this.scene);
     this.floaters = new FloatingText(this.scene);
     this.drops = new Drops(this.scene);
+    this.explosions = new Explosions(this.scene);
     this.hud = new Hud(ui);
 
     // Resume audio on the first user gesture (browser autoplay policy).
@@ -310,6 +313,7 @@ class Game implements GameApi {
     this.combo.reset();
     this.floaters.clear();
     this.drops.clear();
+    this.explosions.clear();
     this.hitStop = 0;
     this.hud.setCombo(0, 0);
     this.hud.hideBoss();
@@ -895,6 +899,7 @@ class Game implements GameApi {
     this.arena.update(dt);
     this.interactables.update(dt);
     this.puffs.update(dt);
+    this.explosions.update(dt);
     this.floaters.update(dt);
     this.updateCamera(dt);
 
@@ -1196,6 +1201,7 @@ class Game implements GameApi {
           const splashR = Math.max(b.splashRadius, this.mods.explosiveRadius);
           if (splashR > 0) {
             this.puffs.burst(z.pos, 0xffd0a0, 6);
+            this.explosions.burst(z.pos, splashR * 1.2, 0xffc06a);
             const sd = b.splashRadius > 0 ? b.splashDamage * dmgMul : dmg * 0.5;
             this.splash(z.pos, splashR, sd, z.id, sMul);
           }
@@ -1307,6 +1313,8 @@ class Game implements GameApi {
       // Detonate: killed zombies explode, damaging (and chaining through) neighbors.
       if (this.mods.detonate > 0 && !wasBoss) {
         this.puffs.burst(z.pos, 0xffa23a, 10);
+        this.explosions.burst(z.pos, this.mods.detonate * 1.3, 0xffa23a);
+        this.audio.boom();
         this.splash(z.pos, this.mods.detonate, dmg * 0.4, z.id, scoreMul);
       }
       // Heal Nova: a healing pulse every 10th kill.
@@ -1406,6 +1414,7 @@ class Game implements GameApi {
   /** Bomber death: orange burst + AoE damage if the player is in range. */
   private detonate(z: Zombie) {
     this.puffs.burst(z.pos, 0xff7a3a, 20);
+    this.explosions.burst(z.pos, z.blastRadius * 1.2, 0xff7a3a);
     const dx = this.player.pos.x - z.pos.x;
     const dz = this.player.pos.z - z.pos.z;
     if (dx * dx + dz * dz < z.blastRadius * z.blastRadius) {
