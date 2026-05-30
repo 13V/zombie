@@ -23,7 +23,10 @@ export class Zombie {
   /** Index into ZOMBIE_TYPES, sent in network snapshots. */
   typeIndex = 0;
   health = ZOMBIE.baseHealth;
+  maxHealth = ZOMBIE.baseHealth;
   speed = ZOMBIE.baseSpeed;
+  /** Round boss: huge HP, shown with a dedicated HUD health bar. */
+  isBoss = false;
   alive = false;
   /** Visually dying (playing a death anim) but no longer a gameplay threat. */
   dying = false;
@@ -61,7 +64,9 @@ export class Zombie {
 
     this.typeName = type.name;
     this.typeIndex = Math.max(0, ZOMBIE_TYPES.indexOf(type));
+    this.isBoss = false;
     this.health = baseHealth * type.healthMul;
+    this.maxHealth = this.health;
     this.speed = baseSpeed * type.speedMul;
     this.touchDamage = type.touchDamage;
     this.scoreMul = type.scoreMul;
@@ -78,6 +83,17 @@ export class Zombie {
     this.char.play("walk");
     this.group.position.copy(this.pos);
     this.group.visible = true;
+  }
+
+  /** Turn a freshly-spawned zombie into a round boss: massive HP + size. */
+  promoteToBoss(health: number, scale: number) {
+    this.isBoss = true;
+    this.typeName = "BOSS";
+    this.health = health;
+    this.maxHealth = health;
+    this.scoreMul *= 4;
+    this.touchDamage *= 1.5;
+    this.group.scale.setScalar(scale);
   }
 
   /** Returns true if it just died from this hit. */

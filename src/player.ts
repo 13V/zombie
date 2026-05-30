@@ -65,6 +65,12 @@ export class Player {
     if (this.health <= 0) this.alive = false;
   }
 
+  /** Restore HP (medkits, life-steal), capped at max. */
+  heal(amount: number) {
+    if (!this.alive) return;
+    this.health = Math.min(this.maxHealth, this.health + amount);
+  }
+
   /** Active gameplay update: move by `(moveX, moveZ)`, aim toward `aimPoint`. */
   update(dt: number, moveX: number, moveZ: number, aimPoint: THREE.Vector3) {
     if (!this.alive) {

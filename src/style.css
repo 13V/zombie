@@ -109,6 +109,144 @@ html, body {
   transition: width 0.08s linear;
 }
 
+/* ---- boss health bar ---- */
+.bossbar {
+  position: absolute;
+  top: 64px; left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 76vw);
+  text-align: center;
+  pointer-events: none;
+}
+.bossbar.hidden { display: none; }
+.boss-name {
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  color: #ff7a8a;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.6);
+  margin-bottom: 4px;
+}
+.boss-track {
+  height: 12px;
+  background: rgba(0,0,0,0.45);
+  border: 2px solid rgba(255,90,120,0.5);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.boss-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #ff5d6c, #ff2a4a);
+  box-shadow: 0 0 14px rgba(255,60,90,0.8) inset;
+  transition: width 0.12s linear;
+}
+
+/* ---- meta (Essence) shop on the menu ---- */
+.bestline {
+  font-size: 14px;
+  color: #ffd98a;
+  margin: 2px 0 12px;
+  opacity: 0.9;
+}
+.bestline b { color: #fff; }
+.meta {
+  width: min(560px, 86vw);
+  margin: 0 auto 18px;
+  background: rgba(0,0,0,0.22);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.meta-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+.meta-head .essence { color: #ffd24a; font-size: 16px; }
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.meta-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 9px;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.05);
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.08s, background 0.12s, border 0.12s;
+}
+.meta-card:hover:not(:disabled) { transform: translateY(-2px); background: rgba(255,255,255,0.12); border-color: rgba(255,210,74,0.6); }
+.meta-card.locked { opacity: 0.5; cursor: not-allowed; }
+.meta-card.owned { opacity: 0.7; cursor: default; border-color: rgba(120,230,140,0.5); }
+.meta-card .m-name { font-weight: 800; font-size: 13px; }
+.meta-card .m-desc { font-size: 11px; opacity: 0.78; line-height: 1.25; }
+.meta-card .m-cost { font-size: 12px; font-weight: 800; color: #ffd24a; margin-top: 2px; }
+.meta-card.owned .m-cost { color: #7be08a; }
+
+@media (max-width: 560px) {
+  .meta-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ---- level-up picker ---- */
+.overlay.levelup { background: rgba(8,10,20,0.78); }
+.cards {
+  display: flex;
+  gap: 16px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.card {
+  position: relative;
+  width: 180px;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px 14px;
+  border-radius: 16px;
+  border: 2px solid rgba(255,255,255,0.18);
+  background: linear-gradient(160deg, rgba(255,255,255,0.1), rgba(255,255,255,0.03));
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.15s, border 0.15s;
+}
+.card:hover { transform: translateY(-6px) scale(1.03); box-shadow: 0 12px 30px rgba(0,0,0,0.4); }
+.card.common:hover { border-color: #8fd0ff; }
+.card.rare {
+  border-color: rgba(255,200,80,0.7);
+  background: linear-gradient(160deg, rgba(255,200,80,0.18), rgba(255,140,60,0.06));
+}
+.card.rare:hover { border-color: #ffd24a; box-shadow: 0 12px 36px rgba(255,180,60,0.35); }
+.card .c-name { font-size: 18px; font-weight: 900; text-align: center; }
+.card .c-desc { font-size: 13px; opacity: 0.85; text-align: center; line-height: 1.3; }
+.card .c-rare {
+  position: absolute;
+  top: 8px; right: 10px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: #ffd24a;
+}
+
+.over-buttons { display: flex; gap: 12px; align-items: center; justify-content: center; }
+.stat.newbest { color: #ffd24a; font-weight: 900; letter-spacing: 2px; }
+.stat.essence-earn { color: #ffd98a; }
+
 .coop {
   display: flex;
   flex-direction: column;

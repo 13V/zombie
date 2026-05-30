@@ -1,4 +1,15 @@
 import { ActiveGum } from "./powerups";
+import { RunUpgrade } from "./upgrades";
+
+/** A meta-upgrade row as the HUD needs to render it. */
+export interface MetaRow {
+  id: string;
+  name: string;
+  desc: string;
+  cost: number;
+  owned: boolean;
+  affordable: boolean;
+}
 
 /** DOM-based HUD + overlays. Cheap, crisp, and easy to restyle. */
 export class Hud {
@@ -34,6 +45,10 @@ export class Hud {
         <span class="combo-x" id="hud-combo-x">x2</span>
         <div class="combo-bar"><div class="combo-fill" id="hud-combo-fill"></div></div>
       </div>
+      <div class="bossbar hidden" id="hud-boss">
+        <div class="boss-name" id="hud-boss-name">BOSS</div>
+        <div class="boss-track"><div class="boss-fill" id="hud-boss-fill"></div></div>
+      </div>
       <div class="hud-bottom">
         <div class="health"><div class="bar"><div class="fill" id="hud-health"></div></div></div>
         <div class="weapon">
@@ -48,9 +63,11 @@ export class Hud {
       <div class="overlay" id="overlay-start">
         <h1>TINY <span class="dead">DEAD</span></h1>
         <p>A cozy little world. Ten flavors of undead — from shamblers to
-           armored hulks and the Abomination. Clear rubble to open new buy
-           spots, spin the Prize Wheel for wild guns, chew Bubblegum for
-           power-ups, and Pack-a-Punch to go again.</p>
+           armored hulks and the Abomination. Clear rubble, spin for wild guns,
+           chew Bubblegum, and grab the loot the dead drop. Every run earns
+           <b>Essence</b> — spend it below to come back stronger.</p>
+        <div class="bestline" id="best-line"></div>
+        <div class="meta" id="meta-shop"></div>
         <div class="controls">
           <span class="k">WASD</span><span>Move</span>
           <span class="k">Mouse</span><span>Aim</span>
@@ -75,7 +92,16 @@ export class Hud {
       <div class="overlay hidden" id="overlay-over">
         <h1>YOU <span class="dead">DIED</span></h1>
         <div class="overStats" id="over-stats"></div>
-        <button class="play" id="btn-restart">Again</button>
+        <div class="over-buttons">
+          <button class="play" id="btn-restart">Again</button>
+          <button class="coop-btn" id="btn-menu">Upgrades</button>
+        </div>
+      </div>
+
+      <div class="overlay levelup hidden" id="overlay-levelup">
+        <h1>LEVEL <span class="dead">UP</span></h1>
+        <p>Round cleared — choose an upgrade.</p>
+        <div class="cards" id="levelup-cards"></div>
       </div>
     `;
 
@@ -104,8 +130,76 @@ export class Hud {
   onRestart(cb: () => void) {
     this.q("#btn-restart").addEventListener("click", cb);
   }
+  onMenu(cb: () => void) {
+    this.q("#btn-menu").addEventListener("click", cb);
+  }
   onHost(cb: () => void) {
     this.q("#btn-host").addEventListener("click", cb);
+  }
+
+  /** Render the persistent best-run line on the menu. */
+  setBest(round: number, score: number) {
+    const el = this.q("#best-line");
+    el.innerHTML = round > 0 ? `Best run · <b>Round ${round}</b> · ${score} pts` : "No runs yet — go make a mess.";
+  }
+
+  /** Render the meta-upgrade shop. `onBuy` fires with the chosen id. */
+  renderMeta(essence: number, rows: MetaRow[], onBuy: (id: string) => void) {
+    const shop = this.q("#meta-shop");
+    shop.innerHTML = `
+      <div class="meta-head"><span>Essence Shop</span><span class="essence">✦ ${essence}</span></div>
+      <div class="meta-grid">
+        ${rows
+          .map(
+            (r) => `<button class="meta-card ${r.owned ? "owned" : r.affordable ? "" : "locked"}" data-id="${r.id}" ${r.owned ? "disabled" : ""}>
+              <span class="m-name">${r.name}</span>
+              <span class="m-desc">${r.desc}</span>
+              <span class="m-cost">${r.owned ? "OWNED" : `✦ ${r.cost}`}</span>
+            </button>`,
+          )
+          .join("")}
+      </div>`;
+    shop.querySelectorAll<HTMLButtonElement>(".meta-card").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.id;
+        if (id) onBuy(id);
+      });
+    });
+  }
+
+  /** Show the level-up picker with 3 cards; `onPick` fires with the chosen id. */
+  showLevelUp(cards: RunUpgrade[], onPick: (id: string) => void) {
+    const wrap = this.q("#levelup-cards");
+    wrap.innerHTML = cards
+      .map(
+        (c) => `<button class="card ${c.rarity}" data-id="${c.id}">
+          <span class="c-name">${c.name}</span>
+          <span class="c-desc">${c.desc}</span>
+          ${c.rarity === "rare" ? '<span class="c-rare">RARE</span>' : ""}
+        </button>`,
+      )
+      .join("");
+    wrap.querySelectorAll<HTMLButtonElement>(".card").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.id;
+        if (id) onPick(id);
+      });
+    });
+    this.q("#overlay-levelup").classList.remove("hidden");
+  }
+  hideLevelUp() {
+    this.q("#overlay-levelup").classList.add("hidden");
+  }
+
+  /** Boss health bar (0 = hide). */
+  setBoss(name: string, frac: number) {
+    const el = this.q("#hud-boss");
+    el.classList.remove("hidden");
+    this.q("#hud-boss-name").textContent = name;
+    this.q("#hud-boss-fill").style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+  }
+  hideBoss() {
+    this.q("#hud-boss").classList.add("hidden");
   }
   onJoin(cb: (code: string) => void) {
     this.q("#btn-join").addEventListener("click", () => {
@@ -183,10 +277,12 @@ export class Hud {
     this.startOverlay.classList.add("hidden");
   }
 
-  showGameOver(round: number, points: number) {
+  showGameOver(round: number, points: number, essenceEarned: number, newBest: boolean) {
     this.overStats.innerHTML = `
+      ${newBest ? '<p class="stat newbest">★ NEW BEST ★</p>' : ""}
       <p class="stat">Reached Round ${round}</p>
-      <p class="stat">${points} points banked</p>`;
+      <p class="stat">${points} points banked</p>
+      <p class="stat essence-earn">+${essenceEarned} ✦ Essence earned</p>`;
     this.overOverlay.classList.remove("hidden");
   }
   hideGameOver() {

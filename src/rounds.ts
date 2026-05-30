@@ -22,8 +22,11 @@ export class RoundManager {
   private intermissionTimer = 0;
   private edge = new THREE.Vector3();
 
+  private bossPending = false;
+
   onRoundStart?: (round: number) => void;
   onIntermission?: (nextRound: number) => void;
+  onBossSpawn?: (boss: Zombie) => void;
 
   constructor(private scene: THREE.Scene, private assets: AssetManager) {}
 
@@ -31,6 +34,16 @@ export class RoundManager {
     let n = 0;
     for (const z of this.zombies) if (z.alive) n++;
     return n;
+  }
+
+  /** The living round boss, if one is on the field. */
+  get boss(): Zombie | undefined {
+    return this.zombies.find((z) => z.alive && z.isBoss);
+  }
+
+  /** Every 5th round is a boss round. */
+  get isBossRound(): boolean {
+    return this.round > 0 && this.round % 5 === 0;
   }
 
   /** Kick off round 1. */
@@ -45,7 +58,23 @@ export class RoundManager {
     this.curSpeed = Math.min(ZOMBIE.speedCap, ZOMBIE.baseSpeed + (n - 1) * ZOMBIE.speedPerRound);
     this.spawnTimer = 0;
     this.phase = "active";
+    this.bossPending = n % 5 === 0;
     this.onRoundStart?.(n);
+  }
+
+  private spawnBoss(arena: Arena) {
+    let z = this.zombies.find((q) => !q.alive && !q.dying) ?? this.zombies.find((q) => !q.alive);
+    if (!z) {
+      z = new Zombie(this.assets);
+      this.scene.add(z.group);
+      this.zombies.push(z);
+    }
+    arena.randomEdgePoint(this.edge);
+    // spawn as the toughest eligible type, then crank it into a boss
+    z.spawn(this.edge, this.curHealth, this.curSpeed * 0.7, ZOMBIE_TYPES[ZOMBIE_TYPES.length - 1]);
+    z.promoteToBoss(this.curHealth * (6 + this.round), 2.6);
+    this.bossPending = false;
+    this.onBossSpawn?.(z);
   }
 
   /**
@@ -81,6 +110,8 @@ export class RoundManager {
 
   update(dt: number, arena: Arena, playerPositions: THREE.Vector3[]) {
     if (this.phase === "active") {
+      // boss rounds: drop the boss in first, then the supporting horde
+      if (this.bossPending) this.spawnBoss(arena);
       if (this.toSpawn > 0) {
         this.spawnTimer -= dt;
         if (this.spawnTimer <= 0 && this.aliveCount < ROUNDS.maxAlive) {

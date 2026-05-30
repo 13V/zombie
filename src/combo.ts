@@ -9,11 +9,17 @@ const TIERS = [1, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5]; // kills→multiplier curve
 export class Combo {
   count = 0;
   private timer = 0;
+  /** Extra seconds added to the decay window by upgrades. */
+  windowBonus = 0;
+
+  private get window(): number {
+    return WINDOW + this.windowBonus;
+  }
 
   /** Register a kill. Returns the current multiplier to apply to its score. */
   onKill(): number {
     this.count++;
-    this.timer = WINDOW;
+    this.timer = this.window;
     return this.multiplier;
   }
 
@@ -28,7 +34,7 @@ export class Combo {
 
   /** Fraction of the window remaining (for a draining HUD bar). */
   get fraction(): number {
-    return Math.max(0, this.timer / WINDOW);
+    return Math.max(0, this.timer / this.window);
   }
 
   update(dt: number) {

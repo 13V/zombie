@@ -21,6 +21,11 @@ import { Powerups } from "./powerups";
 import { FloatingText } from "./feedback";
 import { Audio } from "./audio";
 import { Combo } from "./combo";
+import { Drops, DropKind } from "./drops";
+import { RunMods, defaultMods } from "./mods";
+import { loadSave, writeSave, SaveData } from "./save";
+import { META_UPGRADES, essenceFor } from "./meta";
+import { RUN_UPGRADES, rollUpgrades } from "./upgrades";
 import { NetClient, InputMsg, ZombieSnap } from "./net";
 import { NetPlay } from "./netplay";
 import { COLORS } from "./palette";
@@ -69,7 +74,7 @@ class Puffs {
   }
 }
 
-type State = "menu" | "playing" | "paused" | "over";
+type State = "menu" | "playing" | "paused" | "over" | "levelup";
 
 class Game implements GameApi {
   private renderer: THREE.WebGLRenderer;
@@ -88,9 +93,14 @@ class Game implements GameApi {
   private hud: Hud;
   private puffs: Puffs;
   private floaters: FloatingText;
+  private drops: Drops;
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
+
+  // progression
+  private save: SaveData = loadSave();
+  private mods: RunMods = defaultMods();
 
   points = 0;
   private weapons: Weapon[] = [];
@@ -152,16 +162,22 @@ class Game implements GameApi {
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene);
     this.floaters = new FloatingText(this.scene);
+    this.drops = new Drops(this.scene);
     this.hud = new Hud(ui);
 
     // Resume audio on the first user gesture (browser autoplay policy).
     const unlock = () => this.audio.unlock();
     addEventListener("pointerdown", unlock, { once: true });
     addEventListener("keydown", unlock, { once: true });
+    this.audio.setEnabled(!this.save.muted);
+
+    // Menu progression UI (best run + Essence shop).
+    this.hud.setBest(this.save.bestRound, this.save.bestScore);
+    this.renderMetaShop();
 
     this.rounds.onRoundStart = (n) => {
       this.hud.setRound(n);
-      if (n > 1) this.hud.toast(`Round ${n}`);
+      if (n > 1) this.hud.toast(this.rounds.isBossRound ? `Round ${n} — BOSS` : `Round ${n}`);
       this.audio.roundStart();
       this.audio.setIntensity(n / 20);
     };
@@ -170,10 +186,18 @@ class Game implements GameApi {
       const bonus = SCORE.roundBonusBase + (cleared - 1) * SCORE.roundBonusPerRound;
       this.addPoints(bonus);
       this.hud.toast(`Round clear  +${bonus}`);
+      // Solo: offer a level-up pick during the breather (skipped in co-op).
+      if (!this.netplay) this.offerLevelUp();
+    };
+    this.rounds.onBossSpawn = () => {
+      this.audio.roundStart();
+      this.hud.toast("A BOSS APPROACHES");
+      this.shake = Math.min(0.6, this.shake + 0.4);
     };
 
     this.hud.onStart(() => this.startRun());
     this.hud.onRestart(() => this.startRun());
+    this.hud.onMenu(() => this.toMenu());
     this.hud.onHost(() => this.hostGame());
     this.hud.onJoin((code) => this.joinGame(code));
 
@@ -187,26 +211,98 @@ class Game implements GameApi {
 
   // ---- run lifecycle ----
   private resetRun() {
+    // Rebuild this run's modifier bundle from owned permanent meta-upgrades.
+    this.mods = defaultMods();
+    for (const u of META_UPGRADES) if (this.save.owned.includes(u.id)) u.apply(this.mods);
+
     this.player.reset();
+    this.player.maxHealth = PLAYER.maxHealth + this.mods.maxHealthBonus;
+    this.player.health = this.player.maxHealth;
     this.player.pos.set(0, 0, 9); // start on the plaza, south of the fountain
     this.player.group.position.copy(this.player.pos);
     this.bullets.clear();
     this.rounds.reset();
-    this.points = SCORE.startingPoints;
-    this.weapons = [new Weapon(WEAPONS.peashooter)];
+    this.points = SCORE.startingPoints + this.mods.startPointsBonus;
+    const starter = this.mods.startWeapon && WEAPONS[this.mods.startWeapon] ? WEAPONS[this.mods.startWeapon] : WEAPONS.peashooter;
+    this.weapons = [new Weapon(starter)];
     this.activeSlot = 0;
     this.perks.clear();
     this.powerups.clear();
+    this.combo.windowBonus = this.mods.comboWindowBonus;
     this.hud.setPowerups([]);
     this.shake = 0;
     this.combo.reset();
     this.floaters.clear();
+    this.drops.clear();
     this.hitStop = 0;
     this.hud.setCombo(0, 0);
+    this.hud.hideBoss();
+    this.hud.hideLevelUp();
     this.hud.setPoints(this.points);
     this.hud.setRound(1);
     if (!this.netplay) this.hud.hideRoomCode();
     this.syncWeaponHud();
+  }
+
+  // ---- progression / menus ----
+  private renderMetaShop() {
+    const rows = META_UPGRADES.map((u) => ({
+      id: u.id,
+      name: u.name,
+      desc: u.desc,
+      cost: u.cost,
+      owned: this.save.owned.includes(u.id),
+      affordable: this.save.essence >= u.cost,
+    }));
+    this.hud.renderMeta(this.save.essence, rows, (id) => this.buyMeta(id));
+  }
+
+  private buyMeta(id: string) {
+    const u = META_UPGRADES.find((m) => m.id === id);
+    if (!u || this.save.owned.includes(id)) return;
+    if (this.save.essence < u.cost) {
+      this.audio.deny();
+      return;
+    }
+    this.save.essence -= u.cost;
+    this.save.owned.push(id);
+    writeSave(this.save);
+    this.audio.powerup();
+    this.renderMetaShop();
+  }
+
+  /** Return to the main menu (from the game-over screen) to spend Essence. */
+  private toMenu() {
+    this.teardownNet();
+    this.state = "menu";
+    this.resetRun();
+    this.hud.hideGameOver();
+    this.hud.setBest(this.save.bestRound, this.save.bestScore);
+    this.renderMetaShop();
+    this.hud.showStart();
+  }
+
+  /** Pause the breather and offer 1 of 3 stacking run upgrades. */
+  private offerLevelUp() {
+    const cards = rollUpgrades(3);
+    this.state = "levelup";
+    this.audio.ui();
+    this.hud.showLevelUp(cards, (id) => this.applyUpgrade(id));
+  }
+
+  private applyUpgrade(id: string) {
+    const u = RUN_UPGRADES.find((x) => x.id === id);
+    if (u) {
+      u.apply(this.mods);
+      // a few upgrades change live state immediately
+      this.player.maxHealth = PLAYER.maxHealth + this.mods.maxHealthBonus;
+      this.player.heal(25); // small reward heal on every pick
+      this.combo.windowBonus = this.mods.comboWindowBonus;
+      this.hud.toast(`${u.name}!`);
+      this.audio.powerup();
+    }
+    this.hud.hideLevelUp();
+    this.state = "playing";
   }
 
   private startRun() {
@@ -223,7 +319,20 @@ class Game implements GameApi {
     this.input.firing = false;
     this.audio.stopMusic();
     this.audio.hurt();
-    this.hud.showGameOver(this.rounds.round, this.points);
+    this.hud.hideBoss();
+
+    // Every run pays out Essence and may set a new personal best.
+    const earned = essenceFor(this.rounds.round, this.points, this.mods.essenceMul);
+    this.save.essence += earned;
+    const newBest = this.rounds.round > this.save.bestRound || (this.rounds.round === this.save.bestRound && this.points > this.save.bestScore);
+    if (newBest) {
+      this.save.bestRound = Math.max(this.save.bestRound, this.rounds.round);
+      this.save.bestScore = Math.max(this.save.bestScore, this.points);
+    }
+    writeSave(this.save);
+    this.renderMetaShop();
+    this.hud.setBest(this.save.bestRound, this.save.bestScore);
+    this.hud.showGameOver(this.rounds.round, this.points, earned, newBest);
   }
 
   // ---- multiplayer ----
@@ -377,7 +486,11 @@ class Game implements GameApi {
       if (this.state === "playing") this.state = "paused";
       else if (this.state === "paused") this.state = "playing";
     }
-    if (this.input.pressed("KeyM")) this.audio.setEnabled(!this.audio.enabled);
+    if (this.input.pressed("KeyM")) {
+      this.audio.setEnabled(!this.audio.enabled);
+      this.save.muted = !this.audio.enabled;
+      writeSave(this.save);
+    }
 
     this.input.updateAim(this.camera);
 
@@ -407,8 +520,8 @@ class Game implements GameApi {
   private simulate(dt: number) {
     this.powerups.update(dt);
     this.combo.update(dt);
-    // Sugar Rush stacks on the Quick perk for movement speed.
-    this.player.speedMul = (this.perks.has("quick") ? 1.35 : 1) * this.powerups.speedMul();
+    // Sugar Rush stacks on the Quick perk + upgrades for movement speed.
+    this.player.speedMul = (this.perks.has("quick") ? 1.35 : 1) * this.powerups.speedMul() * this.mods.moveSpeedMul;
 
     const axis = this.input.moveAxis(new THREE.Vector2());
     // Camera looks down the -Z axis, so W (axis.y +1) moves toward -Z.
@@ -419,9 +532,9 @@ class Game implements GameApi {
 
     // weapon
     const w = this.weapon;
-    w.update(dt, this.player.reloadMul);
+    w.update(dt, this.player.reloadMul * this.mods.reloadMul);
     const wantFire = w.def.auto ? this.input.firing : this.input.clicked();
-    if (wantFire && w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, this.powerups.fireRateMul())) {
+    if (wantFire && w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, this.powerups.fireRateMul() * this.mods.fireRateMul)) {
       this.player.flash();
       this.audio.shoot(w.def.wonder ? 0.85 : 0.4);
       this.netplay?.hostShot(
@@ -476,6 +589,14 @@ class Game implements GameApi {
       return;
     }
 
+    // loot pickups: bob + collect anything the player walks over
+    this.drops.update(dt, this.player.pos, (kind, label, color) => this.collectDrop(kind, label, color));
+
+    // boss health bar
+    const boss = this.rounds.boss;
+    if (boss) this.hud.setBoss(boss.typeName, boss.health / boss.maxHealth);
+    else this.hud.hideBoss();
+
     // occasional ambient groan scaled to how many are shambling about
     if (this.rounds.aliveCount > 0 && Math.random() < dt * (0.5 + this.rounds.aliveCount * 0.08)) {
       this.audio.groan();
@@ -485,6 +606,53 @@ class Game implements GameApi {
     this.hud.setPowerups(this.powerups.list());
     this.hud.setCombo(this.combo.active ? this.combo.multiplier : 0, this.combo.fraction);
     this.syncWeaponHud();
+  }
+
+  /** Apply a collected loot drop. */
+  private collectDrop(kind: DropKind, label: string, color: number) {
+    this.floaters.spawn(this.player.pos, label, `#${color.toString(16).padStart(6, "0")}`, 1.1, true);
+    this.audio.powerup();
+    switch (kind) {
+      case "ammo":
+        for (const w of this.weapons) w.refill();
+        this.syncWeaponHud();
+        break;
+      case "points":
+        this.addPoints(250);
+        break;
+      case "heal":
+        this.player.heal(60);
+        break;
+      case "doublePoints":
+        this.powerups.grant("doublePoints");
+        break;
+      case "rapidFire":
+        this.powerups.grant("rapidFire");
+        break;
+      case "instakill":
+        this.powerups.grant("instakill");
+        break;
+      case "treasure":
+        this.save.essence += 30;
+        writeSave(this.save);
+        this.hud.toast("+30 ✦ Essence");
+        break;
+      case "nuke":
+        this.nukeBoard();
+        break;
+    }
+  }
+
+  /** Nuke drop: wipe every living zombie on the field for points. */
+  private nukeBoard() {
+    this.audio.boom();
+    this.shake = Math.min(0.6, this.shake + 0.4);
+    for (const z of this.rounds.zombies) {
+      if (!z.alive || z.isBoss) continue; // bosses shrug off the nuke
+      this.puffs.burst(z.pos, z.puffColor);
+      z.hit(1e9);
+      this.addPoints(SCORE.kill);
+    }
   }
 
   /** Guest path: send input to the host and render the authoritative snapshot. */
@@ -527,9 +695,10 @@ class Game implements GameApi {
         const horiz2 = dx * dx + dz * dz;
         if (horiz2 < hitR * hitR) {
           b.hit.add(z.id);
-          // Precise center hits are "crits" (rewards aim, ×2 damage + bonus pts).
-          const crit = horiz2 < (hitR * 0.4) * (hitR * 0.4);
-          const dmg = b.damage * dmgMul * (crit ? 2 : 1);
+          // Crit = precise center hit OR a random roll from crit-chance upgrades.
+          const crit = horiz2 < (hitR * 0.4) * (hitR * 0.4) || Math.random() < this.mods.critChance;
+          const critMul = crit ? this.mods.critMul : 1;
+          const dmg = b.damage * dmgMul * this.mods.damageMul * critMul;
           this.addPoints(Math.round(SCORE.hit * sMul * (crit ? 2 : 1)));
           z.knockback(b.mesh.position.x, b.mesh.position.z, crit ? 5 : 3);
           this.audio.hit(crit);
@@ -552,6 +721,7 @@ class Game implements GameApi {
 
   /** Apply damage to one zombie and handle the score/FX if it dies. */
   private damageZombie(z: Zombie, dmg: number, scoreMul: number, crit = false) {
+    const wasBoss = z.isBoss;
     const killed = z.hit(dmg);
     if (killed) {
       const mult = this.combo.onKill();
@@ -560,8 +730,18 @@ class Game implements GameApi {
       this.floaters.spawn(z.pos, `+${pts}`, mult > 1 ? "#ffd24a" : "#ffffff", mult > 1 ? 1.2 : 1);
       this.puffs.burst(z.pos, z.puffColor);
       this.audio.kill();
+      if (this.mods.lifeSteal > 0) this.player.heal(this.mods.lifeSteal);
       // a satisfying micro-freeze on crits / combo kills (local visual only)
-      if (crit || mult >= 2) this.hitStop = Math.min(0.07, this.hitStop + 0.045);
+      if (crit || mult >= 2 || wasBoss) this.hitStop = Math.min(wasBoss ? 0.12 : 0.07, this.hitStop + 0.045);
+      // loot: bosses always drop something juicy; normal kills roll the dice
+      if (wasBoss) {
+        this.hud.hideBoss();
+        this.audio.boom();
+        for (let i = 0; i < 3; i++) this.drops.maybeSpawn(z.pos, 1, true);
+        this.puffs.burst(z.pos, 0xffd24a, 26);
+      } else {
+        this.drops.maybeSpawn(z.pos, this.mods.dropChance);
+      }
       if (z.explodes) {
         this.detonate(z);
         this.audio.boom();
