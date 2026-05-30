@@ -42,9 +42,20 @@ The game supports host-authoritative online co-op. There are two pieces:
    ```
    See [`server/README.md`](./server/README.md) for Render/Fly/Railway steps.
 
-2. **The client** points at that server via the `VITE_SERVER_URL` build var. For
-   the Pages build, set a repo **Variable** named `VITE_SERVER_URL` (Settings →
-   Secrets and variables → Actions → Variables) to your `wss://…` URL.
+2. **The client** finds the relay at **runtime** (no rebuild needed), in order:
+   - `?server=wss://your-relay` query param (saved to localStorage for next time),
+   - a URL set via the **⚙ Co-op server** link on the title screen,
+   - the `VITE_SERVER_URL` build var,
+   - the built-in default.
+
+   So after deploying a relay you can just open `…/?server=wss://your-relay` once,
+   or paste the URL into the ⚙ link — no Pages rebuild required. (You can still
+   bake a default with the `VITE_SERVER_URL` repo Variable.)
+
+   The free-tier relay cold-starts when idle, so Host/Join ping `/health` to wake
+   it and retry the connect for ~55s. If it never connects, the service is down —
+   redeploy `server/` (it has a Dockerfile + Render blueprint; works on
+   Render/Railway/Fly/Koyeb).
 
 Then on the title screen: **Host Co-op** prints a 4-letter room code; friends
 pick **Join**, type the code, and drop into your world. One player (the host) is

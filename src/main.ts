@@ -28,7 +28,7 @@ import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
-import { NetClient, InputMsg, ZombieSnap, warmServer } from "./net";
+import { NetClient, InputMsg, ZombieSnap, warmServer, getServerUrl, setServerUrl } from "./net";
 import { TouchControls, isTouchDevice } from "./touchControls";
 import { NetPlay, GuestSlot } from "./netplay";
 import { COLORS } from "./palette";
@@ -218,6 +218,7 @@ class Game implements GameApi {
     this.hud.onMenu(() => this.toMenu());
     this.hud.onHost(() => this.hostGame());
     this.hud.onJoin((code) => this.joinGame(code));
+    this.hud.onServer(() => this.changeServer());
 
     addEventListener("resize", this.onResize);
     this.onResize();
@@ -463,6 +464,18 @@ class Game implements GameApi {
   }
 
   // ---- multiplayer ----
+  /** Let the player point the client at their own relay (no rebuild needed). */
+  private changeServer() {
+    const next = window.prompt(
+      "Co-op relay server URL (wss://… or https://…):\n\nDeploy the server in /server to Render/Railway/Fly and paste its URL here.",
+      getServerUrl(),
+    );
+    if (next && next.trim()) {
+      const url = setServerUrl(next);
+      this.hud.setLobbyStatus(`Server set to ${url}`);
+    }
+  }
+
   /** Tick a "<label>… (Ns)" status so a cold-starting server doesn't look frozen. */
   private connectingTicker(label: string): () => void {
     const t0 = Date.now();

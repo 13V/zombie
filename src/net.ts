@@ -13,8 +13,62 @@
  * override with VITE_SERVER_URL at build time (e.g. ws://localhost:8080 for
  * local server testing).
  */
-export const SERVER_URL: string =
-  ((import.meta as any).env?.VITE_SERVER_URL as string | undefined) ?? "wss://zombie-kwhm.onrender.com";
+const DEFAULT_SERVER = "wss://zombie-kwhm.onrender.com";
+const LS_KEY = "tinydead.server";
+
+/**
+ * Resolve the relay URL at RUNTIME (not baked into the build) so a freshly
+ * deployed server can be used without rebuilding the client. Priority:
+ *   1. `?server=wss://…` query param (also persisted for next time)
+ *   2. a previously-saved URL in localStorage
+ *   3. the VITE_SERVER_URL build var
+ *   4. the default
+ */
+function resolveServerUrl(): string {
+  try {
+    const q = new URLSearchParams(location.search).get("server");
+    if (q) {
+      const u = normalizeWs(q);
+      localStorage.setItem(LS_KEY, u);
+      return u;
+    }
+    const saved = localStorage.getItem(LS_KEY);
+    if (saved) return saved;
+  } catch {
+    /* ignore storage/URL issues */
+  }
+  return ((import.meta as any).env?.VITE_SERVER_URL as string | undefined) || DEFAULT_SERVER;
+}
+
+/** Accept bare hosts / http(s) and coerce to a ws(s):// URL. */
+function normalizeWs(input: string): string {
+  let s = input.trim().replace(/\/$/, "");
+  if (s.startsWith("http://")) s = "ws://" + s.slice(7);
+  else if (s.startsWith("https://")) s = "wss://" + s.slice(8);
+  else if (!s.startsWith("ws://") && !s.startsWith("wss://")) s = "wss://" + s;
+  return s;
+}
+
+let serverUrl = resolveServerUrl();
+
+/** The relay URL in use (resolved at runtime). */
+export function getServerUrl(): string {
+  return serverUrl;
+}
+
+/** Point the client at a different relay (persisted). Returns the normalized URL. */
+export function setServerUrl(input: string): string {
+  serverUrl = normalizeWs(input);
+  try {
+    localStorage.setItem(LS_KEY, serverUrl);
+  } catch {
+    /* ignore */
+  }
+  return serverUrl;
+}
+
+/** @deprecated use getServerUrl(); kept for any external reference. */
+export const SERVER_URL: string = serverUrl;
 
 /**
  * Free hosting tiers (Render) spin the server down when idle, so the first
@@ -25,7 +79,7 @@ export function warmServer(): void {
   try {
     // wss:// -> https://, ws:// -> http:// (NOT a blind /^ws/ replace, which
     // would turn "wss" into "httpss").
-    const httpUrl = SERVER_URL.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://").replace(/\/$/, "") + "/health";
+    const httpUrl = getServerUrl().replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://").replace(/\/$/, "") + "/health";
     fetch(httpUrl, { mode: "no-cors" }).catch(() => {});
   } catch {
     /* best-effort */
@@ -200,7 +254,7 @@ export class NetClient {
     return new Promise((resolve, reject) => {
       let ws: WebSocket;
       try {
-        ws = new WebSocket(SERVER_URL);
+        ws = new WebSocket(getServerUrl());
       } catch (e) {
         reject(e as Error);
         return;

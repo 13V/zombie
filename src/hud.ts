@@ -142,6 +142,7 @@ export class Hud {
           </div>
         </div>
         <div class="lobby-status" id="lobby-status"></div>
+        <button class="link-btn" id="btn-server">⚙ Co-op server</button>
       </div>
 
       <div class="overlay hidden" id="overlay-over">
@@ -379,6 +380,9 @@ export class Hud {
   }
   setLobbyStatus(msg: string) {
     this.q("#lobby-status").textContent = msg;
+  }
+  onServer(cb: () => void) {
+    this.q("#btn-server").addEventListener("click", cb);
   }
   showRoomCode(code: string) {
     this.q("#hud-room-code").textContent = code;

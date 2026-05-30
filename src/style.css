@@ -84,6 +84,18 @@ html, body {
 /* On touch, hide the keyboard control legend on the title screen. */
 body.touch .controls { display: none; }
 
+.link-btn {
+  margin-top: 8px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  pointer-events: auto;
+}
+.link-btn:hover { color: rgba(255, 255, 255, 0.9); }
+
 #ui {
   position: absolute;
   inset: 0;
