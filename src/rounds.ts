@@ -24,6 +24,12 @@ export class RoundManager {
   private spawnTimer = 0;
   private intermissionTimer = 0;
   private edge = new THREE.Vector3();
+  // round-scaled difficulty state (computed in beginRound)
+  private curMaxAlive = ROUNDS.maxAliveBase;
+  private curSpawnInterval = ROUNDS.spawnIntervalBase;
+  private isSwarm = false;
+  /** Lowered on mobile to protect the frame budget (set from main.ts). */
+  maxAliveCeiling = ROUNDS.maxAliveCap;
 
   private bossPending = false;
 
@@ -49,6 +55,11 @@ export class RoundManager {
     return this.round > 0 && this.round % 5 === 0;
   }
 
+  /** This round is a fast "swarm/dog" round. */
+  get isSwarmRound(): boolean {
+    return this.isSwarm;
+  }
+
   /** Kick off round 1. */
   start() {
     this.beginRound(1);
@@ -56,9 +67,33 @@ export class RoundManager {
 
   private beginRound(n: number) {
     this.round = n;
-    this.toSpawn = ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound;
-    this.curHealth = ZOMBIE.baseHealth + (n - 1) * ZOMBIE.healthPerRound + ZOMBIE.healthPerRoundSq * (n - 1) * (n - 1);
+    const inflect = ZOMBIE.hpInflection;
+    const past = Math.max(0, n - inflect); // rounds past the inflection point
+
+    // HP: additive through the inflection, then compounds ×hpGrowth/round.
+    const linHP = ZOMBIE.baseHealth + (n - 1) * ZOMBIE.healthPerRound;
+    if (n <= inflect) {
+      this.curHealth = linHP;
+    } else {
+      const baseHP = ZOMBIE.baseHealth + (inflect - 1) * ZOMBIE.healthPerRound;
+      this.curHealth = baseHP * Math.pow(ZOMBIE.hpGrowth, past);
+    }
     this.curSpeed = Math.min(ZOMBIE.speedCap, ZOMBIE.baseSpeed + (n - 1) * ZOMBIE.speedPerRound);
+
+    // Round-scaled ceilings: cap rises + spawns speed up past the inflection.
+    this.curMaxAlive = Math.min(this.maxAliveCeiling, ROUNDS.maxAliveBase + past * ROUNDS.maxAlivePerRound);
+    this.curSpawnInterval = Math.max(ROUNDS.spawnIntervalMin, ROUNDS.spawnIntervalBase - past * ROUNDS.spawnIntervalDecay);
+
+    // Swarm/dog round: short burst of fast/weak enemies from all sides.
+    this.isSwarm = n >= ROUNDS.swarmEvery && n % ROUNDS.swarmEvery === 0 && n % 5 !== 0;
+    let count = ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound;
+    if (this.isSwarm) {
+      count = Math.round(count * 0.7);
+      this.curMaxAlive = Math.min(this.maxAliveCeiling + 8, Math.round(this.curMaxAlive * 1.4));
+      this.curSpawnInterval *= 0.5; // twice as fast
+    }
+    this.toSpawn = count;
+
     this.spawnTimer = 0;
     this.phase = "active";
     this.bossPending = n % 5 === 0;
@@ -87,13 +122,17 @@ export class RoundManager {
    */
   private pickType(): ZombieType {
     let r = Math.random();
+    // Elite-weight ramp: from R10, tougher tiers get +3%/round (cap +35%) so the
+    // 10→20 band fills with brutes/armored — difficulty spikes, not flat mush.
+    const eliteBonus = Math.max(0, Math.min(0.35, (this.round - 9) * 0.03));
     // iterate strongest → weakest so the deadliest eligible tier absorbs the
     // tail once later-round weights sum past 1.
     for (let i = ZOMBIE_TYPES.length - 1; i >= 1; i--) {
       const t = ZOMBIE_TYPES[i];
       if (this.round < t.from) continue;
-      if (r < t.weight) return t;
-      r -= t.weight;
+      const w = t.weight * (1 + eliteBonus);
+      if (r < w) return t;
+      r -= w;
     }
     return ZOMBIE_TYPES[0];
   }
@@ -107,7 +146,12 @@ export class RoundManager {
       this.zombies.push(z);
     }
     arena.randomEdgePoint(this.edge);
-    z.spawn(this.edge, this.curHealth, this.curSpeed, this.pickType());
+    if (this.isSwarm) {
+      // swarm round: weak + fast, from anywhere (full surround)
+      z.spawn(this.edge, this.curHealth * 0.5, this.curSpeed * 1.35, ZOMBIE_TYPES[0]);
+    } else {
+      z.spawn(this.edge, this.curHealth, this.curSpeed, this.pickType());
+    }
     this.toSpawn--;
   }
 
@@ -119,9 +163,9 @@ export class RoundManager {
       if (this.bossPending) this.spawnBoss(arena);
       if (this.toSpawn > 0) {
         this.spawnTimer -= dt;
-        if (this.spawnTimer <= 0 && this.aliveCount < ROUNDS.maxAlive) {
+        if (this.spawnTimer <= 0 && this.aliveCount < this.curMaxAlive) {
           this.spawnOne(arena);
-          this.spawnTimer = ROUNDS.spawnInterval;
+          this.spawnTimer = this.curSpawnInterval;
         }
       } else if (this.aliveCount === 0) {
         this.phase = "intermission";

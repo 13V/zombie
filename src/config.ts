@@ -27,12 +27,16 @@ export const PLAYER = {
 
 export const ZOMBIE = {
   radius: 0.6,
+  // HP is ADDITIVE through the inflection round, then COMPOUNDS multiplicatively
+  // (CoD's exact trick: a 10%/round wall at R10 that's smooth at the seam but
+  // never gets lapped by player DPS). See rounds.ts beginRound().
   baseHealth: 60,
-  healthPerRound: 22, // steeper HP ramp so player power doesn't trivialize ~R8+
-  healthPerRoundSq: 1.2, // compounding term: HP += sq*(r-1)^2 (super-linear late game)
+  healthPerRound: 22,
+  hpInflection: 9, // round after which HP goes multiplicative
+  hpGrowth: 1.1, // per-round HP multiplier past the inflection (1.08–1.12 sweet spot)
   baseSpeed: 2.4,
-  speedPerRound: 0.08,
-  speedCap: 5.2,
+  speedPerRound: 0.1, // nudged up so kiting gets riskier through 10→20
+  speedCap: 5.4,
   touchDamage: 12,
   touchInterval: 0.6, // seconds between hits while in contact
   separation: 2.0, // how hard they push apart so they don't stack
@@ -41,9 +45,17 @@ export const ZOMBIE = {
 export const ROUNDS = {
   baseCount: 6, // zombies in round 1
   countPerRound: 4, // extra zombies per round
-  maxAlive: 32, // hard cap of simultaneous zombies on screen
-  spawnInterval: 0.9, // seconds between spawns
   intermission: 4, // breather between rounds (seconds)
+  // The three ceilings are now ROUND-SCALED (the real fix for late-game farming):
+  // a flat cap lets rising DPS empty the screen; a rising cap + faster spawns
+  // fill it. Difficulty from density + geometry, not just HP.
+  maxAliveBase: 32, // cap through the inflection round
+  maxAlivePerRound: 3, // +per round past inflection
+  maxAliveCap: 60, // desktop ceiling (mobile uses a lower one — see main.ts)
+  spawnIntervalBase: 0.9, // seconds between spawns through inflection
+  spawnIntervalMin: 0.4, // floor of the spawn-interval ramp
+  spawnIntervalDecay: 0.05, // -per round past inflection
+  swarmEvery: 7, // every Nth round is a fast "swarm/dog" round
 };
 
 export const SCORE = {

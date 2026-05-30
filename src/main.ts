@@ -227,6 +227,7 @@ class Game implements GameApi {
     this.bullets = new BulletSystem(this.scene);
     if (lowSpec) this.bullets.maxLive = 70; // fewer live tracers on mobile GPUs
     this.rounds = new RoundManager(this.scene, this.assets);
+    if (lowSpec) this.rounds.maxAliveCeiling = 42; // survivable carnage on phones
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene);
     this.floaters = new FloatingText(this.scene);
@@ -248,7 +249,10 @@ class Game implements GameApi {
 
     this.rounds.onRoundStart = (n) => {
       this.hud.setRound(n);
-      if (n > 1) this.hud.toast(this.rounds.isBossRound ? `Round ${n} — BOSS` : `Round ${n}`);
+      if (n > 1) {
+        const tag = this.rounds.isBossRound ? " — BOSS" : this.rounds.isSwarmRound ? " — SWARM!" : "";
+        this.hud.toast(`Round ${n}${tag}`);
+      }
       this.audio.roundStart();
       this.audio.setIntensity(n / 20);
     };
