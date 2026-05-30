@@ -210,13 +210,14 @@ export class BulletSystem {
 
   constructor(private scene: THREE.Scene) {}
 
-  /** Hard cap on live tracers — bounds the O(bullets×zombies) collision pass. */
-  private static readonly MAX_LIVE = 140;
+  /** Hard cap on live tracers — bounds the O(bullets×zombies) collision pass
+   *  AND the per-frame render/homing load. Lowered on mobile. */
+  maxLive = 140;
 
   spawn(origin: THREE.Vector3, dir: THREE.Vector3, opts: SpawnOpts) {
     // Cap live bullets: retire the oldest so collision cost stays bounded even
     // with stacked fire-rate + multishot + pellet weapons.
-    if (this.bullets.length >= BulletSystem.MAX_LIVE) {
+    if (this.bullets.length >= this.maxLive) {
       const oldest = this.bullets.find((x) => x.alive);
       if (oldest) this.retire(oldest);
     }
@@ -269,7 +270,10 @@ export class BulletSystem {
       if (!b.alive) continue;
       b.mesh.position.addScaledVector(b.vel, dt);
       b.life -= dt;
-      if (b.life <= 0) this.retire(b);
+      // retire once off the arena (≈22u half-extent) so spent shots free a slot
+      // instead of lingering their full life and pinning the live cap.
+      const p = b.mesh.position;
+      if (b.life <= 0 || p.x < -24 || p.x > 24 || p.z < -24 || p.z > 24) this.retire(b);
     }
     // Remove dead bullets AND return them to the pool here — the single place a
     // bullet leaves the active array, so it can't be double-referenced.

@@ -183,6 +183,12 @@ class Game implements GameApi {
     this.camera.position.set(CAMERA.offset.x, CAMERA.offset.y, CAMERA.offset.z);
     this.camera.lookAt(0, 0, 0);
 
+    // LOW-SPEC (mobile): cap pixel ratio harder, drop the heavy post stack
+    // (bloom + tilt-shift are the fill-rate hogs), and shrink the bullet cap —
+    // a phone GPU can't afford 140 additive tracers + full post.
+    const lowSpec = isTouchDevice();
+    if (lowSpec) this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
+
     // Soft image-based ambient light — the key to the "soft 3D" cozy look.
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -190,25 +196,20 @@ class Game implements GameApi {
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    // NOTE: GTAO (ambient occlusion) was removed — it painted transparent FX
-    // (the aim guide at the gun, floating hit/CRIT text) as solid black boxes,
-    // because they wrote into the AO depth pass. Soft contact shadow comes from
-    // the directional light's shadow map instead; no black-box class of bug.
-    // Gentle bloom — only the brightest emissives (windows, fire, pickups) glow.
-    // Built at half-res: the blur is low-frequency so it's visually identical
-    // but costs ~4× less fill (bloom is ~11 internal passes — the priciest one).
-    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.16, 0.5, 0.92);
-    this.composer.addPass(bloom);
-    // Tilt-shift kept SUBTLE: a wide sharp band so the play area stays crisp
-    // (blur only creeps in at the very top/bottom edges, like the reference),
-    // plus just a touch of saturation + warmth — not a haze.
+    // Gentle bloom — only the brightest emissives glow. Half-res; skipped on mobile.
+    if (!lowSpec) {
+      const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.16, 0.5, 0.92);
+      this.composer.addPass(bloom);
+    }
+    // Tilt-shift: subtle miniature-diorama blur + grade. Two full-screen passes —
+    // skipped on mobile (biggest fill-rate win there).
     this.tilt = new TiltShift(innerWidth, innerHeight, {
       focus: 0.5, band: 0.42, strength: 1.8, vignette: 0.26, saturation: 1.08, warmth: 0.12,
     });
-    this.composer.addPass(this.tilt.horizontal);
-    this.composer.addPass(this.tilt.vertical);
-    // Cheap, reliable edge anti-aliasing through the composer (replaces costly
-    // MSAA): smooths the voxel stair-stepping without the framerate hit.
+    if (!lowSpec) {
+      this.composer.addPass(this.tilt.horizontal);
+      this.composer.addPass(this.tilt.vertical);
+    }
     this.composer.addPass(new SMAAPass(innerWidth, innerHeight));
     this.composer.addPass(new OutputPass());
 
@@ -220,6 +221,7 @@ class Game implements GameApi {
     this.arena = new Arena(this.scene);
     this.player = new Player(this.scene, this.assets);
     this.bullets = new BulletSystem(this.scene);
+    if (lowSpec) this.bullets.maxLive = 70; // fewer live tracers on mobile GPUs
     this.rounds = new RoundManager(this.scene, this.assets);
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene);
