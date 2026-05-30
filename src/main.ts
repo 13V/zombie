@@ -29,6 +29,7 @@ import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
+import { makeItem, rollRarity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, warmServer, getServerUrl, setServerUrl } from "./net";
 import { TouchControls, isTouchDevice } from "./touchControls";
@@ -332,6 +333,47 @@ class Game implements GameApi {
       done: this.save.claimed.includes(c.id),
     }));
     this.hud.renderChallenges(this.save.essence, chals);
+
+    // Market: sell tradable loot for gold (the in-game economy).
+    this.hud.renderMarket(
+      this.save.gold,
+      this.save.stash.map((it) => ({ id: it.id, name: it.name, rarity: it.rarity, gold: it.gold, color: rarityColorHex(it.rarity as any) })),
+      (id) => this.sellItem(id),
+      () => this.sellAll(),
+    );
+  }
+
+  /** Add a freshly-dropped item to the stash + announce it in-run. */
+  private grantLoot(item: LootItem) {
+    this.save.stash.push(item);
+    writeSave(this.save);
+    const info = RARITIES[item.rarity];
+    this.floaters.spawn(this.player.pos, `${info.label} LOOT!`, rarityColorHex(item.rarity), 1.1, true);
+    this.audio.powerup();
+  }
+
+  /** Sell one stashed item for its gold value. */
+  private sellItem(id: string) {
+    const i = this.save.stash.findIndex((it) => it.id === id);
+    if (i < 0) return;
+    const [item] = this.save.stash.splice(i, 1);
+    this.save.gold += item.gold;
+    this.save.goldEarned += item.gold;
+    writeSave(this.save);
+    this.audio.buy();
+    this.renderShop();
+  }
+
+  /** Sell the whole stash at once. */
+  private sellAll() {
+    if (!this.save.stash.length) return;
+    const total = this.save.stash.reduce((s, it) => s + it.gold, 0);
+    this.save.gold += total;
+    this.save.goldEarned += total;
+    this.save.stash = [];
+    writeSave(this.save);
+    this.audio.powerup();
+    this.renderShop();
   }
 
   private buyMeta(id: string) {
@@ -1240,6 +1282,12 @@ class Game implements GameApi {
       // a satisfying micro-freeze on crits / combo kills (local visual only)
       if (crit || mult >= 2 || wasBoss) this.hitStop = Math.min(wasBoss ? 0.12 : 0.07, this.hitStop + 0.045);
       // loot: bosses always drop something juicy; normal kills roll the dice
+      // Tradable loot: bosses always drop a good item; normal kills rarely do.
+      if (wasBoss) {
+        this.grantLoot(makeItem(rollRarity(2))); // boss → biased toward rare+
+      } else if (Math.random() < 0.03 + this.mods.dropChance * 0.25) {
+        this.grantLoot(makeItem());
+      }
       if (wasBoss) {
         this.hud.hideBoss();
         this.audio.boom();

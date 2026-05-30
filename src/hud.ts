@@ -186,7 +186,7 @@ export class Hud {
       btn.addEventListener("click", () => {
         const tab = btn.dataset.tab!;
         this.root.querySelectorAll(".shop-tab").forEach((b) => b.classList.toggle("active", b === btn));
-        for (const name of ["upgrades", "skins", "challenges"]) {
+        for (const name of ["upgrades", "skins", "challenges", "market"]) {
           this.q(`#tab-${name}`).classList.toggle("hidden", name !== tab);
         }
       });
@@ -288,6 +288,40 @@ export class Hud {
           })
           .join("")}
       </div>`;
+  }
+
+  /** Market tab: sell tradable loot for gold. */
+  renderMarket(
+    gold: number,
+    items: { id: string; name: string; rarity: string; gold: number; color: string }[],
+    onSell: (id: string) => void,
+    onSellAll: () => void,
+  ) {
+    const total = items.reduce((s, i) => s + i.gold, 0);
+    const list = items.length
+      ? items
+          .map(
+            (it) => `<button class="mkt-item" data-id="${it.id}" style="--rc:${it.color}">
+              <span class="mkt-dot"></span>
+              <span class="mkt-name">${it.name}</span>
+              <span class="mkt-rar">${it.rarity}</span>
+              <span class="mkt-gold">⛀ ${it.gold}</span>
+            </button>`,
+          )
+          .join("")
+      : `<div class="mkt-empty">No loot yet — kill zombies & bosses to find tradable items.</div>`;
+    this.q("#tab-market").innerHTML = `
+      <div class="mkt-head">
+        <span>Gold: <b>⛀ ${gold}</b></span>
+        ${items.length ? `<button class="mkt-sellall" id="mkt-sellall">Sell all (⛀ ${total})</button>` : ""}
+      </div>
+      <div class="mkt-list">${list}</div>
+      <div class="mkt-note">Gold will be tradable for $TOKEN at launch.</div>`;
+    this.q("#tab-market").querySelectorAll<HTMLButtonElement>(".mkt-item").forEach((btn) => {
+      btn.addEventListener("click", () => onSell(btn.dataset.id!));
+    });
+    const sa = this.root.querySelector("#mkt-sellall");
+    if (sa) sa.addEventListener("click", () => onSellAll());
   }
 
   /**

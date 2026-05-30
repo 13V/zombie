@@ -120,6 +120,52 @@ body.touch .controls { display: none; }
   color: #ffd24a;
 }
 
+/* ---- Market tab (loot economy) ---- */
+.mkt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+.mkt-head b { color: #ffd24a; }
+.mkt-sellall {
+  background: linear-gradient(135deg, #ffcf52, #ff9f43);
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-weight: 800;
+  color: #3a2f25;
+  cursor: pointer;
+}
+.mkt-sellall:hover { filter: brightness(1.08); }
+.mkt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.mkt-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--rc) 50%, transparent);
+  background: color-mix(in srgb, var(--rc) 12%, rgba(0,0,0,0.25));
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+.mkt-item:hover { background: color-mix(in srgb, var(--rc) 24%, rgba(0,0,0,0.25)); }
+.mkt-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--rc); box-shadow: 0 0 8px var(--rc); }
+.mkt-name { flex: 1; font-weight: 700; }
+.mkt-rar { font-size: 11px; text-transform: uppercase; color: var(--rc); letter-spacing: 0.5px; }
+.mkt-gold { font-weight: 800; color: #ffd24a; }
+.mkt-empty { opacity: 0.7; font-size: 13px; padding: 16px; text-align: center; }
+.mkt-note { margin-top: 8px; font-size: 11px; opacity: 0.55; text-align: center; }
+
 #ui {
   position: absolute;
   inset: 0;
