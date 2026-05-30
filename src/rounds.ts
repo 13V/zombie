@@ -120,19 +120,33 @@ export class RoundManager {
    * later and consume their weight slice; the basic Shambler (index 0) fills
    * whatever probability is left.
    */
+  // tanky "elite" tiers that the elite-weight ramp boosts in the 10->20 band
+  private static ELITE_IDS = new Set(["brute", "armored", "abomination", "splitter", "necro"]);
+
+  /**
+   * Pick a zombie type via PROPER weighted sampling over eligible types, so the
+   * mix stays sane no matter how many types have unlocked. The basic Shambler
+   * keeps a guaranteed share (so mid-rounds arent a pure wall of specials), and
+   * elites get a small ramp from R10.
+   */
   private pickType(): ZombieType {
-    let r = Math.random();
-    // Elite-weight ramp: from R10, tougher tiers get +3%/round (cap +35%) so the
-    // 10→20 band fills with brutes/armored — difficulty spikes, not flat mush.
     const eliteBonus = Math.max(0, Math.min(0.35, (this.round - 9) * 0.03));
-    // iterate strongest → weakest so the deadliest eligible tier absorbs the
-    // tail once later-round weights sum past 1.
-    for (let i = ZOMBIE_TYPES.length - 1; i >= 1; i--) {
+    // Shambler always keeps a baseline slice that shrinks as rounds climb but
+    // never vanishes, so basics are always part of the horde.
+    const shamblerWeight = Math.max(0.25, 0.9 - (this.round - 1) * 0.04);
+    let total = shamblerWeight;
+    for (let i = 1; i < ZOMBIE_TYPES.length; i++) {
       const t = ZOMBIE_TYPES[i];
       if (this.round < t.from) continue;
-      const w = t.weight * (1 + eliteBonus);
-      if (r < w) return t;
-      r -= w;
+      total += t.weight * (RoundManager.ELITE_IDS.has(t.id) ? 1 + eliteBonus : 1);
+    }
+    let r = Math.random() * total;
+    if ((r -= shamblerWeight) < 0) return ZOMBIE_TYPES[0];
+    for (let i = 1; i < ZOMBIE_TYPES.length; i++) {
+      const t = ZOMBIE_TYPES[i];
+      if (this.round < t.from) continue;
+      const w = t.weight * (RoundManager.ELITE_IDS.has(t.id) ? 1 + eliteBonus : 1);
+      if ((r -= w) < 0) return t;
     }
     return ZOMBIE_TYPES[0];
   }
