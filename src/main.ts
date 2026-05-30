@@ -5,7 +5,6 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
-import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 import { CAMERA, COSTS, PLAYER, SCORE, ZOMBIE } from "./config";
@@ -169,12 +168,10 @@ class Game implements GameApi {
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    // Ambient occlusion — soft shadow settling into voxel grooves + contact
-    // points. The single biggest lever for the "premium rendered" voxel look.
-    const gtao = new GTAOPass(this.scene, this.camera, innerWidth, innerHeight);
-    gtao.output = GTAOPass.OUTPUT.Default;
-    gtao.updateGtaoMaterial({ radius: 1.1, distanceExponent: 1, thickness: 1, scale: 1.0, samples: 16, screenSpaceRadius: false });
-    this.composer.addPass(gtao);
+    // NOTE: GTAO (ambient occlusion) was removed — it painted transparent FX
+    // (the aim guide at the gun, floating hit/CRIT text) as solid black boxes,
+    // because they wrote into the AO depth pass. Soft contact shadow comes from
+    // the directional light's shadow map instead; no black-box class of bug.
     // Gentle bloom — only the brightest emissives (windows, fire, pickups) glow,
     // so the grass and props stay crisp instead of washing out.
     const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.16, 0.5, 0.92);
