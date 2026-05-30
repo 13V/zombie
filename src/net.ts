@@ -40,12 +40,25 @@ function resolveServerUrl(): string {
   return ((import.meta as any).env?.VITE_SERVER_URL as string | undefined) || DEFAULT_SERVER;
 }
 
+/** PartyKit room path the relay server lives at (see partykit/server.ts). */
+const PARTYKIT_PATH = "/parties/main/tinydead";
+
 /** Accept bare hosts / http(s) and coerce to a ws(s):// URL. */
 function normalizeWs(input: string): string {
-  let s = input.trim().replace(/\/$/, "");
+  let s = input.trim().replace(/\/+$/, "");
   if (s.startsWith("http://")) s = "ws://" + s.slice(7);
   else if (s.startsWith("https://")) s = "wss://" + s.slice(8);
-  else if (!s.startsWith("ws://") && !s.startsWith("wss://")) s = "wss://" + s;
+  else if (!/^wss?:\/\//.test(s)) s = "wss://" + s;
+  // A bare PartyKit project host needs the relay room path appended.
+  try {
+    const u = new URL(s);
+    if (/\.partykit\.dev$/i.test(u.hostname) && (u.pathname === "" || u.pathname === "/")) {
+      u.pathname = PARTYKIT_PATH;
+      s = u.toString().replace(/\/$/, "");
+    }
+  } catch {
+    /* leave as-is */
+  }
   return s;
 }
 
