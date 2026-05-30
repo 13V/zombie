@@ -125,6 +125,9 @@ class Game implements GameApi {
   private myId = 1;
   /** When set, GameApi buy/perk actions target this guest instead of the host. */
   private acting: GuestSlot | null = null;
+  // reused scratch for guest-side cosmetic bullet impacts
+  private guestZBuf: { x: number; z: number; r: number; color: number }[] = [];
+  private hitTmp = new THREE.Vector3();
 
   private tilt: TiltShift;
 
@@ -983,6 +986,26 @@ class Game implements GameApi {
     }
 
     this.bullets.update(dt); // moves the local tracer ghosts
+
+    // Cosmetic only: stop tracers when they reach a zombie + puff, so bullets
+    // visibly impact instead of passing through. The host does the real damage.
+    this.netplay!.guestZombieViews(this.guestZBuf);
+    if (this.guestZBuf.length) {
+      for (const b of this.bullets.bullets) {
+        if (!b.alive) continue;
+        for (const zv of this.guestZBuf) {
+          const dx = zv.x - b.mesh.position.x;
+          const dz = zv.z - b.mesh.position.z;
+          if (dx * dx + dz * dz < zv.r * zv.r) {
+            this.hitTmp.set(zv.x, 0.9, zv.z);
+            this.puffs.burst(this.hitTmp, zv.color, 5);
+            this.audio.hit(false);
+            this.bullets.retire(b);
+            break;
+          }
+        }
+      }
+    }
 
     this.hud.setRound(this.netplay!.netRound);
     this.hud.setPoints(this.netplay!.netPoints);

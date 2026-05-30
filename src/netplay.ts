@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { VoxelChar } from "./voxelChar";
-import { ZOMBIE_TYPES } from "./config";
+import { ZOMBIE, ZOMBIE_TYPES } from "./config";
 import { COLORS } from "./palette";
 import { Player } from "./player";
 import { Weapon, WEAPONS, BulletSystem } from "./weapons";
@@ -56,6 +56,8 @@ class ZombieView {
   private try_ = 0;
   private state = 0;
   private lastType = -1;
+  private scaleVal = 1;
+  private color = 0x8fcf6f;
 
   constructor(private scene: THREE.Scene) {
     this.char = new VoxelChar({ body: 0x8fcf6f, head: 0x5f9d4a, eye: 0x141414, zombie: true });
@@ -67,6 +69,8 @@ class ZombieView {
       const t = ZOMBIE_TYPES[s.type] ?? ZOMBIE_TYPES[0];
       this.char.setColor(t.body, t.head, t.blastRadius !== undefined ? t.body : 0x000000);
       this.group.scale.setScalar(t.scale);
+      this.scaleVal = t.scale;
+      this.color = t.body;
       this.lastType = s.type;
     }
     this.tx = s.x;
@@ -83,6 +87,22 @@ class ZombieView {
     this.group.position.z += (this.tz - this.group.position.z) * k;
     this.group.rotation.y = this.try_;
     this.char.update(dt);
+  }
+  // cosmetic-hit info for guest-side bullet impacts (alive zombies only)
+  get alive(): boolean {
+    return this.state === 0;
+  }
+  get hitX(): number {
+    return this.group.position.x;
+  }
+  get hitZ(): number {
+    return this.group.position.z;
+  }
+  get hitR(): number {
+    return ZOMBIE.radius * this.scaleVal + 0.35;
+  }
+  get puffColor(): number {
+    return this.color;
   }
   dispose() {
     this.scene.remove(this.group);
@@ -295,6 +315,14 @@ export class NetPlay {
   guestSendInput(inp: InputMsg) {
     if (this.isHost) return;
     this.net.send(inp);
+  }
+
+  /** Guest: live (alive) zombie views, for cosmetic bullet-impact checks. */
+  guestZombieViews(out: { x: number; z: number; r: number; color: number }[]): void {
+    out.length = 0;
+    for (const v of this.zviews.values()) {
+      if (v.alive) out.push({ x: v.hitX, z: v.hitZ, r: v.hitR, color: v.puffColor });
+    }
   }
 
   /**
