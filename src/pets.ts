@@ -307,203 +307,268 @@ export class Pet {
       into.add(m);
       return m;
     };
+    // ── cute kit: big sparkly eyes, rosy cheeks, little smiles ──
+    // The single biggest "awww" lever on voxel critters is oversized eyes with
+    // a white shine pixel + blush — every shape gets them.
+    const shine = voxelMaterial(0xffffff);
+    const blush = glowMaterial(0xff8fb0, 0.55);
+    const eye = (x: number, y: number, z: number, s = 0.14, into = this.body) => {
+      box(s, s * 1.35, 0.05, x, y, z, dark, into); // big round pupil
+      box(s * 0.46, s * 0.5, 0.04, x - s * 0.26, y + s * 0.42, z + 0.02, shine, into); // catch-light sparkle
+    };
+    const cheeks = (y: number, z: number, dx = 0.21, into = this.body) => {
+      box(0.1, 0.07, 0.04, -dx, y, z, blush, into);
+      box(0.1, 0.07, 0.04, dx, y, z, blush, into);
+    };
+    const smile = (y: number, z: number, w = 0.12, into = this.body) => {
+      box(w, 0.04, 0.04, 0, y, z, dark, into);
+    };
     switch (this.def.shape) {
       case "bee":
-        box(0.5, 0.42, 0.5, 0, 0, 0, body);
-        box(0.52, 0.1, 0.52, 0, 0.08, 0, accent); // stripe
-        box(0.52, 0.1, 0.52, 0, -0.1, 0, accent);
-        box(0.1, 0.1, 0.06, -0.12, 0.04, 0.26, dark); // eyes
-        box(0.1, 0.1, 0.06, 0.12, 0.04, 0.26, dark);
-        box(0.06, 0.16, 0.06, -0.07, 0.26, 0.2, dark); // antennae
-        box(0.06, 0.16, 0.06, 0.07, 0.26, 0.2, dark);
+        box(0.52, 0.48, 0.5, 0, 0, 0, body); // rounder chubby body
+        box(0.54, 0.1, 0.52, 0, 0.08, 0, accent); // stripe
+        box(0.54, 0.1, 0.52, 0, -0.12, 0, accent);
+        eye(-0.13, 0.07, 0.26);
+        eye(0.13, 0.07, 0.26);
+        cheeks(-0.06, 0.27);
+        smile(-0.11, 0.27);
+        box(0.05, 0.15, 0.05, -0.07, 0.3, 0.16, dark); // antennae
+        box(0.05, 0.15, 0.05, 0.07, 0.3, 0.16, dark);
+        box(0.08, 0.08, 0.08, -0.07, 0.4, 0.16, glow); // bobble tips
+        box(0.08, 0.08, 0.08, 0.07, 0.4, 0.16, glow);
         this.wingL = box(0.26, 0.04, 0.34, -0.34, 0.16, 0, glowMaterial(0xeaffff, 0.6));
         this.wingR = box(0.26, 0.04, 0.34, 0.34, 0.16, 0, glowMaterial(0xeaffff, 0.6));
         this.muzzle = box(0.1, 0.1, 0.1, 0, 0, 0.34, glow);
         break;
       case "wisp":
         this.aura = box(0.52, 0.52, 0.52, 0, 0, 0, glowMaterial(col, 0.5));
-        box(0.32, 0.32, 0.32, 0, 0, 0, glow);
+        box(0.34, 0.34, 0.34, 0, 0, 0, glow);
         box(0.16, 0.16, 0.16, 0, 0.34, 0, glow); // spark crown
-        box(0.08, 0.08, 0.05, -0.1, 0.02, 0.2, dark);
-        box(0.08, 0.08, 0.05, 0.1, 0.02, 0.2, dark);
+        eye(-0.1, 0.03, 0.2, 0.11);
+        eye(0.1, 0.03, 0.2, 0.11);
+        cheeks(-0.08, 0.21, 0.18);
+        smile(-0.09, 0.21, 0.1);
         this.muzzle = box(0.08, 0.08, 0.08, 0, 0, 0.28, glowMaterial(0xffffff, 1.2));
         break;
       case "turret":
         box(0.5, 0.18, 0.5, 0, -0.26, 0, accent); // base
-        box(0.6, 0.4, 0.6, 0, 0, 0, body);
-        box(0.62, 0.1, 0.62, 0, 0.18, 0, accent); // collar
-        box(0.18, 0.18, 0.6, 0, 0.06, 0.42, dark); // barrel
-        box(0.1, 0.1, 0.06, -0.14, 0.08, 0.32, glow); // sight
-        this.muzzle = box(0.16, 0.16, 0.1, 0, 0.06, 0.74, glow);
+        box(0.6, 0.42, 0.6, 0, 0, 0, body);
+        box(0.62, 0.1, 0.62, 0, 0.2, 0, accent); // collar
+        box(0.2, 0.2, 0.4, 0, 0.18, 0.4, dark); // stubby barrel
+        eye(-0.15, 0, 0.31, 0.15);
+        eye(0.15, 0, 0.31, 0.15);
+        cheeks(-0.13, 0.32, 0.24);
+        smile(-0.16, 0.32, 0.12);
+        this.muzzle = box(0.16, 0.16, 0.1, 0, 0.18, 0.62, glow);
         break;
       case "ghost":
         this.aura = box(0.62, 0.7, 0.62, 0, 0, 0, glowMaterial(col, 0.35));
         box(0.48, 0.58, 0.48, 0, 0.02, 0, glowMaterial(col, 0.7));
-        box(0.16, 0.2, 0.06, -0.13, 0.12, 0.24, dark); // big spooky eyes
-        box(0.16, 0.2, 0.06, 0.13, 0.12, 0.24, dark);
+        eye(-0.13, 0.12, 0.24, 0.16); // big adorable peepers
+        eye(0.13, 0.12, 0.24, 0.16);
+        cheeks(-0.04, 0.25);
+        smile(-0.08, 0.25, 0.1);
         box(0.12, 0.12, 0.12, -0.16, -0.3, 0, glowMaterial(col, 0.7)); // tails
         box(0.12, 0.12, 0.12, 0.16, -0.3, 0, glowMaterial(col, 0.7));
         this.muzzle = box(0.12, 0.12, 0.12, 0, 0.0, 0.3, glow);
         break;
       case "dragon":
-        box(0.62, 0.5, 0.82, 0, 0, 0, body);
-        box(0.62, 0.14, 0.8, 0, -0.2, 0, accent); // belly
-        box(0.42, 0.42, 0.42, 0, 0.18, 0.5, body); // head
-        box(0.16, 0.14, 0.16, 0, 0.1, 0.74, accent); // snout
-        box(0.1, 0.12, 0.06, -0.14, 0.28, 0.62, dark); // eyes
-        box(0.1, 0.12, 0.06, 0.14, 0.28, 0.62, dark);
-        box(0.07, 0.14, 0.07, -0.1, 0.42, 0.46, accent); // horns
-        box(0.07, 0.14, 0.07, 0.1, 0.42, 0.46, accent);
-        box(0.14, 0.14, 0.4, 0, -0.05, -0.5, body); // tail
-        this.wingL = box(0.5, 0.06, 0.42, -0.5, 0.22, -0.08, glowMaterial(acc, 0.5));
-        this.wingR = box(0.5, 0.06, 0.42, 0.5, 0.22, -0.08, glowMaterial(acc, 0.5));
-        this.muzzle = box(0.16, 0.16, 0.16, 0, 0.12, 0.86, glowMaterial(0xffd24a, 1.4));
+        box(0.58, 0.46, 0.6, 0, -0.04, -0.06, body); // smaller chibi body
+        box(0.58, 0.14, 0.58, 0, -0.22, -0.06, accent); // belly
+        box(0.5, 0.5, 0.48, 0, 0.22, 0.46, body); // big chibi head
+        box(0.2, 0.16, 0.16, 0, 0.12, 0.72, accent); // snout
+        eye(-0.15, 0.28, 0.68, 0.16); // huge baby eyes
+        eye(0.15, 0.28, 0.68, 0.16);
+        cheeks(0.14, 0.71, 0.24);
+        box(0.07, 0.13, 0.07, -0.12, 0.5, 0.42, accent); // little horns
+        box(0.07, 0.13, 0.07, 0.12, 0.5, 0.42, accent);
+        box(0.14, 0.14, 0.36, 0, -0.08, -0.46, body); // tail
+        box(0.18, 0.12, 0.06, 0, -0.16, -0.66, accent); // tail tip
+        this.wingL = box(0.5, 0.06, 0.42, -0.48, 0.18, -0.18, glowMaterial(acc, 0.5));
+        this.wingR = box(0.5, 0.06, 0.42, 0.48, 0.18, -0.18, glowMaterial(acc, 0.5));
+        this.muzzle = box(0.16, 0.16, 0.16, 0, 0.14, 0.84, glowMaterial(0xffd24a, 1.4));
         break;
       case "piggy":
-        box(0.6, 0.46, 0.7, 0, 0, 0, body); // round body
-        box(0.18, 0.18, 0.14, 0, 0.02, 0.4, accent); // snout
-        box(0.05, 0.05, 0.04, -0.05, 0.02, 0.47, dark); // nostrils
-        box(0.05, 0.05, 0.04, 0.05, 0.02, 0.47, dark);
-        box(0.07, 0.08, 0.04, -0.12, 0.06, 0.34, dark); // eyes
-        box(0.07, 0.08, 0.04, 0.12, 0.06, 0.34, dark);
-        box(0.12, 0.12, 0.04, -0.16, 0.26, 0.18, body); // ears
-        box(0.12, 0.12, 0.04, 0.16, 0.26, 0.18, body);
-        box(0.22, 0.06, 0.02, 0, 0.16, -0.02, glowMaterial(0xffd24a, 1.0)); // coin slot
-        box(0.12, 0.1, 0.02, 0, 0, -0.36, accent); // curly tail
+        box(0.62, 0.5, 0.7, 0, 0, 0, body); // round chubby body
+        box(0.2, 0.2, 0.14, 0, 0, 0.4, accent); // big snout
+        box(0.05, 0.06, 0.04, -0.06, 0, 0.47, dark); // nostrils
+        box(0.05, 0.06, 0.04, 0.06, 0, 0.47, dark);
+        eye(-0.14, 0.1, 0.34, 0.12); // sparkly eyes
+        eye(0.14, 0.1, 0.34, 0.12);
+        cheeks(0.0, 0.35, 0.26);
+        box(0.13, 0.13, 0.04, -0.17, 0.28, 0.18, body); // floppy ears
+        box(0.13, 0.13, 0.04, 0.17, 0.28, 0.18, body);
+        box(0.22, 0.06, 0.02, 0, 0.18, -0.02, glowMaterial(0xffd24a, 1.0)); // coin slot
+        box(0.1, 0.1, 0.05, 0, -0.02, -0.37, accent); // curly tail
         break;
       case "totem":
         box(0.4, 0.2, 0.4, 0, -0.3, 0, accent); // base
-        box(0.46, 0.46, 0.46, 0, 0, 0, body); // mask block
-        box(0.5, 0.12, 0.5, 0, 0.26, 0, glowMaterial(this.def.color, 0.9)); // glowing top ring
-        box(0.1, 0.14, 0.05, -0.12, 0.04, 0.24, glowMaterial(0xffd24a, 1.2)); // glowing eyes
-        box(0.1, 0.14, 0.05, 0.12, 0.04, 0.24, glowMaterial(0xffd24a, 1.2));
+        box(0.48, 0.48, 0.46, 0, 0, 0, body); // mask block
+        box(0.52, 0.12, 0.5, 0, 0.27, 0, glowMaterial(this.def.color, 0.9)); // glowing top ring
+        eye(-0.12, 0.05, 0.24, 0.13); // big friendly eyes
+        eye(0.12, 0.05, 0.24, 0.13);
+        cheeks(-0.04, 0.25);
+        smile(-0.08, 0.25, 0.12);
         this.aura = box(0.7, 0.7, 0.7, 0, 0, 0, glowMaterial(this.def.color, 0.3)); // buff aura
         break;
       case "drone":
-        box(0.56, 0.16, 0.56, 0, 0, 0, body); // chassis
-        box(0.6, 0.06, 0.6, 0, 0.1, 0, accent); // top plate
-        box(0.12, 0.12, 0.12, -0.3, 0.04, 0.3, glow); // rotor lights
-        box(0.12, 0.12, 0.12, 0.3, 0.04, 0.3, glow);
-        box(0.12, 0.12, 0.12, -0.3, 0.04, -0.3, glow);
-        box(0.12, 0.12, 0.12, 0.3, 0.04, -0.3, glow);
-        box(0.1, 0.1, 0.05, -0.1, 0, 0.3, dark); // eyes
-        box(0.1, 0.1, 0.05, 0.1, 0, 0.3, dark);
-        box(0.16, 0.12, 0.3, 0, -0.06, 0.32, dark); // gun
-        this.muzzle = box(0.14, 0.14, 0.1, 0, -0.06, 0.52, glow);
+        box(0.5, 0.34, 0.46, 0, 0.06, 0, body); // rounder little body
+        box(0.54, 0.08, 0.5, 0, 0.22, 0, accent); // top plate
+        box(0.12, 0.12, 0.12, -0.3, 0.18, 0.18, glow); // rotor lights
+        box(0.12, 0.12, 0.12, 0.3, 0.18, 0.18, glow);
+        box(0.12, 0.12, 0.12, -0.3, 0.18, -0.18, glow);
+        box(0.12, 0.12, 0.12, 0.3, 0.18, -0.18, glow);
+        eye(-0.12, 0.08, 0.24, 0.13); // big lens eyes
+        eye(0.12, 0.08, 0.24, 0.13);
+        cheeks(-0.04, 0.25, 0.22);
+        box(0.14, 0.1, 0.2, 0, -0.12, 0.28, dark); // little gun
+        this.muzzle = box(0.13, 0.13, 0.1, 0, -0.12, 0.42, glow);
         break;
       case "slime":
         this.aura = box(0.66, 0.5, 0.66, 0, -0.02, 0, glowMaterial(col, 0.3));
         box(0.6, 0.4, 0.6, 0, -0.04, 0, glowMaterial(col, 0.45));
-        box(0.42, 0.5, 0.42, 0, 0.08, 0, body);
-        box(0.08, 0.12, 0.05, -0.12, 0.1, 0.22, dark); // eyes
-        box(0.08, 0.12, 0.05, 0.12, 0.1, 0.22, dark);
+        box(0.46, 0.52, 0.46, 0, 0.1, 0, body); // wobbly blob top
+        box(0.12, 0.1, 0.1, 0, 0.36, 0, glowMaterial(0xffffff, 0.7)); // shiny drip highlight
+        eye(-0.12, 0.12, 0.22, 0.13); // big jelly eyes
+        eye(0.12, 0.12, 0.22, 0.13);
+        cheeks(0.02, 0.23, 0.2);
+        smile(-0.02, 0.23, 0.1);
         this.muzzle = box(0.12, 0.12, 0.12, 0, 0.02, 0.32, glow);
         break;
       case "golem":
-        box(0.6, 0.6, 0.6, 0, 0, 0, body);
+        box(0.6, 0.58, 0.6, 0, 0.02, 0, body);
         box(0.66, 0.2, 0.66, 0, -0.24, 0, accent); // base
-        box(0.2, 0.2, 0.06, -0.13, 0.08, 0.3, glow); // glowing eyes
-        box(0.2, 0.2, 0.06, 0.13, 0.08, 0.3, glow);
-        box(0.16, 0.3, 0.16, -0.4, -0.1, 0, body); // arms
-        box(0.16, 0.3, 0.16, 0.4, -0.1, 0, body);
-        this.muzzle = box(0.16, 0.16, 0.12, 0, 0, 0.36, glow);
+        eye(-0.14, 0.1, 0.3, 0.15); // big gentle-giant eyes
+        eye(0.14, 0.1, 0.3, 0.15);
+        cheeks(-0.06, 0.31, 0.26);
+        smile(-0.1, 0.31, 0.14);
+        box(0.16, 0.28, 0.16, -0.4, -0.08, 0, body); // arms
+        box(0.16, 0.28, 0.16, 0.4, -0.08, 0, body);
+        this.muzzle = box(0.16, 0.16, 0.12, 0, -0.04, 0.34, glow);
         break;
       case "mushroom":
-        box(0.3, 0.34, 0.3, 0, -0.1, 0, accent); // stem
-        box(0.6, 0.3, 0.6, 0, 0.18, 0, body); // cap
-        box(0.12, 0.12, 0.12, -0.16, 0.22, 0.14, glowMaterial(0xffffff, 0.8)); // spots
-        box(0.12, 0.12, 0.12, 0.16, 0.22, -0.1, glowMaterial(0xffffff, 0.8));
-        box(0.08, 0.1, 0.05, -0.1, -0.08, 0.16, dark); // eyes
-        box(0.08, 0.1, 0.05, 0.1, -0.08, 0.16, dark);
-        this.muzzle = box(0.12, 0.12, 0.12, 0, 0.04, 0.3, glow);
+        box(0.34, 0.36, 0.34, 0, -0.08, 0, accent); // chubby stem
+        box(0.62, 0.32, 0.62, 0, 0.2, 0, body); // cap
+        box(0.13, 0.13, 0.13, -0.16, 0.24, 0.16, glowMaterial(0xffffff, 0.8)); // spots
+        box(0.13, 0.13, 0.13, 0.16, 0.24, -0.1, glowMaterial(0xffffff, 0.8));
+        eye(-0.11, -0.06, 0.18, 0.12); // eyes on the stem face
+        eye(0.11, -0.06, 0.18, 0.12);
+        cheeks(-0.14, 0.18, 0.18);
+        smile(-0.16, 0.18, 0.1);
+        this.muzzle = box(0.12, 0.12, 0.12, 0, -0.02, 0.22, glow);
         break;
       case "frog":
-        box(0.56, 0.34, 0.5, 0, 0, 0, body);
-        box(0.56, 0.12, 0.5, 0, -0.14, 0, accent); // belly
-        box(0.18, 0.18, 0.16, -0.16, 0.2, 0.06, body); // eye bulges
-        box(0.18, 0.18, 0.16, 0.16, 0.2, 0.06, body);
-        box(0.09, 0.09, 0.05, -0.16, 0.22, 0.16, glowMaterial(0xffffff, 0.6));
-        box(0.09, 0.09, 0.05, 0.16, 0.22, 0.16, glowMaterial(0xffffff, 0.6));
-        box(0.07, 0.07, 0.04, -0.16, 0.22, 0.2, dark);
-        box(0.07, 0.07, 0.04, 0.16, 0.22, 0.2, dark);
+        box(0.58, 0.36, 0.5, 0, 0, 0, body);
+        box(0.58, 0.14, 0.5, 0, -0.14, 0, accent); // belly
+        box(0.2, 0.2, 0.18, -0.16, 0.22, 0.04, body); // big eye bulges
+        box(0.2, 0.2, 0.18, 0.16, 0.22, 0.04, body);
+        eye(-0.16, 0.23, 0.16, 0.12); // sparkly froggy eyes
+        eye(0.16, 0.23, 0.16, 0.12);
+        cheeks(0.0, 0.16, 0.22);
+        smile(-0.02, 0.06, 0.22); // wide froggy grin
         box(0.14, 0.1, 0.14, -0.24, -0.12, 0.1, body); // feet
         box(0.14, 0.1, 0.14, 0.24, -0.12, 0.1, body);
         this.muzzle = box(0.1, 0.1, 0.1, 0, 0, 0.3, glow);
         break;
       case "crystal":
         this.aura = box(0.6, 0.7, 0.6, 0, 0, 0, glowMaterial(col, 0.35));
-        box(0.3, 0.6, 0.3, 0, 0.1, 0, glowMaterial(col, 0.8)); // central shard
-        box(0.18, 0.4, 0.18, -0.22, -0.05, 0, glowMaterial(col, 0.7));
-        box(0.18, 0.4, 0.18, 0.22, -0.05, 0, glowMaterial(col, 0.7));
-        box(0.16, 0.16, 0.16, 0, 0.42, 0, glow); // tip
-        this.muzzle = box(0.12, 0.12, 0.12, 0, 0.1, 0.3, glowMaterial(0xffffff, 1.2));
+        box(0.34, 0.6, 0.34, 0, 0.06, 0, glowMaterial(col, 0.8)); // central shard
+        box(0.18, 0.4, 0.18, -0.22, -0.08, 0, glowMaterial(col, 0.7));
+        box(0.18, 0.4, 0.18, 0.22, -0.08, 0, glowMaterial(col, 0.7));
+        box(0.16, 0.16, 0.16, 0, 0.4, 0, glow); // tip
+        eye(-0.09, 0.06, 0.18, 0.11); // little gem face
+        eye(0.09, 0.06, 0.18, 0.11);
+        cheeks(-0.04, 0.19, 0.16);
+        smile(-0.06, 0.19, 0.08);
+        this.muzzle = box(0.12, 0.12, 0.12, 0, 0.06, 0.24, glowMaterial(0xffffff, 1.2));
         break;
       case "star":
         this.aura = box(0.6, 0.6, 0.2, 0, 0, 0, glowMaterial(col, 0.4));
-        box(0.5, 0.14, 0.16, 0, 0, 0, glow); // cross spikes
-        box(0.14, 0.5, 0.16, 0, 0, 0, glow);
-        box(0.36, 0.36, 0.14, 0, 0, 0, glowMaterial(col, 0.9)); // core
-        box(0.07, 0.07, 0.06, -0.08, 0.02, 0.12, dark); // eyes
-        box(0.07, 0.07, 0.06, 0.08, 0.02, 0.12, dark);
-        this.muzzle = box(0.12, 0.12, 0.12, 0, 0, 0.24, glowMaterial(0xffffff, 1.3));
+        box(0.58, 0.16, 0.16, 0, 0, 0, glow); // cross spikes
+        box(0.16, 0.58, 0.16, 0, 0, 0, glow);
+        box(0.4, 0.4, 0.14, 0, 0, 0, glowMaterial(col, 0.9)); // core
+        eye(-0.1, 0.04, 0.1, 0.11); // twinkly star eyes
+        eye(0.1, 0.04, 0.1, 0.11);
+        cheeks(-0.08, 0.12, 0.16);
+        smile(-0.1, 0.12, 0.1);
+        this.muzzle = box(0.12, 0.12, 0.12, 0, 0, 0.18, glowMaterial(0xffffff, 1.3));
         break;
       case "cat":
-        box(0.5, 0.42, 0.5, 0, 0, 0, body);
-        box(0.5, 0.12, 0.5, 0, -0.18, 0, accent);
-        box(0.14, 0.16, 0.05, -0.16, 0.28, 0.04, body); // ears
-        box(0.14, 0.16, 0.05, 0.16, 0.28, 0.04, body);
-        box(0.1, 0.1, 0.05, -0.12, 0.04, 0.24, glowMaterial(0xffe14a, 0.8)); // eyes
-        box(0.1, 0.1, 0.05, 0.12, 0.04, 0.24, glowMaterial(0xffe14a, 0.8));
-        box(0.06, 0.06, 0.05, 0, -0.04, 0.26, accent); // nose
-        box(0.1, 0.1, 0.34, 0, -0.04, -0.4, body); // tail
+        box(0.52, 0.46, 0.5, 0, 0, 0, body);
+        box(0.5, 0.12, 0.5, 0, -0.2, 0, accent);
+        box(0.15, 0.18, 0.05, -0.16, 0.3, 0.04, body); // perky ears
+        box(0.15, 0.18, 0.05, 0.16, 0.3, 0.04, body);
+        box(0.08, 0.1, 0.04, -0.16, 0.32, 0.06, blush); // inner ears
+        box(0.08, 0.1, 0.04, 0.16, 0.32, 0.06, blush);
+        eye(-0.13, 0.06, 0.25, 0.14); // big kitty eyes
+        eye(0.13, 0.06, 0.25, 0.14);
+        cheeks(-0.06, 0.26);
+        box(0.06, 0.05, 0.05, 0, -0.04, 0.27, blush); // tiny nose
+        smile(-0.1, 0.27, 0.1);
+        box(0.1, 0.1, 0.34, 0, -0.02, -0.4, body); // tail
+        box(0.1, 0.1, 0.1, 0, 0.12, -0.52, accent); // tail tip
         this.muzzle = box(0.1, 0.1, 0.1, 0, -0.02, 0.3, glow);
         break;
       case "eye":
         this.aura = box(0.6, 0.6, 0.6, 0, 0, 0, glowMaterial(col, 0.3));
-        box(0.5, 0.5, 0.5, 0, 0, 0, glowMaterial(0xffffff, 0.5)); // sclera
-        box(0.26, 0.26, 0.1, 0, 0, 0.22, glowMaterial(col, 0.9)); // iris
-        box(0.12, 0.12, 0.06, 0, 0, 0.3, dark); // pupil
-        box(0.54, 0.12, 0.54, 0, 0.26, 0, accent); // brow
-        this.muzzle = box(0.12, 0.12, 0.12, 0, 0, 0.34, glow);
+        box(0.5, 0.52, 0.5, 0, 0, 0, glowMaterial(0xffffff, 0.5)); // round sclera
+        box(0.28, 0.3, 0.1, 0, -0.02, 0.22, glowMaterial(col, 0.9)); // big iris
+        box(0.16, 0.16, 0.06, 0, -0.03, 0.3, dark); // pupil
+        box(0.08, 0.08, 0.04, -0.06, 0.06, 0.33, shine); // big catch-light
+        box(0.05, 0.05, 0.04, 0.05, -0.08, 0.33, shine); // second sparkle
+        box(0.5, 0.1, 0.46, 0, 0.27, 0.02, accent); // soft eyelid
+        cheeks(-0.16, 0.26, 0.24);
+        this.muzzle = box(0.12, 0.12, 0.12, 0, -0.18, 0.3, glow);
         break;
       case "serpent":
-        box(0.4, 0.38, 0.42, 0, 0.06, 0.2, body); // head
-        box(0.16, 0.12, 0.06, 0, 0.08, 0.42, accent); // snout
-        box(0.08, 0.1, 0.05, -0.1, 0.12, 0.34, glowMaterial(0xffe14a, 0.9)); // eyes
-        box(0.08, 0.1, 0.05, 0.1, 0.12, 0.34, glowMaterial(0xffe14a, 0.9));
+        box(0.44, 0.42, 0.44, 0, 0.08, 0.2, body); // bigger cute head
+        box(0.18, 0.13, 0.08, 0, 0.04, 0.44, accent); // snout
+        eye(-0.12, 0.14, 0.36, 0.12); // sparkly snake eyes
+        eye(0.12, 0.14, 0.36, 0.12);
+        cheeks(0.02, 0.38, 0.18);
+        box(0.07, 0.04, 0.06, 0, 0.0, 0.48, glowMaterial(0xff5a6a, 0.8)); // little tongue
         box(0.3, 0.3, 0.3, 0, -0.02, -0.1, body); // segments
         box(0.24, 0.24, 0.26, 0, -0.06, -0.4, accent);
         box(0.18, 0.18, 0.22, 0, -0.08, -0.64, body);
-        this.muzzle = box(0.1, 0.1, 0.1, 0, 0.06, 0.5, glow);
+        this.muzzle = box(0.1, 0.1, 0.1, 0, 0.06, 0.52, glow);
         break;
       case "phoenix":
-        box(0.4, 0.46, 0.4, 0, 0, 0, body);
-        box(0.26, 0.26, 0.26, 0, 0.3, 0.04, body); // head
-        box(0.12, 0.1, 0.1, 0, 0.3, 0.2, accent); // beak
-        box(0.07, 0.08, 0.05, -0.08, 0.34, 0.16, dark); // eyes
-        box(0.07, 0.08, 0.05, 0.08, 0.34, 0.16, dark);
-        box(0.1, 0.16, 0.1, 0, 0.48, 0.02, glow); // crest
-        box(0.14, 0.1, 0.34, 0, -0.1, -0.34, glowMaterial(col, 0.7)); // tail flame
-        this.wingL = box(0.5, 0.06, 0.4, -0.42, 0.06, -0.04, glowMaterial(col, 0.6));
-        this.wingR = box(0.5, 0.06, 0.4, 0.42, 0.06, -0.04, glowMaterial(col, 0.6));
-        this.muzzle = box(0.12, 0.12, 0.12, 0, 0.28, 0.3, glowMaterial(0xffd24a, 1.4));
+        box(0.4, 0.44, 0.4, 0, -0.04, 0, body);
+        box(0.32, 0.32, 0.3, 0, 0.32, 0.04, body); // big chibi head
+        box(0.12, 0.1, 0.1, 0, 0.3, 0.22, accent); // beak
+        eye(-0.1, 0.36, 0.18, 0.12); // big baby-bird eyes
+        eye(0.1, 0.36, 0.18, 0.12);
+        cheeks(0.26, 0.2, 0.16);
+        box(0.1, 0.16, 0.1, 0, 0.52, 0.02, glow); // crest
+        box(0.14, 0.1, 0.34, 0, -0.12, -0.34, glowMaterial(col, 0.7)); // tail flame
+        this.wingL = box(0.5, 0.06, 0.4, -0.42, 0.0, -0.04, glowMaterial(col, 0.6));
+        this.wingR = box(0.5, 0.06, 0.4, 0.42, 0.0, -0.04, glowMaterial(col, 0.6));
+        this.muzzle = box(0.12, 0.12, 0.12, 0, 0.3, 0.3, glowMaterial(0xffd24a, 1.4));
         break;
       case "ufo":
         box(0.7, 0.12, 0.7, 0, 0, 0, accent); // disc
-        box(0.4, 0.16, 0.4, 0, 0.12, 0, glowMaterial(0xffffff, 0.6)); // dome
+        box(0.42, 0.28, 0.42, 0, 0.16, 0, glowMaterial(0xffffff, 0.45)); // tall glass dome
+        eye(-0.1, 0.16, 0.2, 0.12); // tiny pilot peeking out
+        eye(0.1, 0.16, 0.2, 0.12);
+        cheeks(0.08, 0.21, 0.16);
+        smile(0.06, 0.21, 0.1);
         box(0.12, 0.12, 0.12, -0.28, -0.02, 0.18, glow); // running lights
         box(0.12, 0.12, 0.12, 0.28, -0.02, 0.18, glow);
         box(0.12, 0.12, 0.12, -0.28, -0.02, -0.18, glow);
         box(0.12, 0.12, 0.12, 0.28, -0.02, -0.18, glow);
         this.aura = box(0.3, 0.4, 0.3, 0, -0.24, 0, glowMaterial(col, 0.4)); // tractor beam
-        this.muzzle = box(0.14, 0.14, 0.14, 0, -0.1, 0.2, glowMaterial(0x9fe8ff, 1.2));
+        this.muzzle = box(0.14, 0.14, 0.14, 0, -0.1, 0.34, glowMaterial(0x9fe8ff, 1.2));
         break;
       case "orb":
         this.aura = box(0.6, 0.6, 0.6, 0, 0, 0, glowMaterial(col, 0.4));
-        box(0.4, 0.4, 0.4, 0, 0, 0, glow);
+        box(0.42, 0.42, 0.42, 0, 0, 0, glow);
         box(0.6, 0.1, 0.1, 0, 0, 0, glowMaterial(0xffffff, 0.7)); // rings
         box(0.1, 0.6, 0.1, 0, 0, 0, glowMaterial(0xffffff, 0.7));
         box(0.1, 0.1, 0.6, 0, 0, 0, glowMaterial(0xffffff, 0.7));
+        eye(-0.1, 0.03, 0.21, 0.11); // little glowing face
+        eye(0.1, 0.03, 0.21, 0.11);
+        cheeks(-0.06, 0.22, 0.16);
+        smile(-0.08, 0.22, 0.1);
         this.muzzle = box(0.14, 0.14, 0.14, 0, 0, 0.3, glowMaterial(0xffffff, 1.4));
         break;
       default:
