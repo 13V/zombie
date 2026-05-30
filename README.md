@@ -87,6 +87,19 @@ Solo play needs none of this.
 - **Kill-combo multiplier** (`combo.ts`) — chaining kills ramps a points multiplier
   (up to ×5) shown with a draining HUD bar; lapses if you stop killing.
 
+### Progression hooks (the "addicting" loops)
+- **Meta-progression** (`save.ts`, `meta.ts`) — runs bank **Essence** (saved to
+  localStorage, even on death); spend it in the menu shop on permanent upgrades.
+  Personal best round/score is tracked and celebrated.
+- **Level-up picker** (`upgrades.ts`, `mods.ts`) — clear a round and choose 1 of 3
+  stacking upgrades on an animated card screen: icons, rarity tiers (common / rare /
+  shimmering **legendary**), live stat-delta previews (e.g. `Damage 120% → 140%`), a
+  **reroll** for points, and **1/2/3** keyboard picks. All stats funnel through a
+  single `RunMods` bundle that both meta + level-ups write to.
+- **Bosses** — every 5th round spawns a boss with its own health bar and a loot dump.
+- **Loot drops** (`drops.ts`) — kills roll a weighted table of glowing pickups
+  (max ammo, bonus points, medkit, 2× points, rapid fire, insta-kill, nuke, treasure).
+
 ## Matching the cozy soft-3D art style
 
 The Kintara / Tiny Worlds look comes from three layers, all wired up here:

@@ -191,6 +191,17 @@ export class Audio {
     this.blip("square", 880, 0.05, 0.1);
   }
 
+  /** Level-up fanfare: a bright rising arpeggio that resolves up an octave. */
+  levelUp() {
+    if (!this.ok()) return;
+    const notes = [523, 659, 784, 1047, 1319];
+    notes.forEach((n, i) => {
+      this.blip("triangle", n, 0.22, 0.16, { delay: i * 0.07 });
+      this.blip("square", n * 2, 0.1, 0.05, { delay: i * 0.07 }); // shimmer overtone
+    });
+    this.noise(0.5, 0.05, "bandpass", 1200, 3); // soft sparkle wash
+  }
+
   // ---- ambient music: a slow two-oscillator drone that intensifies by round ----
   startMusic(intensity = 0) {
     if (!this.ok() || !this.musicGain) return;

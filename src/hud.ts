@@ -1,5 +1,6 @@
 import { ActiveGum } from "./powerups";
-import { RunUpgrade } from "./upgrades";
+import { Tier } from "./upgrades";
+import { ModDelta } from "./mods";
 
 /** A meta-upgrade row as the HUD needs to render it. */
 export interface MetaRow {
@@ -9,6 +10,26 @@ export interface MetaRow {
   cost: number;
   owned: boolean;
   affordable: boolean;
+}
+
+/** One level-up card as the HUD renders it (view-model built by the game). */
+export interface LevelCardVM {
+  id: string;
+  name: string;
+  desc: string;
+  icon: string;
+  color: string;
+  tier: Tier;
+  deltas: ModDelta[];
+}
+
+export interface LevelUpInfo {
+  level: number;
+  cards: LevelCardVM[];
+  rerollCost: number;
+  canReroll: boolean;
+  onPick: (id: string) => void;
+  onReroll: () => void;
 }
 
 /** DOM-based HUD + overlays. Cheap, crisp, and easy to restyle. */
@@ -99,9 +120,13 @@ export class Hud {
       </div>
 
       <div class="overlay levelup hidden" id="overlay-levelup">
-        <h1>LEVEL <span class="dead">UP</span></h1>
-        <p>Round cleared — choose an upgrade.</p>
+        <div class="lvl-burst" id="lvl-burst"></div>
+        <h1 class="lvl-title">LEVEL <span class="dead">UP</span><span class="lvl-num" id="lvl-num"></span></h1>
+        <p class="lvl-sub">Choose your upgrade — <span class="key">1</span><span class="key">2</span><span class="key">3</span> or click</p>
         <div class="cards" id="levelup-cards"></div>
+        <div class="lvl-foot">
+          <button class="reroll" id="btn-reroll"><span class="rr-ico">🎲</span> <span id="rr-label">Reroll</span></button>
+        </div>
       </div>
     `;
 
@@ -167,28 +192,81 @@ export class Hud {
     });
   }
 
-  /** Show the level-up picker with 3 cards; `onPick` fires with the chosen id. */
-  showLevelUp(cards: RunUpgrade[], onPick: (id: string) => void) {
+  /**
+   * Show the level-up picker. Cards deal in with a stagger; picking pulses the
+   * chosen card and dismisses the rest before `onPick` resumes the game.
+   */
+  showLevelUp(info: LevelUpInfo) {
+    const overlay = this.q("#overlay-levelup");
+    overlay.classList.remove("hidden");
+    this.q("#lvl-num").textContent = info.level ? `Lv ${info.level}` : "";
+    this.renderLevelCards(info);
+    // replay the title/burst pop each time it opens (incl. rerolls)
+    const burst = this.q("#lvl-burst");
+    burst.classList.remove("go");
+    void burst.offsetWidth; // reflow to restart the animation
+    burst.classList.add("go");
+  }
+
+  /** (Re)render just the cards + reroll button — used on open and on reroll. */
+  private renderLevelCards(info: LevelUpInfo) {
     const wrap = this.q("#levelup-cards");
-    wrap.innerHTML = cards
+    wrap.innerHTML = info.cards
       .map(
-        (c) => `<button class="card ${c.rarity}" data-id="${c.id}">
+        (c, i) => `<button class="card ${c.tier}" data-id="${c.id}" style="--accent:${c.color}; --i:${i}">
+          <span class="c-tier">${c.tier}</span>
+          <span class="c-key">${i + 1}</span>
+          <span class="c-icon">${c.icon}</span>
           <span class="c-name">${c.name}</span>
           <span class="c-desc">${c.desc}</span>
-          ${c.rarity === "rare" ? '<span class="c-rare">RARE</span>' : ""}
+          <span class="c-stats">${c.deltas
+            .map((d) => `<span class="c-stat"><b>${d.label}</b> ${d.from} <i>→</i> <em>${d.to}</em></span>`)
+            .join("")}</span>
         </button>`,
       )
       .join("");
+
+    const lock = () => wrap.classList.contains("locked");
+    wrap.classList.remove("locked");
     wrap.querySelectorAll<HTMLButtonElement>(".card").forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (lock()) return;
         const id = btn.dataset.id;
-        if (id) onPick(id);
+        if (!id) return;
+        // selection juice: chosen card pops, the others fall away
+        wrap.classList.add("locked");
+        btn.classList.add("chosen");
+        wrap.querySelectorAll(".card").forEach((o) => o !== btn && o.classList.add("gone"));
+        info.onPick(id);
       });
     });
-    this.q("#overlay-levelup").classList.remove("hidden");
+
+    const rr = this.q("#btn-reroll") as HTMLButtonElement;
+    rr.classList.toggle("disabled", !info.canReroll);
+    this.q("#rr-label").textContent = info.rerollCost > 0 ? `Reroll · ${info.rerollCost} pts` : "Reroll";
+    rr.onclick = () => {
+      if (!info.canReroll || lock()) return;
+      info.onReroll();
+    };
+  }
+
+  /** Pick a card by index (keyboard 1/2/3). Returns the chosen id or null. */
+  pickLevelByIndex(i: number): boolean {
+    const cards = this.q("#levelup-cards").querySelectorAll<HTMLButtonElement>(".card");
+    const btn = cards[i];
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    return false;
+  }
+  triggerReroll() {
+    const rr = this.q("#btn-reroll") as HTMLButtonElement;
+    if (!rr.classList.contains("disabled")) rr.click();
   }
   hideLevelUp() {
     this.q("#overlay-levelup").classList.add("hidden");
+    this.q("#levelup-cards").classList.remove("locked");
   }
 
   /** Boss health bar (0 = hide). */

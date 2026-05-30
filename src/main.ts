@@ -22,10 +22,10 @@ import { FloatingText } from "./feedback";
 import { Audio } from "./audio";
 import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
-import { RunMods, defaultMods } from "./mods";
+import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
-import { RUN_UPGRADES, rollUpgrades } from "./upgrades";
+import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { NetClient, InputMsg, ZombieSnap } from "./net";
 import { NetPlay } from "./netplay";
 import { COLORS } from "./palette";
@@ -101,6 +101,11 @@ class Game implements GameApi {
   // progression
   private save: SaveData = loadSave();
   private mods: RunMods = defaultMods();
+  // level-up picker state
+  private levelNum = 0;
+  private levelCards: RunUpgrade[] = [];
+  private rerollCost = 0;
+  private levelPicking = false;
 
   points = 0;
   private weapons: Weapon[] = [];
@@ -228,6 +233,8 @@ class Game implements GameApi {
     this.activeSlot = 0;
     this.perks.clear();
     this.powerups.clear();
+    this.levelNum = 0;
+    this.levelPicking = false;
     this.combo.windowBonus = this.mods.comboWindowBonus;
     this.hud.setPowerups([]);
     this.shake = 0;
@@ -284,25 +291,60 @@ class Game implements GameApi {
 
   /** Pause the breather and offer 1 of 3 stacking run upgrades. */
   private offerLevelUp() {
-    const cards = rollUpgrades(3);
+    this.levelNum++;
+    this.levelCards = rollUpgrades(3);
+    this.rerollCost = 500;
+    this.levelPicking = false;
     this.state = "levelup";
+    this.audio.levelUp();
+    this.renderLevelUp();
+  }
+
+  /** Build card view-models (with live stat previews) and hand them to the HUD. */
+  private renderLevelUp() {
+    const cards = this.levelCards.map((u) => {
+      const after = cloneMods(this.mods);
+      u.apply(after);
+      return { id: u.id, name: u.name, desc: u.desc, icon: u.icon, color: u.color, tier: u.tier, deltas: diffMods(this.mods, after) };
+    });
+    this.hud.showLevelUp({
+      level: this.levelNum,
+      cards,
+      rerollCost: this.rerollCost,
+      canReroll: this.points >= this.rerollCost,
+      onPick: (id) => this.applyUpgrade(id),
+      onReroll: () => this.rerollLevel(),
+    });
+  }
+
+  /** Spend points to re-roll the three offered cards (cost escalates). */
+  private rerollLevel() {
+    if (this.levelPicking) return;
+    if (!this.spend(this.rerollCost)) return; // handles "can't afford" feedback
+    this.rerollCost += 250;
+    this.levelCards = rollUpgrades(3);
     this.audio.ui();
-    this.hud.showLevelUp(cards, (id) => this.applyUpgrade(id));
+    this.renderLevelUp();
   }
 
   private applyUpgrade(id: string) {
+    if (this.levelPicking) return;
     const u = RUN_UPGRADES.find((x) => x.id === id);
-    if (u) {
-      u.apply(this.mods);
-      // a few upgrades change live state immediately
-      this.player.maxHealth = PLAYER.maxHealth + this.mods.maxHealthBonus;
-      this.player.heal(25); // small reward heal on every pick
-      this.combo.windowBonus = this.mods.comboWindowBonus;
-      this.hud.toast(`${u.name}!`);
-      this.audio.powerup();
-    }
-    this.hud.hideLevelUp();
-    this.state = "playing";
+    if (!u) return;
+    this.levelPicking = true;
+    u.apply(this.mods);
+    // a few upgrades change live state immediately
+    this.player.maxHealth = PLAYER.maxHealth + this.mods.maxHealthBonus;
+    this.player.heal(25); // small reward heal on every pick
+    this.combo.windowBonus = this.mods.comboWindowBonus;
+    this.hud.toast(`${u.name}!`);
+    this.audio.powerup();
+    // let the card's selection animation finish before unfreezing the game
+    setTimeout(() => {
+      this.hud.hideLevelUp();
+      this.levelPicking = false;
+      if (this.state === "levelup") this.state = "playing";
+    }, 420);
   }
 
   private startRun() {
@@ -490,6 +532,14 @@ class Game implements GameApi {
       this.audio.setEnabled(!this.audio.enabled);
       this.save.muted = !this.audio.enabled;
       writeSave(this.save);
+    }
+
+    // Level-up picker: keyboard shortcuts (1/2/3 to pick, R to reroll).
+    if (this.state === "levelup") {
+      if (this.input.pressed("Digit1")) this.hud.pickLevelByIndex(0);
+      else if (this.input.pressed("Digit2")) this.hud.pickLevelByIndex(1);
+      else if (this.input.pressed("Digit3")) this.hud.pickLevelByIndex(2);
+      else if (this.input.pressed("KeyR")) this.hud.triggerReroll();
     }
 
     this.input.updateAim(this.camera);
