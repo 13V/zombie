@@ -3,6 +3,7 @@ import { PLAYER } from "./config";
 import { COLORS } from "./palette";
 import { AssetManager, CharacterRig } from "./assets";
 import { VoxelChar } from "./voxelChar";
+import { GunStyle } from "./gunModels";
 
 /**
  * The little hero. Driven by a CharacterRig — a voxel blocky figure by default
@@ -63,6 +64,11 @@ export class Player {
   /** Apply a cosmetic skin (recolors the voxel hero; no-op for GLB rigs). */
   setSkin(body: number, head: number) {
     if (this.char instanceof VoxelChar) this.char.setColor(body, head);
+  }
+
+  /** Swap the held weapon model to match the active weapon (cheap if unchanged). */
+  setWeaponModel(style: GunStyle) {
+    if (this.char instanceof VoxelChar) this.char.setGun(style);
   }
 
   damage(amount: number) {

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { COSTS, GUMS } from "./config";
 import { COLORS, glowMaterial, toyMaterial } from "./palette";
 import { WEAPONS } from "./weapons";
+import { GunStyle, buildGun } from "./gunModels";
 
 /** What an interactable needs from the game to do its thing. Avoids a circular import. */
 export interface GameApi {
@@ -57,109 +58,172 @@ class WallBuy implements Interactable {
 }
 
 /**
- * The Mystery Box, reskinned as a Kintara-style **prize wheel**: a wheel of
- * fortune on a little stand. Spend points, it spins up, decelerates, and lands
- * on a random weapon. Mechanically identical to the old box.
+ * The Mystery Box as a **COD-style treasure chest**: spend points, the lid
+ * springs open, weapon models tumble up and cycle faster→slower, the cycle
+ * lands on one gun which rises and glows — that's the weapon you get — then the
+ * lid closes. The award is decided up front; the cycling is pure showmanship.
  */
-class PrizeWheel implements Interactable {
+const CYCLE_STYLES: GunStyle[] = ["pistol", "smg", "shotgun", "cannon", "rifle", "arc", "singularity", "pyroclasm"];
+type ChestPhase = "idle" | "opening" | "cycling" | "reveal" | "closing";
+const LID_OPEN = -1.95; // radians
+
+class MysteryChest implements Interactable {
   readonly group = new THREE.Group();
   range = 2.9;
-  private wheel = new THREE.Group(); // spinning part
+  private lidPivot = new THREE.Group();
+  private prizeAnchor = new THREE.Group();
+  private gun?: THREE.Group;
+  private glow: THREE.PointLight;
   private t = 0;
-  private spinning = false;
-  private spinTimer = 0;
-  private spinVel = 0;
+  private phase: ChestPhase = "idle";
+  private timer = 0;
+  private swapAccum = 0;
+  private awardStyle: GunStyle = "pistol";
   private pending?: () => void;
 
-  // segment colors — bright, candy-ish, reads as a fortune wheel
-  private static readonly SEG = [
-    0xff6f91, 0x6ad7ff, 0xffd24a, 0x8fcf6f, 0xc792ea, 0xff9f43, 0x4ec9ff, 0xff5d8f,
-  ];
-
   constructor(public pos: THREE.Vector3, private cost: number) {
-    // base + posts (the stand)
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.05, 0.5, 16), toyMaterial(0x6e4a2c));
-    base.position.set(pos.x, 0.25, pos.z);
+    const wood = toyMaterial(0x6e4a2c);
+    const gold = glowMaterial(COLORS.boxGold, 0.6);
+
+    // chest body
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.85, 1.05), wood);
+    base.position.set(pos.x, 0.45, pos.z);
     base.castShadow = true;
+    base.receiveShadow = true;
     this.group.add(base);
-    for (const dx of [-0.7, 0.7]) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.7, 0.18), toyMaterial(0x8a6a3a));
-      post.position.set(pos.x + dx, 1.25, pos.z);
-      post.castShadow = true;
-      this.group.add(post);
+    // gold trim bands on the body
+    for (const dx of [-0.62, 0.62]) {
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 1.12), gold);
+      band.position.set(pos.x + dx, 0.45, pos.z);
+      this.group.add(band);
+    }
+    const clasp = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 0.12), gold);
+    clasp.position.set(pos.x, 0.7, pos.z + 0.56);
+    this.group.add(clasp);
+
+    // lid on a hinge at the back-top edge
+    this.lidPivot.position.set(pos.x, 0.86, pos.z - 0.52);
+    this.group.add(this.lidPivot);
+    const lid = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.32, 1.05), wood);
+    lid.position.set(0, 0.16, 0.52);
+    lid.castShadow = true;
+    this.lidPivot.add(lid);
+    for (const dx of [-0.62, 0.62]) {
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.36, 1.1), gold);
+      band.position.set(dx, 0.16, 0.52);
+      this.lidPivot.add(band);
     }
 
-    // the wheel itself, tilted back so the diorama camera sees its face
-    this.wheel.position.set(pos.x, 2.1, pos.z);
-    this.wheel.rotation.x = -0.32;
-    this.group.add(this.wheel);
+    // where the prize floats while cycling
+    this.prizeAnchor.position.set(pos.x, 1.7, pos.z);
+    this.group.add(this.prizeAnchor);
 
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.18, 24), glowMaterial(COLORS.boxGold, 0.5));
-    disc.rotation.x = Math.PI / 2; // circular face toward +Z (camera)
-    this.wheel.add(disc);
-
-    const n = PrizeWheel.SEG.length;
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      // colored prize gem near the rim
-      const gem = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.16), glowMaterial(PrizeWheel.SEG[i], 1.0));
-      gem.position.set(Math.cos(a) * 0.66, Math.sin(a) * 0.66, 0.12);
-      gem.rotation.z = a;
-      this.wheel.add(gem);
-      // divider spoke
-      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.9, 0.05), toyMaterial(0x4a3522));
-      spoke.position.z = 0.1;
-      spoke.rotation.z = a + Math.PI / n;
-      this.wheel.add(spoke);
-    }
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.24, 16), glowMaterial(0xffffff, 1.2));
-    hub.rotation.x = Math.PI / 2;
-    hub.position.z = 0.14;
-    this.wheel.add(hub);
-
-    // fixed pointer at the top (does not spin)
-    const pointer = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.4, 4), glowMaterial(0xffffff, 1.4));
-    pointer.position.set(pos.x, 3.2, pos.z + 0.2);
-    pointer.rotation.x = Math.PI; // point down into the wheel
-    this.group.add(pointer);
-
-    const glow = new THREE.PointLight(COLORS.boxGold, 6, 9, 2);
-    glow.position.set(pos.x, 2.4, pos.z + 0.6);
-    this.group.add(glow);
+    this.glow = new THREE.PointLight(COLORS.boxGold, 5, 9, 2);
+    this.glow.position.set(pos.x, 1.5, pos.z + 0.4);
+    this.group.add(this.glow);
   }
 
   prompt(game: GameApi) {
-    if (this.spinning) return null;
-    return { text: `[E] Prize Wheel — ${this.cost}`, affordable: game.points >= this.cost };
+    if (this.phase !== "idle") return null;
+    return { text: `[E] Mystery Box — ${this.cost}`, affordable: game.points >= this.cost };
   }
 
   interact(game: GameApi) {
-    if (this.spinning) return;
-    if (game.spend(this.cost)) {
-      const id = game.randomBoxWeapon();
-      this.spinning = true;
-      this.spinTimer = 1.7;
-      this.spinVel = 18; // rad/s, decays over the spin
-      this.pending = () => {
-        game.giveWeapon(id);
-        game.toast(`${WEAPONS[id].name}!`);
-      };
-    }
+    if (this.phase !== "idle") return;
+    if (!game.spend(this.cost)) return;
+    const id = game.randomBoxWeapon();
+    this.awardStyle = WEAPONS[id].style;
+    this.phase = "opening";
+    this.timer = 0.45;
+    this.pending = () => {
+      game.giveWeapon(id);
+      game.toast(`${WEAPONS[id].name}!`);
+    };
+  }
+
+  private disposeGun() {
+    // gun meshes share one geometry — only the per-mesh materials need freeing
+    this.gun?.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      m?.dispose?.();
+    });
+  }
+
+  private showGun(style: GunStyle) {
+    this.disposeGun();
+    this.prizeAnchor.clear();
+    this.gun = buildGun(style);
+    this.gun.scale.setScalar(1.7);
+    this.prizeAnchor.add(this.gun);
   }
 
   update(dt: number) {
     this.t += dt;
-    if (this.spinning) {
-      this.spinTimer -= dt;
-      this.spinVel *= Math.pow(0.12, dt); // ease-out deceleration
-      this.wheel.rotation.z += this.spinVel * dt;
-      if (this.spinTimer <= 0) {
-        this.spinning = false;
-        this.pending?.();
-        this.pending = undefined;
+    this.glow.intensity = 4 + Math.sin(this.t * 3) * 1.5;
+
+    switch (this.phase) {
+      case "idle":
+        break;
+
+      case "opening": {
+        this.timer -= dt;
+        const k = 1 - Math.max(0, this.timer) / 0.45;
+        this.lidPivot.rotation.x = LID_OPEN * (1 - (1 - k) * (1 - k)); // ease-out
+        if (this.timer <= 0) {
+          this.phase = "cycling";
+          this.timer = 2.2;
+          this.swapAccum = 0;
+        }
+        break;
       }
-    } else {
-      this.wheel.rotation.z += dt * 0.5; // gentle idle spin
+
+      case "cycling": {
+        this.timer -= dt;
+        if (this.gun) this.gun.rotation.y += dt * 9;
+        this.swapAccum -= dt;
+        if (this.swapAccum <= 0) {
+          this.showGun(CYCLE_STYLES[Math.floor(Math.random() * CYCLE_STYLES.length)]);
+          const prog = 1 - Math.max(0, this.timer) / 2.2; // 0→1; intervals grow (decel)
+          this.swapAccum = 0.05 + prog * prog * 0.28;
+        }
+        if (this.timer <= 0) {
+          this.phase = "reveal";
+          this.timer = 1.3;
+          this.showGun(this.awardStyle); // land on the actual prize
+        }
+        break;
+      }
+
+      case "reveal": {
+        this.timer -= dt;
+        const rk = 1 - Math.max(0, this.timer) / 1.3;
+        if (this.gun) {
+          this.gun.rotation.y += dt * 3;
+          this.gun.position.y = rk * 0.45;
+          this.gun.scale.setScalar(1.7 + Math.sin(this.t * 6) * 0.1);
+        }
+        this.glow.intensity = 8 + Math.sin(this.t * 10) * 3;
+        if (this.timer <= 0) {
+          this.pending?.(); // hand over the weapon
+          this.pending = undefined;
+          this.phase = "closing";
+          this.timer = 0.4;
+        }
+        break;
+      }
+
+      case "closing": {
+        this.timer -= dt;
+        this.lidPivot.rotation.x = LID_OPEN * Math.max(0, this.timer) / 0.4;
+        if (this.timer <= 0) {
+          this.lidPivot.rotation.x = 0;
+          this.disposeGun();
+          this.prizeAnchor.clear();
+          this.gun = undefined;
+          this.phase = "idle";
+        }
+        break;
+      }
     }
   }
 }
@@ -370,7 +434,7 @@ export class Interactables {
     const items: { i: Interactable; group: THREE.Group }[] = [];
 
     const wall = new WallBuy(new THREE.Vector3(0, 0, -half + 1.5), "buzzgun", COSTS.wallBuy);
-    const wheel = new PrizeWheel(new THREE.Vector3(half - 6, 0, half - 6), COSTS.mysteryBox);
+    const wheel = new MysteryChest(new THREE.Vector3(half - 6, 0, half - 6), COSTS.mysteryBox);
     const pap = new PackAPunch(new THREE.Vector3(-half + 6, 0, half - 6), COSTS.packAPunch);
     const gum = new Bubblegum(new THREE.Vector3(5, 0, 9), COSTS.gobblegum);
     const tough = new PerkPad(

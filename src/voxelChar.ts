@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { voxelMaterial } from "./palette";
 import { AnimState, CharacterRig } from "./assets";
+import { GunStyle, buildGun } from "./gunModels";
 
 export interface VoxelCharOpts {
   body: number;
@@ -36,6 +37,8 @@ export class VoxelChar implements CharacterRig {
   private bodyMat: THREE.MeshStandardMaterial;
   private headMat: THREE.MeshStandardMaterial;
   private baseEmissive = 0x000000;
+  private gunHolder?: THREE.Group;
+  private gunStyle?: GunStyle;
 
   constructor(opts: VoxelCharOpts) {
     this.gait = opts.zombie ? 6 : 10;
@@ -75,9 +78,10 @@ export class VoxelChar implements CharacterRig {
     this.upper.add(this.armL, this.armR);
 
     if (opts.gun) {
-      const gun = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.7), voxelMaterial(0x3a2f25));
-      gun.position.set(0.32, 1.05, 0.5);
-      this.upper.add(gun);
+      this.gunHolder = new THREE.Group();
+      this.gunHolder.position.set(0.32, 1.02, 0.26); // right hand, barrel forward
+      this.upper.add(this.gunHolder);
+      this.setGun("pistol");
     }
 
     this.legL = this.makeLeg(bodyMat, -0.18);
@@ -108,6 +112,14 @@ export class VoxelChar implements CharacterRig {
 
   hasAnim(): boolean {
     return true; // all states are procedural
+  }
+
+  /** Swap the held weapon model (no-op if unchanged or this rig has no gun). */
+  setGun(style: GunStyle) {
+    if (!this.gunHolder || this.gunStyle === style) return;
+    this.gunStyle = style;
+    this.gunHolder.clear(); // gun meshes share one geometry; nothing to dispose
+    this.gunHolder.add(buildGun(style));
   }
 
   /** Recolor body/head (used to turn a pooled zombie into a special variant). */

@@ -98,6 +98,14 @@ their level-up picks are host-only.)
   (Tough = more HP, Quick = faster movement + reload).
 - HUD: round, points, health, weapon + ammo, interaction prompts; start / game-over flow.
 
+### Weapons & the Mystery Box
+- Each weapon has a **distinct voxel model** the hero visibly holds (`gunModels.ts`)
+  — pistol, SMG, shotgun, cannon, rifle, plus glowing wonder weapons — and its
+  own **tracer color/size** so shots read differently per gun.
+- The **Mystery Box** (`interactables.ts`) is a COD-style **treasure chest**: the
+  lid springs open, weapon models tumble up and cycle fast→slow, then land on the
+  one you win (which rises and glows) before the lid closes.
+
 ### Game feel & juice
 - **Procedural audio** (`audio.ts`) — every sound is synthesized live with the Web
   Audio API (no asset files): gunfire, hit ticks, crit pops, zombie groans, kill
