@@ -296,6 +296,7 @@ class Game implements GameApi {
     this.powerups.clear();
     this.levelNum = 0;
     this.levelPicking = false;
+    this.acting = null; // clear any dangling guest-interaction actor from last run
     this.healKills = 0;
     this.runStats = blankRunStats();
     this.combo.windowBonus = this.mods.comboWindowBonus;
@@ -504,6 +505,7 @@ class Game implements GameApi {
   }
 
   private gameOver() {
+    if (this.state === "over") return; // guard: never pay out essence / count stats twice
     this.state = "over";
     this.input.firing = false;
     this.audio.stopMusic();
@@ -1048,11 +1050,13 @@ class Game implements GameApi {
   private nukeBoard() {
     this.audio.boom();
     this.shake = Math.min(0.6, this.shake + 0.4);
-    for (const z of this.rounds.zombies) {
-      if (!z.alive || z.isBoss) continue; // bosses shrug off the nuke
-      this.puffs.burst(z.pos, z.puffColor);
-      z.hit(1e9);
-      this.addPoints(SCORE.kill);
+    // Route kills through damageZombie so they count toward stats / challenges /
+    // combo / loot like every other kill (snapshot the list — damageZombie can
+    // trigger detonate/splash that mutate alive state mid-loop).
+    const targets = this.rounds.zombies.filter((z) => z.alive && !z.isBoss);
+    for (const z of targets) {
+      if (!z.alive) continue;
+      this.damageZombie(z, 1e9, this.powerups.scoreMul());
     }
   }
 
