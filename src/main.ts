@@ -154,6 +154,9 @@ class Game implements GameApi {
   private camTarget = new THREE.Vector3();
   private shake = 0;
   private _v2 = new THREE.Vector3();
+  // juice: transient camera punch-zoom (0 = none) + last combo tier shown
+  private zoomPunch = 0;
+  private lastComboTier = 1;
 
   constructor(private assets: AssetManager) {
     const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -298,6 +301,8 @@ class Game implements GameApi {
     this.levelPicking = false;
     this.acting = null; // clear any dangling guest-interaction actor from last run
     this.healKills = 0;
+    this.lastComboTier = 1;
+    this.zoomPunch = 0;
     this.runStats = blankRunStats();
     this.combo.windowBonus = this.mods.comboWindowBonus;
     this.hud.setPowerups([]);
@@ -1285,8 +1290,17 @@ class Game implements GameApi {
       const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult);
       this.addPoints(pts);
       this.floaters.spawn(z.pos, `+${pts}`, mult > 1 ? "#ffd24a" : "#ffffff", mult > 1 ? 1.2 : 1);
-      this.puffs.burst(z.pos, z.puffColor);
+      // beefier, warmer burst on crit / combo kills; ragdoll fling on big hits
+      const burstN = crit ? 13 : mult >= 3 ? 11 : 8;
+      this.puffs.burst(z.pos, crit ? 0xffe14a : z.puffColor, burstN);
+      z.flingDeath(crit || mult >= 3 ? 6 : 2);
       this.audio.kill();
+      // combo milestone celebration: a big "xN!" pop when the tier climbs
+      if (mult > this.lastComboTier && mult >= 2) {
+        this.floaters.spawn(this.player.pos, `x${mult}!`, "#ffd24a", 1.6, true);
+        this.audio.levelUp();
+      }
+      this.lastComboTier = mult;
       if (this.mods.lifeSteal > 0) this.player.heal(this.mods.lifeSteal);
       // Detonate: killed zombies explode, damaging (and chaining through) neighbors.
       if (this.mods.detonate > 0 && !wasBoss) {
@@ -1311,8 +1325,14 @@ class Game implements GameApi {
       if (wasBoss) {
         this.hud.hideBoss();
         this.audio.boom();
+        this.audio.levelUp(); // victory fanfare
         for (let i = 0; i < 3; i++) this.drops.maybeSpawn(z.pos, 1, true);
-        this.puffs.burst(z.pos, 0xffd24a, 26);
+        // boss candy explosion: multi-color radial puff blast + camera punch-zoom
+        const candy = [0xff5d8f, 0x6ad7ff, 0xffd24a, 0x8fcf6f, 0xc792ea];
+        for (let i = 0; i < 5; i++) this.puffs.burst(z.pos, candy[i], 10);
+        this.shake = Math.min(0.8, this.shake + 0.5);
+        this.zoomPunch = 1;
+        this.hitStop = Math.min(0.18, this.hitStop + 0.12);
       } else {
         this.drops.maybeSpawn(z.pos, this.mods.dropChance);
       }

@@ -38,6 +38,9 @@ export class Zombie {
   private flash = 0;
   private slowTimer = 0;
   private slowAmt = 0;
+  // ragdoll fling on death: vertical velocity + tumble spin
+  private flingY = 0;
+  private flingSpin = 0;
 
   // per-spawn variant state
   touchDamage = ZOMBIE.touchDamage;
@@ -67,6 +70,10 @@ export class Zombie {
     this.knock.set(0, 0, 0);
     this.slowTimer = 0;
     this.slowAmt = 0;
+    this.flingY = 0;
+    this.flingSpin = 0;
+    this.group.position.y = 0;
+    this.group.rotation.z = 0;
 
     this.typeName = type.name;
     this.typeIndex = Math.max(0, ZOMBIE_TYPES.indexOf(type));
@@ -124,6 +131,12 @@ export class Zombie {
     const d = Math.hypot(dx, dz) || 1;
     this.knock.x += (dx / d) * force;
     this.knock.z += (dz / d) * force;
+  }
+
+  /** Launch the corpse: pop it up with a tumble spin (called on death). */
+  flingDeath(force: number) {
+    this.flingY = force;
+    this.flingSpin = (Math.random() - 0.5) * 12;
   }
 
   /** Chill the zombie: move at `(1-amount)` speed for `dur` seconds. */
@@ -186,11 +199,26 @@ export class Zombie {
       this.flash -= dt;
       if (this.char instanceof VoxelChar) this.char.setHitFlash(Math.max(0, this.flash / 0.12));
     }
+    // ragdoll: pop up under gravity + tumble, slide along residual knockback
+    if (this.flingY !== 0 || this.group.position.y > 0) {
+      this.flingY -= 22 * dt;
+      this.group.position.y = Math.max(0, this.group.position.y + this.flingY * dt);
+      this.group.position.x += this.knock.x * dt;
+      this.group.position.z += this.knock.z * dt;
+      this.knock.multiplyScalar(Math.pow(0.0008, dt));
+      this.group.rotation.z += this.flingSpin * dt;
+      if (this.group.position.y <= 0) {
+        this.flingY = 0;
+        this.flingSpin = 0;
+      }
+    }
     this.char.update(dt);
     this.deathTimer -= dt;
     if (this.deathTimer <= 0) {
       this.dying = false;
       this.group.visible = false;
+      this.group.position.y = 0;
+      this.group.rotation.z = 0;
     }
   }
 }
