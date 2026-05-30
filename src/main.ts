@@ -37,16 +37,28 @@ import { NetPlay, GuestSlot } from "./netplay";
 import { COLORS } from "./palette";
 import { TiltShift } from "./tiltShift";
 
-/** Tiny pooled "poof" particles for kill feedback. */
+/** Tiny pooled "poof" particles for kill feedback. Hard-capped so chaotic
+ *  moments (nukes, detonate chains, gibs) can't spawn unbounded meshes. */
 class Puffs {
-  private pool: THREE.Mesh[] = [];
+  private static readonly MAX_LIVE = 160;
+  private pool: { m: THREE.Mesh; vel: THREE.Vector3; life: number }[] = [];
   private active: { m: THREE.Mesh; vel: THREE.Vector3; life: number }[] = [];
   private geo = new THREE.SphereGeometry(0.18, 6, 6);
   constructor(private scene: THREE.Scene) {}
   burst(pos: THREE.Vector3, color: number, count = 8) {
     for (let i = 0; i < count; i++) {
-      let m = this.pool.pop();
-      if (!m) m = new THREE.Mesh(this.geo, glowMaterial(color, 0.8));
+      // enforce the cap: recycle the oldest live puff instead of growing
+      if (this.active.length >= Puffs.MAX_LIVE) {
+        const old = this.active.shift();
+        if (old) {
+          old.m.visible = false;
+          this.scene.remove(old.m);
+          this.pool.push(old);
+        }
+      }
+      let p = this.pool.pop();
+      if (!p) p = { m: new THREE.Mesh(this.geo, glowMaterial(color, 0.8)), vel: new THREE.Vector3(), life: 0 };
+      const m = p.m;
       (m.material as THREE.MeshStandardMaterial).color.set(color);
       (m.material as THREE.MeshStandardMaterial).emissive.set(color);
       m.position.copy(pos);
@@ -56,11 +68,9 @@ class Puffs {
       this.scene.add(m);
       const a = Math.random() * Math.PI * 2;
       const up = 2 + Math.random() * 3;
-      this.active.push({
-        m,
-        vel: new THREE.Vector3(Math.cos(a) * 3, up, Math.sin(a) * 3),
-        life: 0.5,
-      });
+      p.vel.set(Math.cos(a) * 3, up, Math.sin(a) * 3);
+      p.life = 0.5;
+      this.active.push(p);
     }
   }
   update(dt: number) {
@@ -73,7 +83,7 @@ class Puffs {
       if (p.life <= 0) {
         p.m.visible = false;
         this.scene.remove(p.m);
-        this.pool.push(p.m);
+        this.pool.push(p);
         this.active.splice(i, 1);
       }
     }
