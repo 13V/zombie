@@ -148,17 +148,18 @@ class MysteryChest implements Interactable {
     this.group.add(this.prizeAnchor);
 
     // light-beam column (opacity animated; the iconic "box is open" shaft)
+    // thin, soft shaft set BEHIND the prize so it frames the gun, not hides it
     this.beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.6, 0.95, 4.6, 20, 1, true),
+      new THREE.CylinderGeometry(0.32, 0.5, 4.6, 20, 1, true),
       new THREE.MeshBasicMaterial({ color: COLORS.boxGold, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }),
     );
-    this.beam.position.set(x, 3.3, z);
+    this.beam.position.set(x, 3.3, z - 0.35);
     this.group.add(this.beam);
     this.beamInner = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.22, 0.36, 4.6, 14, 1, true),
+      new THREE.CylinderGeometry(0.12, 0.2, 4.6, 14, 1, true),
       new THREE.MeshBasicMaterial({ color: 0xfff6d8, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }),
     );
-    this.beamInner.position.set(x, 3.3, z);
+    this.beamInner.position.set(x, 3.3, z - 0.35);
     this.group.add(this.beamInner);
 
     // idle marker: a glowing gold gem bobbing above, so the box is easy to spot
@@ -214,7 +215,7 @@ class MysteryChest implements Interactable {
     const m = this.beam.material as THREE.MeshBasicMaterial;
     const mi = this.beamInner.material as THREE.MeshBasicMaterial;
     m.opacity += (target - m.opacity) * k;
-    mi.opacity += (Math.min(1, target * 1.4) - mi.opacity) * k;
+    mi.opacity += (target * 0.9 - mi.opacity) * k;
     this.beam.rotation.y += dt * 0.7;
     this.beamInner.rotation.y -= dt * 1.1;
   }
@@ -245,11 +246,11 @@ class MysteryChest implements Interactable {
         this.timer -= dt;
         const k = 1 - Math.max(0, this.timer) / 0.5;
         this.lidPivot.rotation.x = LID_OPEN * easeOutBack(k); // springy pop open
-        this.glow.intensity = 5 + k * 4;
-        this.setBeam(0.3, dt);
+        this.glow.intensity = 5 + k * 2;
+        this.setBeam(0.1, dt);
         if (this.timer <= 0) {
           this.phase = "cycling";
-          this.timer = 2.4;
+          this.timer = 2.6;
           this.swapAccum = 0;
         }
         break;
@@ -257,15 +258,16 @@ class MysteryChest implements Interactable {
 
       case "cycling": {
         this.timer -= dt;
-        const prog = 1 - Math.max(0, this.timer) / 2.4; // 0→1
+        const prog = 1 - Math.max(0, this.timer) / 2.6; // 0→1
         // gun rises up out of the chest into the beam as the cycle progresses
-        this.placeGun(0.4 + easeOutCubic(prog) * 1.3, 10, dt);
-        this.setBeam(0.42, dt);
-        this.glow.intensity = 7 + Math.sin(this.t * 8) * 2;
+        this.placeGun(0.4 + easeOutCubic(prog) * 1.3, 6, dt);
+        this.setBeam(0.13, dt);
+        this.glow.intensity = 5 + Math.sin(this.t * 8) * 1.5;
         this.swapAccum -= dt;
         if (this.swapAccum <= 0) {
           this.showGun(CYCLE_STYLES[Math.floor(Math.random() * CYCLE_STYLES.length)]);
-          this.swapAccum = 0.045 + prog * prog * 0.34; // decelerate
+          // each gun is clearly visible (~0.16s) then decelerates to ~0.55s
+          this.swapAccum = 0.16 + prog * prog * 0.4;
         }
         if (this.timer <= 0) {
           this.phase = "reveal";
@@ -279,9 +281,9 @@ class MysteryChest implements Interactable {
         this.timer -= dt;
         const rk = easeOutCubic(1 - Math.max(0, this.timer) / 1.5);
         // rises a touch higher, spins slow + grand, throbbing scale
-        this.placeGun(1.7 + rk * 0.35, 2.5, dt, Math.sin(this.t * 6) * 0.12);
-        this.setBeam(0.7, dt);
-        this.glow.intensity = 10 + Math.sin(this.t * 12) * 4;
+        this.placeGun(1.7 + rk * 0.35, 2.5, dt, Math.sin(this.t * 6) * 0.1);
+        this.setBeam(0.24, dt);
+        this.glow.intensity = 7 + Math.sin(this.t * 12) * 2.5;
         if (this.timer <= 0) {
           this.pending?.(); // hand over the weapon
           this.pending = undefined;
