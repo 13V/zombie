@@ -96,6 +96,30 @@ body.touch .controls { display: none; }
 }
 .link-btn:hover { color: rgba(255, 255, 255, 0.9); }
 
+.wallet-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+  pointer-events: auto;
+}
+.coop-btn.wallet {
+  background: linear-gradient(135deg, #9945ff, #14f195); /* Solana purple→green */
+  border: none;
+  color: #fff;
+  font-weight: 700;
+}
+.coop-btn.wallet.connected {
+  background: rgba(20, 241, 149, 0.18);
+  border: 1px solid #14f195;
+}
+.wallet-bal {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffd24a;
+}
+
 #ui {
   position: absolute;
   inset: 0;

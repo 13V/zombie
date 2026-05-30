@@ -32,6 +32,7 @@ import { SKINS, findSkin } from "./cosmetics";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, warmServer, getServerUrl, setServerUrl } from "./net";
 import { TouchControls, isTouchDevice } from "./touchControls";
+import { Wallet } from "./wallet";
 import { NetPlay, GuestSlot } from "./netplay";
 import { COLORS } from "./palette";
 import { TiltShift } from "./tiltShift";
@@ -103,6 +104,7 @@ class Game implements GameApi {
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
+  private wallet = new Wallet();
 
   // progression
   private save: SaveData = loadSave();
@@ -242,6 +244,12 @@ class Game implements GameApi {
     this.hud.onHost(() => this.hostGame());
     this.hud.onJoin((code) => this.joinGame(code));
     this.hud.onServer(() => this.changeServer());
+    this.hud.onWallet(() => this.toggleWallet());
+    this.wallet.onChange = () => this.syncWallet();
+    this.wallet.tryEagerConnect();
+    this.hud.onWallet(() => this.toggleWallet());
+    this.wallet.onChange = () => this.syncWallet();
+    this.wallet.tryEagerConnect();
 
     addEventListener("resize", this.onResize);
     this.onResize();
@@ -498,6 +506,28 @@ class Game implements GameApi {
       const url = setServerUrl(next);
       this.hud.setLobbyStatus(`Server set to ${url}`);
     }
+  }
+
+  /** Connect the wallet, or disconnect if already connected. */
+  private async toggleWallet() {
+    if (this.wallet.state.connected) {
+      await this.wallet.disconnect();
+      return;
+    }
+    if (!this.wallet.available) {
+      this.hud.setLobbyStatus("No Solana wallet found — install Phantom to connect.");
+    }
+    await this.wallet.connect();
+  }
+
+  /** Reflect wallet state on the menu (button label + Essence-as-token balance). */
+  private syncWallet() {
+    const s = this.wallet.state;
+    // Until the token launches, show the player's earned Essence as their
+    // claimable balance, so the "what will I earn" loop is visible now.
+    const label = s.connected ? `${this.save.essence} ✦ to claim` : "";
+    this.hud.setWallet(s.connected, this.wallet.short, label);
+    if (s.connected) this.hud.setLobbyStatus("Wallet linked — earned Essence will convert at token launch.");
   }
 
   /** Tick a "<label>… (Ns)" status so a cold-starting server doesn't look frozen. */
