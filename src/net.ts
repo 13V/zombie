@@ -23,7 +23,9 @@ export const SERVER_URL: string =
  */
 export function warmServer(): void {
   try {
-    const httpUrl = SERVER_URL.replace(/^ws/, "http").replace(/\/$/, "") + "/health";
+    // wss:// -> https://, ws:// -> http:// (NOT a blind /^ws/ replace, which
+    // would turn "wss" into "httpss").
+    const httpUrl = SERVER_URL.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://").replace(/\/$/, "") + "/health";
     fetch(httpUrl, { mode: "no-cors" }).catch(() => {});
   } catch {
     /* best-effort */

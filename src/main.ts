@@ -29,6 +29,7 @@ import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, warmServer } from "./net";
+import { TouchControls, isTouchDevice } from "./touchControls";
 import { NetPlay, GuestSlot } from "./netplay";
 import { COLORS } from "./palette";
 import { TiltShift } from "./tiltShift";
@@ -87,6 +88,7 @@ class Game implements GameApi {
   private clock = new THREE.Clock();
 
   private input: Input;
+  private touch?: TouchControls;
   private arena: Arena;
   private player: Player;
   private bullets: BulletSystem;
@@ -165,6 +167,10 @@ class Game implements GameApi {
     this.composer.addPass(new OutputPass());
 
     this.input = new Input(canvas);
+    if (isTouchDevice()) {
+      document.body.classList.add("touch");
+      this.touch = new TouchControls(this.input);
+    }
     this.arena = new Arena(this.scene);
     this.player = new Player(this.scene, this.assets);
     this.bullets = new BulletSystem(this.scene);
@@ -457,20 +463,36 @@ class Game implements GameApi {
   }
 
   // ---- multiplayer ----
+  /** Tick a "<label>… (Ns)" status so a cold-starting server doesn't look frozen. */
+  private connectingTicker(label: string): () => void {
+    const t0 = Date.now();
+    const tick = () => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      this.hud.setLobbyStatus(`${label}… ${s}s${s > 8 ? " (free server is waking up — up to ~45s)" : ""}`);
+    };
+    tick();
+    const iv = window.setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }
+
   private async hostGame() {
     warmServer(); // poke the dyno in case it's cold-starting
-    this.hud.setLobbyStatus("Connecting… (server may take ~30s to wake)");
+    const stop = this.connectingTicker("Connecting");
     try {
       this.net = new NetClient();
       this.net.onClose = (r) => this.onNetClose(r);
       const { code } = await this.net.host();
+      stop();
       this.netplay = new NetPlay(this.net, this.scene, this.assets, this.bullets);
       this.myId = 1;
       this.startRun();
       this.hud.showRoomCode(code);
+      this.hud.setLobbyStatus(`Hosting room ${code} — share the code!`);
     } catch (e) {
+      stop();
+      console.error("[coop] host failed:", e);
       this.teardownNet();
-      this.hud.setLobbyStatus(`Couldn't reach server (${(e as Error).message})`);
+      this.hud.setLobbyStatus(`Couldn't reach server: ${(e as Error).message}`);
     }
   }
 
@@ -480,11 +502,12 @@ class Game implements GameApi {
       return;
     }
     warmServer();
-    this.hud.setLobbyStatus("Joining… (server may take ~30s to wake)");
+    const stop = this.connectingTicker("Joining");
     try {
       this.net = new NetClient();
       this.net.onClose = (r) => this.onNetClose(r);
       const { id } = await this.net.join(code);
+      stop();
       this.myId = id;
       this.netplay = new NetPlay(this.net, this.scene, this.assets, this.bullets);
       this.netplay.onToast = (m) => this.hud.toast(m); // host-pushed feedback
@@ -495,8 +518,10 @@ class Game implements GameApi {
       this.state = "playing";
       this.hud.toast(`Joined ${this.net.room}`);
     } catch (e) {
+      stop();
+      console.error("[coop] join failed:", e);
       this.teardownNet();
-      this.hud.setLobbyStatus(`Join failed (${(e as Error).message})`);
+      this.hud.setLobbyStatus(`Join failed: ${(e as Error).message}`);
     }
   }
 
@@ -699,6 +724,7 @@ class Game implements GameApi {
       dt = 0;
     }
 
+    this.touch?.setActive(this.state === "playing" || this.state === "paused");
     if (this.state === "playing") {
       if (this.netplay && !this.netplay.isHost) this.simulateGuest(dt);
       else this.simulate(dt);
@@ -723,6 +749,14 @@ class Game implements GameApi {
     this.player.speedMul = (this.perks.has("quick") ? 1.35 : 1) * this.powerups.speedMul() * this.mods.moveSpeedMul;
 
     const axis = this.input.moveAxis(new THREE.Vector2());
+    // Touch aim stick points the reticle relative to the player (twin-stick).
+    if (this.input.touchAim) {
+      this.input.aimPoint.set(
+        this.player.pos.x + this.input.touchAim.x * 6,
+        0,
+        this.player.pos.z + this.input.touchAim.y * 6,
+      );
+    }
     // Camera looks down the -Z axis, so W (axis.y +1) moves toward -Z.
     this.player.update(dt, axis.x, -axis.y, this.input.aimPoint);
     this.arena.clamp(this.player.pos, PLAYER.radius);
@@ -732,7 +766,8 @@ class Game implements GameApi {
     // weapon
     const w = this.weapon;
     w.update(dt, this.player.reloadMul * this.mods.reloadMul);
-    const wantFire = w.def.auto ? this.input.firing : this.input.clicked();
+    // On touch, holding the aim stick fires (all weapons); cooldown gates rate.
+    const wantFire = this.input.touchAim ? true : w.def.auto ? this.input.firing : this.input.clicked();
     if (wantFire && w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, this.powerups.fireRateMul() * this.mods.fireRateMul)) {
       this.player.flash();
       this.audio.shoot(w.def.wonder ? 0.85 : 0.4);
@@ -859,6 +894,14 @@ class Game implements GameApi {
   /** Guest path: send input to the host and render the authoritative snapshot. */
   private simulateGuest(dt: number) {
     const axis = this.input.moveAxis(new THREE.Vector2());
+    // Touch aim relative to the guest's (snapshot-driven) position.
+    if (this.input.touchAim) {
+      this.input.aimPoint.set(
+        this.player.pos.x + this.input.touchAim.x * 6,
+        0,
+        this.player.pos.z + this.input.touchAim.y * 6,
+      );
+    }
     const aim = this.input.aimPoint;
     const inp: InputMsg = {
       t: "input",
@@ -866,7 +909,7 @@ class Game implements GameApi {
       mz: -axis.y,
       ax: aim.x,
       az: aim.z,
-      fire: this.input.firing || this.input.clicked(),
+      fire: this.input.touchAim != null || this.input.firing || this.input.clicked(),
       reload: this.input.pressed("KeyR"),
       swap: this.input.pressed("KeyQ"),
       interact: this.input.pressed("KeyE") || this.input.pressed("Space"),
