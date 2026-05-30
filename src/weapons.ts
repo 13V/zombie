@@ -259,7 +259,9 @@ export class BulletSystem {
     b.alive = false;
     b.mesh.visible = false;
     this.scene.remove(b.mesh);
-    this.pool.push(b);
+    // NOTE: do NOT pool here. The bullet is still in `this.bullets` until the
+    // splice in update(); pooling now would let spawn() re-pop it and push a
+    // duplicate reference into `bullets` (array grows unbounded → FPS death).
   }
 
   update(dt: number) {
@@ -269,13 +271,23 @@ export class BulletSystem {
       b.life -= dt;
       if (b.life <= 0) this.retire(b);
     }
+    // Remove dead bullets AND return them to the pool here — the single place a
+    // bullet leaves the active array, so it can't be double-referenced.
     for (let i = this.bullets.length - 1; i >= 0; i--) {
-      if (!this.bullets[i].alive) this.bullets.splice(i, 1);
+      if (!this.bullets[i].alive) {
+        this.pool.push(this.bullets[i]);
+        this.bullets.splice(i, 1);
+      }
     }
   }
 
   clear() {
-    for (const b of this.bullets) this.retire(b);
+    for (const b of this.bullets) {
+      b.alive = false;
+      b.mesh.visible = false;
+      this.scene.remove(b.mesh);
+      this.pool.push(b);
+    }
     this.bullets.length = 0;
   }
 }
