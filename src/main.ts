@@ -144,7 +144,7 @@ class Game implements GameApi {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.12;
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     // Orthographic = true isometric look (no perspective convergence), like both refs.
@@ -158,16 +158,19 @@ class Game implements GameApi {
     // Soft image-based ambient light — the key to the "soft 3D" cozy look.
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.68;
+    this.scene.environmentIntensity = 0.5;
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.5, 0.65, 0.82);
+    // Gentle bloom — only the brightest emissives (windows, fire, pickups) glow,
+    // so the grass and props stay crisp instead of washing out.
+    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.28, 0.5, 0.9);
     this.composer.addPass(bloom);
-    // Stronger tilt-shift + a punchy, warm color grade to land the bright,
-    // saturated "miniature toy world" look of the reference render.
+    // Tilt-shift kept SUBTLE: a wide sharp band so the play area stays crisp
+    // (blur only creeps in at the very top/bottom edges, like the reference),
+    // plus just a touch of saturation + warmth — not a haze.
     this.tilt = new TiltShift(innerWidth, innerHeight, {
-      focus: 0.58, band: 0.18, strength: 4.6, vignette: 0.34, saturation: 1.18, warmth: 0.5,
+      focus: 0.5, band: 0.42, strength: 1.8, vignette: 0.26, saturation: 1.08, warmth: 0.12,
     });
     this.composer.addPass(this.tilt.horizontal);
     this.composer.addPass(this.tilt.vertical);
