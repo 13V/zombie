@@ -1304,8 +1304,8 @@ class Game implements GameApi {
       if (this.mods.lifeSteal > 0) this.player.heal(this.mods.lifeSteal);
       // Detonate: killed zombies explode, damaging (and chaining through) neighbors.
       if (this.mods.detonate > 0 && !wasBoss) {
-        this.puffs.burst(z.pos, 0xffa23a, 12);
-        this.splash(z.pos, this.mods.detonate, dmg * 0.6, z.id, scoreMul);
+        this.puffs.burst(z.pos, 0xffa23a, 10);
+        this.splash(z.pos, this.mods.detonate, dmg * 0.4, z.id, scoreMul);
       }
       // Heal Nova: a healing pulse every 10th kill.
       if (this.mods.healNova > 0 && ++this.healKills >= 10) {
@@ -1379,9 +1379,10 @@ class Game implements GameApi {
         if (dx * dx + dz * dz < reach * reach) {
           z.touchCooldown = ZOMBIE.touchInterval;
           // Thorns: zombies that touch the host player take damage + get shoved.
+          // Scales with round so it stays relevant against beefy late zombies.
           if (victim === this.player && this.mods.thorns > 0) {
             z.knockback(victim.pos.x, victim.pos.z, 6);
-            this.damageZombie(z, this.mods.thorns, this.powerups.scoreMul());
+            this.damageZombie(z, this.mods.thorns + 8 * this.rounds.round, this.powerups.scoreMul());
           }
           // Dodge: the host player has a chance to shrug the hit off entirely.
           if (victim === this.player && this.mods.dodge > 0 && Math.random() < this.mods.dodge) {

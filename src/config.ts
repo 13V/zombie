@@ -28,7 +28,8 @@ export const PLAYER = {
 export const ZOMBIE = {
   radius: 0.6,
   baseHealth: 60,
-  healthPerRound: 18,
+  healthPerRound: 22, // steeper HP ramp so player power doesn't trivialize ~R8+
+  healthPerRoundSq: 1.2, // compounding term: HP += sq*(r-1)^2 (super-linear late game)
   baseSpeed: 2.4,
   speedPerRound: 0.08,
   speedCap: 5.2,
@@ -39,15 +40,15 @@ export const ZOMBIE = {
 
 export const ROUNDS = {
   baseCount: 6, // zombies in round 1
-  countPerRound: 3, // extra zombies per round
-  maxAlive: 28, // hard cap of simultaneous zombies on screen
+  countPerRound: 4, // extra zombies per round
+  maxAlive: 32, // hard cap of simultaneous zombies on screen
   spawnInterval: 0.9, // seconds between spawns
   intermission: 4, // breather between rounds (seconds)
 };
 
 export const SCORE = {
   hit: 10,
-  kill: 50,
+  kill: 40,
   roundBonusBase: 80,
   roundBonusPerRound: 20,
   startingPoints: 500,

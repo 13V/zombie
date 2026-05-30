@@ -57,7 +57,7 @@ export class RoundManager {
   private beginRound(n: number) {
     this.round = n;
     this.toSpawn = ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound;
-    this.curHealth = ZOMBIE.baseHealth + (n - 1) * ZOMBIE.healthPerRound;
+    this.curHealth = ZOMBIE.baseHealth + (n - 1) * ZOMBIE.healthPerRound + ZOMBIE.healthPerRoundSq * (n - 1) * (n - 1);
     this.curSpeed = Math.min(ZOMBIE.speedCap, ZOMBIE.baseSpeed + (n - 1) * ZOMBIE.speedPerRound);
     this.spawnTimer = 0;
     this.phase = "active";
