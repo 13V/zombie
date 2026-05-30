@@ -4,6 +4,7 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 import { CAMERA, COSTS, PLAYER, SCORE, ZOMBIE } from "./config";
@@ -166,7 +167,7 @@ class Game implements GameApi {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     // Gentle bloom — only the brightest emissives (windows, fire, pickups) glow,
     // so the grass and props stay crisp instead of washing out.
-    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.28, 0.5, 0.9);
+    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.16, 0.5, 0.92);
     this.composer.addPass(bloom);
     // Tilt-shift kept SUBTLE: a wide sharp band so the play area stays crisp
     // (blur only creeps in at the very top/bottom edges, like the reference),
@@ -176,6 +177,9 @@ class Game implements GameApi {
     });
     this.composer.addPass(this.tilt.horizontal);
     this.composer.addPass(this.tilt.vertical);
+    // Cheap, reliable edge anti-aliasing through the composer (replaces costly
+    // MSAA): smooths the voxel stair-stepping without the framerate hit.
+    this.composer.addPass(new SMAAPass(innerWidth, innerHeight));
     this.composer.addPass(new OutputPass());
 
     this.input = new Input(canvas);

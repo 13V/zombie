@@ -59,7 +59,9 @@ export class Arena {
   readonly obstacles: Obstacle[] = [];
   readonly plaza = 6; // half-extent of the central clearing (camp pad)
 
-  private geo = new RoundedBoxGeometry(1, 1, 1, 2, 0.08);
+  // Cheap, clean voxel edges — kept to 2 bevel segments so the thousands of
+  // instanced voxels stay light (SMAA handles edge smoothing in post).
+  private geo = new RoundedBoxGeometry(1, 1, 1, 2, 0.07);
   private clouds: { group: THREE.Group; speed: number }[] = [];
   // Campfire flames that flicker (emissive + scale), plus rising smoke puffs.
   private flames: { mesh: THREE.Mesh; baseY: number; phase: number }[] = [];
@@ -130,7 +132,7 @@ export class Arena {
     // Soft sky-dome fill — keeps shadows from crushing to black without washing
     // the scene out (the clean, cheerful daylight of the toy-diorama reference).
     scene.add(new THREE.HemisphereLight(0xdcefff, 0x8fa05a, 0.5));
-    const key = new THREE.DirectionalLight(0xfff4dc, 1.32);
+    const key = new THREE.DirectionalLight(0xfff4dc, 1.55);
     key.position.set(20, 34, 16);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -173,7 +175,9 @@ export class Arena {
         const onPath = !onPlaza && (Math.abs(i) <= 1 || Math.abs(j) <= 1);
 
         if (onPlaza) {
-          terrain.add(i, -0.5, j, (i + j) % 2 === 0 ? VOX.cobble : VOX.cobbleDark);
+          // calm gravel pad (mostly one tone, a few darker flecks) — no harsh
+          // checkerboard under the van.
+          terrain.add(i, -0.5, j, (i * 5 + j * 3) % 7 === 0 ? VOX.cobbleDark : VOX.cobble);
         } else if (onPath) {
           terrain.add(i, -0.5, j, VOX.path);
         } else {
@@ -199,18 +203,7 @@ export class Arena {
   }
 
   // ---- camper van (clearing centerpiece) ----
-  /** A scaled, beveled voxel box placed straight into the scene group. */
-  private box(w: number, h: number, d: number, x: number, y: number, z: number, color: number, cast = true) {
-    const m = new THREE.Mesh(this.geo, voxelMaterial(color));
-    m.scale.set(w, h, d);
-    m.position.set(x, y, z);
-    m.castShadow = cast;
-    m.receiveShadow = true;
-    this.group.add(m);
-    return m;
-  }
-
-  /** Like `box`, but emissive so the bloom catches it (windows, fire, signs). */
+  /** A scaled, beveled emissive voxel box added to the scene (fire, signs). */
   private glowBox(w: number, h: number, d: number, x: number, y: number, z: number, color: number, intensity = 0.9) {
     const m = new THREE.Mesh(this.geo, glowMaterial(color, intensity));
     m.scale.set(w, h, d);
@@ -220,52 +213,79 @@ export class Arena {
   }
 
   /**
-   * A chunky voxel class-C camper van parked in the clearing: a low cab with a
-   * cab-over bunk, a tall living box wrapped in a blue accent stripe, glowing
-   * windows + door, four fat wheels, a roof rack with a deck chair, and a back
-   * ladder. It's the central obstacle players circle while kiting (the old
-   * fountain's role) and the cozy heart of the camp.
+   * The camper van as clean, crisp panels (not a fine voxel grid — that just
+   * quilts the surfaces with seams). Built from a modest set of solid boxes
+   * baked into instanced batches (a few draw calls), with sharp edges that SMAA
+   * smooths. Smooth white shell + blue stripe, glass-like windows, fat wheels.
    */
   private buildRV() {
-    const O = -0.2; // small z nudge so the van reads centered under the iso lens
-    // chassis + fat wheels with steel hubs
-    this.box(6.8, 0.4, 2.7, 0.3, 1.0, O, VOX.rvTrim);
-    for (const wx of [-2.4, 2.6]) for (const wz of [-1.15, 1.15]) {
-      this.box(1.0, 0.95, 0.7, wx, 0.55, O + wz, VOX.tire);
-      this.box(0.42, 0.42, 0.74, wx, 0.55, O + wz, VOX.rim, false);
+    const solid = new VoxelBatch();
+    const glow = new VoxelBatch();
+    // Plain (un-beveled) boxes: large beveled boxes balloon their rounded edges
+    // when scaled, which reads as soft/blobby. Sharp panels look crisp + clean.
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const S = (x: number, y: number, z: number, color: number, sx: number, sy: number, sz: number) =>
+      solid.add(x, y, z, color, sx, sy, sz);
+    const G = (x: number, y: number, z: number, color: number, sx: number, sy: number, sz: number) =>
+      glow.add(x, y, z, color, sx, sy, sz);
+
+    // chassis + fat wheels with steel hubs + dark arches
+    S(0.3, 1.0, 0, VOX.rvTrim, 6.8, 0.4, 2.7);
+    for (const wx of [-2.4, 2.6]) for (const wz of [-1.1, 1.1]) {
+      S(wx, 0.5, wz, VOX.tire, 1.0, 0.95, 0.72);
+      S(wx, 0.5, wz, VOX.rim, 0.44, 0.44, 0.76);
+      S(wx, 1.15, wz, VOX.rvTrim, 1.4, 0.55, 0.86);
     }
-    // rear living box + lower front cab + cab-over bunk
-    this.box(5.0, 2.1, 2.8, 0.8, 2.25, O, VOX.rvBody);
-    this.box(1.8, 1.5, 2.6, -2.9, 1.75, O, VOX.rvBody);
-    this.box(1.8, 0.9, 2.7, -2.9, 2.9, O, VOX.rvBody);
-    // roof slab + rack rails
-    this.box(5.2, 0.2, 2.95, 0.8, 3.35, O, VOX.rvTrim, false);
-    this.box(4.6, 0.12, 0.12, 0.8, 3.5, O - 1.0, VOX.steelDark, false);
-    this.box(4.6, 0.12, 0.12, 0.8, 3.5, O + 1.0, VOX.steelDark, false);
-    // blue accent stripe wrapping the body + cab
-    this.box(5.05, 0.42, 2.85, 0.8, 1.95, O, VOX.rvStripe, false);
-    this.box(1.85, 0.42, 2.65, -2.9, 1.55, O, VOX.rvStripe, false);
-    // windshield + two camera-facing side windows (glow)
-    this.glowBox(0.18, 0.8, 2.0, -3.85, 2.0, O, VOX.rvWindow, 0.7);
-    this.glowBox(1.3, 0.7, 0.16, 0.0, 2.55, O + 1.45, VOX.rvWindow, 0.7);
-    this.glowBox(1.3, 0.7, 0.16, 2.3, 2.55, O + 1.45, VOX.rvWindow, 0.7);
+    // smooth shell: rear living box, lower cab, cab-over bunk
+    S(0.8, 2.25, 0, VOX.rvBody, 5.0, 2.1, 2.8);
+    S(-2.9, 1.7, 0, VOX.rvBody, 1.9, 1.5, 2.6);
+    S(-2.9, 2.85, 0, VOX.rvBody, 1.9, 0.95, 2.7);
+    // lighter roof cap (soft two-tone shading) + a subtle panel shade line
+    S(0.8, 3.35, 0, VOX.rvBodyShade, 5.25, 0.28, 2.9);
+    S(-2.9, 3.35, 0, VOX.rvBodyShade, 1.95, 0.28, 2.78);
+    S(0.8, 2.74, 0, VOX.rvBodyShade, 5.0, 0.06, 2.83);
+    // blue accent stripe wrapping body + cab
+    S(0.8, 1.92, 0, VOX.rvStripe, 5.06, 0.4, 2.84);
+    S(-2.9, 1.52, 0, VOX.rvStripe, 1.94, 0.4, 2.64);
+    // glass-like windows (gentle glow so they read as glass, not lamps)
+    G(0.0, 2.55, 1.43, VOX.rvWindow, 1.3, 0.72, 0.06);
+    G(2.3, 2.55, 1.43, VOX.rvWindow, 1.3, 0.72, 0.06);
+    G(-3.0, 1.95, 1.32, VOX.rvWindow, 1.35, 0.66, 0.06); // cab side
+    G(-3.86, 1.98, 0, VOX.rvWindow, 0.06, 0.78, 2.0);    // windshield
+    // crisp window frames
+    for (const fx of [0.0, 2.3]) {
+      S(fx, 2.93, 1.45, VOX.rvTrim, 1.5, 0.09, 0.08);
+      S(fx, 2.17, 1.45, VOX.rvTrim, 1.5, 0.09, 0.08);
+      S(fx, 2.55, 1.45, VOX.rvTrim, 0.08, 0.82, 0.08);
+    }
     // door + porthole + step
-    this.box(1.0, 1.7, 0.14, -1.0, 1.95, O + 1.45, VOX.rvDoor, false);
-    this.glowBox(0.42, 0.42, 0.1, -1.0, 2.4, O + 1.5, VOX.rvWindow, 0.6);
-    this.box(0.9, 0.2, 0.4, -1.0, 1.05, O + 1.62, VOX.steelDark);
-    // bumpers
-    this.box(0.5, 0.4, 2.7, -4.0, 1.2, O, VOX.rvTrim);
-    this.box(0.5, 0.4, 2.7, 3.5, 1.2, O, VOX.rvTrim);
-    // back ladder
-    for (const lz of [O - 0.7, O + 0.7]) this.box(0.12, 1.8, 0.12, 3.45, 2.4, lz, VOX.steelDark, false);
-    for (let r = 0; r < 4; r++) this.box(0.12, 0.1, 1.5, 3.45, 1.7 + r * 0.45, O, VOX.steelDark, false);
-    // a little deck chair lounging on the roof — a cozy nod to the reference
-    this.box(0.9, 0.12, 0.9, 1.6, 3.55, O - 0.3, VOX.woodTrim);
-    this.box(0.12, 0.7, 0.9, 2.05, 3.85, O - 0.3, VOX.woodTrim);
-    this.glowBox(0.86, 0.1, 0.86, 1.6, 3.62, O - 0.3, VOX.rvStripe, 0.3);
+    S(-1.0, 1.92, 1.43, VOX.rvDoor, 1.0, 1.66, 0.09);
+    G(-1.0, 2.42, 1.49, VOX.rvWindow, 0.4, 0.4, 0.06);
+    S(-1.0, 1.05, 1.6, VOX.steelDark, 0.9, 0.2, 0.4);
+    // bumpers + grille + head/taillights
+    S(-4.0, 1.2, 0, VOX.rvTrim, 0.5, 0.5, 2.6);
+    S(3.5, 1.2, 0, VOX.rvTrim, 0.5, 0.5, 2.6);
+    S(-3.9, 1.4, 0, VOX.steelDark, 0.14, 0.5, 1.5);
+    for (const hz of [-0.85, 0.85]) G(-3.95, 1.45, hz, VOX.windowGlow, 0.12, 0.3, 0.34);
+    for (const tz of [-1.05, 1.05]) G(3.45, 1.7, tz, VOX.toolbox, 0.12, 0.34, 0.34);
+    // wing mirrors
+    for (const mz of [-1.5, 1.5]) {
+      S(-3.5, 2.05, mz, VOX.steelDark, 0.3, 0.1, 0.1);
+      S(-3.66, 1.95, mz, VOX.steelDark, 0.12, 0.32, 0.16);
+    }
+    // back ladder, roof rails, AC unit, deck chair
+    for (const lz of [-0.7, 0.7]) S(3.5, 2.4, lz, VOX.steelDark, 0.12, 1.8, 0.12);
+    for (let r = 0; r < 4; r++) S(3.5, 1.7 + r * 0.45, 0, VOX.steelDark, 0.12, 0.1, 1.5);
+    for (const rz of [-1.05, 1.05]) S(0.8, 3.54, rz, VOX.steelDark, 4.6, 0.1, 0.12);
+    S(-0.4, 3.62, 0.3, VOX.rvTrim, 1.1, 0.36, 1.1);
+    S(1.6, 3.56, -0.3, VOX.woodTrim, 0.9, 0.12, 0.9);
+    S(2.05, 3.86, -0.3, VOX.woodTrim, 0.12, 0.7, 0.9);
+
+    solid.build(this.group, geo, true, true);
+    glow.build(this.group, geo, false, false, (col) => glowMaterial(col, 0.4));
 
     // central obstacle so the horde funnels around the van
-    this.obstacles.push({ minX: -4.1, maxX: 3.9, minZ: O - 1.6, maxZ: O + 1.6 });
+    this.obstacles.push({ minX: -4.1, maxX: 3.8, minZ: -1.6, maxZ: 1.6 });
   }
 
   // ---- survival camp dressing ----
@@ -353,15 +373,34 @@ export class Arena {
   }
 
   // ---- individual voxel props ----
+  /** A crate with a darker plank frame + diagonal brace for a built look. */
   private propCrate(props: VoxelBatch, x: number, z: number, stacked: boolean) {
-    props.add(x, 0.5, z, VOX.crate, 1.0, 1.0, 1.0);
-    if (stacked) props.add(x + 0.1, 1.45, z - 0.05, VOX.crateDark, 0.9, 0.9, 0.9);
+    this.crateBody(props, x, 0.5, z, 1.0);
+    if (stacked) this.crateBody(props, x + 0.1, 1.45, z - 0.05, 0.9);
+  }
+  private crateBody(props: VoxelBatch, x: number, y: number, z: number, s: number) {
+    props.add(x, y, z, VOX.crate, s, s, s);
+    // plank frame on the camera-facing (+z) face
+    const f = z + s * 0.5;
+    props.add(x, y + s * 0.4, f, VOX.crateDark, s, s * 0.12, 0.06); // top rail
+    props.add(x, y - s * 0.4, f, VOX.crateDark, s, s * 0.12, 0.06); // bottom rail
+    props.add(x - s * 0.4, y, f, VOX.crateDark, s * 0.12, s, 0.06); // left stile
+    props.add(x + s * 0.4, y, f, VOX.crateDark, s * 0.12, s, 0.06); // right stile
+    props.add(x, y, f, VOX.crateDark, s * 0.12, s * 1.2, 0.05);     // centre brace
   }
 
+  /** A barrel with vertical staves + two steel hoops. */
   private propBarrel(props: VoxelBatch, x: number, z: number, color: number) {
     props.add(x, 0.6, z, color, 0.75, 1.2, 0.75);
-    props.add(x, 0.95, z, VOX.steelDark, 0.8, 0.12, 0.8);
-    props.add(x, 0.35, z, VOX.steelDark, 0.8, 0.12, 0.8);
+    // staves: slim ribs around the rim catch the light as fine detail
+    for (let a = 0; a < 8; a++) {
+      const an = (a / 8) * Math.PI * 2;
+      props.add(x + Math.cos(an) * 0.36, 0.6, z + Math.sin(an) * 0.36, color === VOX.barrel ? VOX.barrelRust : VOX.barrel, 0.1, 1.16, 0.1);
+    }
+    props.add(x, 0.95, z, VOX.steelDark, 0.82, 0.14, 0.82); // top hoop
+    props.add(x, 0.6, z, VOX.steelDark, 0.84, 0.12, 0.84);  // mid hoop
+    props.add(x, 0.3, z, VOX.steelDark, 0.82, 0.14, 0.82);  // bottom hoop
+    props.add(x, 1.22, z, VOX.steel, 0.5, 0.1, 0.5);        // lid
   }
 
   private propSandbags(props: VoxelBatch, x: number, z: number) {
@@ -375,8 +414,10 @@ export class Arena {
 
   private propJerryCan(props: VoxelBatch, x: number, z: number) {
     props.add(x, 0.45, z, VOX.jerryCan, 0.55, 0.85, 0.42);
-    props.add(x, 0.5, z + 0.21, VOX.jerryCanDark, 0.4, 0.5, 0.05); // front panel
-    props.add(x, 0.92, z, VOX.jerryCanDark, 0.2, 0.14, 0.2); // cap
+    props.add(x, 0.5, z + 0.21, VOX.jerryCanDark, 0.4, 0.55, 0.05); // recessed X panel
+    props.add(x, 0.78, z + 0.22, VOX.jerryCanDark, 0.46, 0.08, 0.04); // top ridge
+    props.add(x - 0.18, 0.95, z, VOX.jerryCanDark, 0.18, 0.18, 0.34); // handle
+    props.add(x + 0.16, 0.95, z, VOX.steelDark, 0.16, 0.14, 0.16); // spout cap
   }
 
   private propPropane(props: VoxelBatch, x: number, z: number) {
@@ -517,7 +558,7 @@ export class Arena {
   private buildMotes(scene: THREE.Scene) {
     const tex = this.moteSprite();
     const R = this.half - 2;
-    for (let n = 0; n < 46; n++) {
+    for (let n = 0; n < 22; n++) {
       const mat = new THREE.SpriteMaterial({
         map: tex,
         color: Math.random() < 0.25 ? 0xfff0c0 : 0xffffff,
