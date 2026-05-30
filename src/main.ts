@@ -24,6 +24,7 @@ import { Audio } from "./audio";
 import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
+import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, RARITY_COLOR, type Rarity } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
@@ -114,6 +115,7 @@ class Game implements GameApi {
   private floaters: FloatingText;
   private drops: Drops;
   private explosions: Explosions;
+  private sparks: Sparks;
   private pets: Pet[] = [];
   private _petTgt = { x: 0, z: 0 };
   private _petDir = new THREE.Vector3();
@@ -235,7 +237,8 @@ class Game implements GameApi {
     this.puffs = new Puffs(this.scene);
     this.floaters = new FloatingText(this.scene);
     this.drops = new Drops(this.scene);
-    this.explosions = new Explosions(this.scene);
+    this.explosions = new Explosions(this.scene, lowSpec);
+    this.sparks = new Sparks(this.scene, lowSpec);
     this.hud = new Hud(ui);
 
     // Resume audio on the first user gesture (browser autoplay policy).
@@ -329,6 +332,7 @@ class Game implements GameApi {
     this.floaters.clear();
     this.drops.clear();
     this.explosions.clear();
+    this.sparks.clear();
     this.hitStop = 0;
     this.hud.setCombo(0, 0);
     this.hud.hideBoss();
@@ -997,6 +1001,7 @@ class Game implements GameApi {
     this.interactables.update(dt);
     this.puffs.update(dt);
     this.explosions.update(dt);
+    this.sparks.update(dt);
     this.floaters.update(dt);
     this.updateCamera(dt);
 
@@ -1294,6 +1299,7 @@ class Game implements GameApi {
           if (crit) {
             this.runStats.crits++;
             this.floaters.spawn(z.pos, "CRIT", "#ffe14a", 1, true);
+            this.sparks.burst(z.pos, 0xffe14a, 5, { speed: 9, spread: 2, streak: true });
           }
           this.damageZombie(z, dmg, sMul, crit);
           // the bullet's own splash, or the Explosive Rounds upgrade
@@ -1401,7 +1407,8 @@ class Game implements GameApi {
     const dmg = ab.power * pet.damageMul * petBuff;
     const col = pet.def.bulletColor;
     const near = grid.nearest(px, pz, 64);
-    this.audio.powerup();
+    // distinct, power-scaled cast sound per ability kind
+    this.audio.ability(ab.kind, ab.power / 200);
 
     switch (ab.kind) {
       case "nova": {
@@ -1415,8 +1422,11 @@ class Game implements GameApi {
             splashDamage: ab.radius ? dmg * 0.5 : 0, color: col, scale: pet.def.bulletScale * 1.25, homing: 0,
           });
         }
+        // radiant double-pop: hot core flash + a big ring racing out with the shells
         this._abilTmp.set(px, 0.6, pz);
-        this.explosions.burst(this._abilTmp, 2.4, col);
+        this.explosions.flash(this._abilTmp, 2.8, col);
+        this.explosions.shockwave(this._abilTmp, 4 + n * 0.22, col);
+        this.sparks.burst(this._abilTmp, col, Math.min(20, n), { speed: 12, spread: 3, streak: true });
         if (ab.slow) for (const z of this.rounds.zombies) if (z.alive) z.applySlow(ab.slow, 2.5);
         break;
       }
@@ -1433,6 +1443,10 @@ class Game implements GameApi {
             speed: 66, damage: dmg, pierce: 4, splashRadius: 0, splashDamage: 0, color: col, scale: pet.def.bulletScale, homing: 1,
           });
         }
+        // muzzle pop + tracer sparks spraying toward the cluster
+        this._abilTmp.set(px, 1.0, pz);
+        this.explosions.flash(this._abilTmp, 1.7, col);
+        this.sparks.burst(this._abilTmp, col, 8, { speed: 10, spread: 2, streak: true });
         break;
       }
       case "chain": {
@@ -1441,7 +1455,9 @@ class Game implements GameApi {
         let jumps = ab.count ?? 6;
         while (cur && jumps-- > 0) {
           hit.add(cur.id);
-          this.explosions.burst(cur.pos, 1.1, 0x9fe8ff);
+          // electric snap at each arc node
+          this.explosions.flash(cur.pos, 1.5, 0x9fe8ff);
+          this.sparks.burst(cur.pos, 0xcdefff, 6, { speed: 9, spread: 3, streak: true });
           this.damageZombie(cur, dmg, sMul);
           cur = this.nearestZombie(cur.pos.x, cur.pos.z, 7, hit);
         }
@@ -1456,7 +1472,10 @@ class Game implements GameApi {
           const cx = z ? z.pos.x : px + (Math.random() - 0.5) * 12;
           const cz = z ? z.pos.z : pz + (Math.random() - 0.5) * 12;
           this._abilTmp.set(cx, 0.6, cz);
+          // fiery impact column + blast + chunky debris kicking off the ground
+          this.explosions.beam(this._abilTmp, 5.5, 0xffb04a);
           this.explosions.burst(this._abilTmp, r * 1.2, 0xff7a3a);
+          this.sparks.burst(this._abilTmp, 0xffa23a, 8, { speed: 7, spread: 5 });
           this.splash(this._abilTmp, r, dmg, -1, sMul);
         }
         this.shake = Math.min(0.6, this.shake + 0.18);
@@ -1467,10 +1486,17 @@ class Game implements GameApi {
         const cx = near ? near.pos.x : px;
         const cz = near ? near.pos.z : pz;
         this._abilTmp.set(cx, 0.6, cz);
+        // pillar of light slams down with a blast + radiant sparks
+        this.explosions.beam(this._abilTmp, 9, col);
+        this.explosions.flash(this._abilTmp, r, col);
         this.explosions.burst(this._abilTmp, r * 1.1, col);
+        this.sparks.burst(this._abilTmp, col, 14, { speed: 9, spread: 6, streak: true });
         this.splash(this._abilTmp, r, dmg, -1, sMul);
         if (ab.slow) grid.forNear(cx, cz, r, (z) => { if (z.alive) z.applySlow(ab.slow!, 2.5); });
-        if (ab.heal) this.player.heal(ab.heal);
+        if (ab.heal) {
+          this.player.heal(ab.heal);
+          this.sparks.burst(this.player.pos, 0x7be08a, 8, { speed: 5, spread: 4, streak: true });
+        }
         this.shake = Math.min(0.6, this.shake + 0.14);
         break;
       }
@@ -1479,13 +1505,17 @@ class Game implements GameApi {
         const thr = ab.frac ?? 0.35;
         const r2 = r * r;
         this._abilTmp.set(px, 0.6, pz);
+        // dark reaper column + soul-purple shroud
+        this.explosions.beam(this._abilTmp, 7, 0x9a5ad6);
         this.explosions.burst(this._abilTmp, r, 0x9a5ad6);
+        this.sparks.burst(this._abilTmp, 0xc0a0ff, 10, { speed: 8, spread: 4, streak: true });
         grid.forNear(px, pz, r, (z) => {
           if (!z.alive) return;
           const dx = z.pos.x - px;
           const dz = z.pos.z - pz;
           if (dx * dx + dz * dz > r2) return;
           const lethal = !z.isBoss && z.health <= z.maxHealth * thr;
+          if (lethal) this.sparks.burst(z.pos, 0xc0a0ff, 5, { speed: 7, spread: 4, streak: true });
           this.damageZombie(z, lethal ? 1e9 : dmg, sMul);
         });
         break;
@@ -1495,6 +1525,10 @@ class Game implements GameApi {
         this.save.gold += g;
         this.save.goldEarned += g;
         this.floaters.spawn(pet.group.position, `+⛀${g}`, "#ffd24a", 1.5, true);
+        // a glittering fountain of coins erupting off the pet
+        this._abilTmp.set(px, 1.0, pz);
+        this.explosions.flash(this._abilTmp, 2.0, 0xffd24a);
+        this.sparks.burst(this._abilTmp, 0xffd24a, 16, { speed: 8, spread: 7, streak: true });
         // a damaging shower of coins so even the bankers join the carnage
         const n = ab.count ?? 8;
         for (let k = 0; k < n; k++) {
@@ -1509,17 +1543,23 @@ class Game implements GameApi {
         if (ab.radius) {
           this._abilTmp.set(px, 0.6, pz);
           this.explosions.burst(this._abilTmp, ab.radius, 0xffd24a);
+          this.explosions.beam(this._abilTmp, 7, 0xffe07a);
+          this.sparks.burst(this._abilTmp, 0xffe07a, 18, { speed: 10, spread: 8, streak: true });
           this.splash(this._abilTmp, ab.radius, dmg, -1, sMul);
         }
         break;
       }
       case "obliterate": {
         const r = ab.radius ?? 14;
-        this.audio.boom();
-        this.shake = Math.min(0.75, this.shake + 0.5);
+        this.shake = Math.min(0.8, this.shake + 0.6);
         this._abilTmp.set(px, 0.6, pz);
+        // cataclysm: twin light pillars, layered blast, twin shockwaves, shrapnel
+        this.explosions.beam(this._abilTmp, 16, 0xff3aff);
+        this.explosions.beam(this._abilTmp, 11, 0xffffff);
         this.explosions.burst(this._abilTmp, r, 0xff3aff);
-        this.explosions.burst(this._abilTmp, r * 0.6, 0xffffff);
+        this.explosions.shockwave(this._abilTmp, r * 1.3, 0xff7aff);
+        this.explosions.shockwave(this._abilTmp, r * 0.65, 0xffffff);
+        this.sparks.burst(this._abilTmp, 0xff7aff, 24, { speed: 14, spread: 8, streak: true });
         this.splash(this._abilTmp, r, dmg, -1, sMul);
         this.floaters.spawn(pet.group.position, "ANNIHILATE!", "#ff3aff", 1.7, true);
         break;
@@ -1606,6 +1646,8 @@ class Game implements GameApi {
       // beefier, warmer burst on crit / combo kills; ragdoll fling on big hits
       const burstN = crit ? 13 : mult >= 3 ? 11 : 8;
       this.puffs.burst(z.pos, crit ? 0xffe14a : z.puffColor, burstN);
+      // crunchy gib sparks flinging off the corpse (streaky, bigger on crit/combo)
+      this.sparks.burst(z.pos, crit ? 0xffe14a : z.puffColor, crit || mult >= 3 ? 7 : 4, { speed: 7, spread: 4, streak: true });
       z.flingDeath(crit || mult >= 3 ? 6 : 2);
       this.audio.kill();
       // combo milestone celebration: a big "xN!" pop when the tier climbs
