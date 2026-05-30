@@ -24,7 +24,7 @@ import { Audio } from "./audio";
 import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
-import { Pet, PETS, findAnyPet, petLevelCost } from "./pets";
+import { Pet, PETS, findAnyPet, petLevelCost, RARITY_COLOR, type Rarity } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
@@ -394,12 +394,15 @@ class Game implements GameApi {
         const owned = this.save.pets.includes(ownId);
         const level = this.save.petLevels[ownId] ?? 1;
         const upCost = petLevelCost(base, level); // cost curve keyed off the base
+        const rarity = (base.rarity ?? "common") as Rarity;
         return {
           id: ownId, name: p.name, desc: p.desc, cost: base.cost,
           color: `#${p.color.toString(16).padStart(6, "0")}`,
           owned, level,
           upCost,
           affordable: owned ? this.save.gold >= upCost : this.save.gold >= base.cost,
+          rarity,
+          rarityColor: RARITY_COLOR[rarity],
         };
       }),
       (id) => this.buyOrLevelPet(id),

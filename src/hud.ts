@@ -343,26 +343,38 @@ export class Hud {
   /** Pets tab: buy companion pets with gold. */
   renderPets(
     gold: number,
-    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; level: number; upCost: number; affordable: boolean }[],
+    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; level: number; upCost: number; affordable: boolean; rarity: string; rarityColor: string }[],
     onAction: (id: string) => void,
   ) {
+    const order = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
+    const label = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
+    const card = (r: (typeof rows)[number]) => {
+      const cls = r.affordable ? "" : "locked";
+      const action = r.owned ? `Lv ${r.level} → ⛀ ${r.upCost}` : `⛀ ${r.cost}`;
+      const lvlBadge = r.owned ? `<span class="pet-lvl">Lv ${r.level}</span>` : "";
+      return `<button class="pet-card ${r.owned ? "owned" : ""} ${cls}" data-id="${r.id}" style="--pc:${r.color};--rc:${r.rarityColor}">
+        <span class="pet-dot"></span>${lvlBadge}
+        <span class="pet-name">${r.name}</span>
+        <span class="pet-desc">${r.desc}</span>
+        <span class="pet-cost">${action}</span>
+      </button>`;
+    };
+    // Group into rarity sections so a deep roster stays browsable.
+    const ownedCount = rows.filter((r) => r.owned).length;
+    const sections = order
+      .map((rar) => ({ rar, items: rows.filter((r) => (r.rarity || "common") === rar) }))
+      .filter((g) => g.items.length)
+      .map(
+        (g) => `
+        <div class="pet-rarity-head" style="--rc:${g.items[0].rarityColor}">${label(g.rar)}
+          <span class="pet-rarity-count">${g.items.filter((i) => i.owned).length}/${g.items.length}</span>
+        </div>
+        <div class="pets-grid">${g.items.map(card).join("")}</div>`,
+      )
+      .join("");
     this.q("#tab-pets").innerHTML = `
-      <div class="mkt-head"><span>Gold: <b>⛀ ${gold}</b></span><span class="pets-hint">Buy, then level up with gold</span></div>
-      <div class="pets-grid">
-        ${rows
-          .map((r) => {
-            const cls = r.affordable ? "" : "locked";
-            const action = r.owned ? `Lv ${r.level} → ⛀ ${r.upCost}` : `⛀ ${r.cost}`;
-            const lvlBadge = r.owned ? `<span class="pet-lvl">Lv ${r.level}</span>` : "";
-            return `<button class="pet-card ${r.owned ? "owned" : ""} ${cls}" data-id="${r.id}" style="--pc:${r.color}">
-              <span class="pet-dot"></span>${lvlBadge}
-              <span class="pet-name">${r.name}</span>
-              <span class="pet-desc">${r.desc}</span>
-              <span class="pet-cost">${action}</span>
-            </button>`;
-          })
-          .join("")}
-      </div>`;
+      <div class="mkt-head"><span>Gold: <b>⛀ ${gold}</b></span><span class="pets-hint">Collected ${ownedCount}/${rows.length} · level up with gold</span></div>
+      ${sections}`;
     this.q("#tab-pets").querySelectorAll<HTMLButtonElement>(".pet-card").forEach((btn) => {
       btn.addEventListener("click", () => onAction(btn.dataset.id!));
     });

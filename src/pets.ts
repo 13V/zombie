@@ -7,8 +7,30 @@ import { voxelMaterial, glowMaterial } from "./palette";
  * through the shared BulletSystem (so all collision / damage / FX come free).
  *
  * Pets are the late-game chaos + the gold sink: stack several and the screen
- * fills with autonomous fire.
+ * fills with autonomous fire. The roster is deliberately deep (50+) so the
+ * idle-simulator loop always has a next thing to chase across six rarities.
  */
+
+export type PetShape =
+  | "bee" | "drone" | "dragon" | "ghost" | "turret" | "wisp" | "piggy" | "totem"
+  | "slime" | "golem" | "mushroom" | "frog" | "crystal" | "star" | "cat"
+  | "eye" | "serpent" | "phoenix" | "ufo" | "orb";
+
+export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic";
+
+export const RARITY_ORDER: Rarity[] = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
+export const RARITY_COLOR: Record<Rarity, string> = {
+  common: "#b8c2cc",
+  uncommon: "#6fdc8c",
+  rare: "#5aa9ff",
+  epic: "#c792ea",
+  legendary: "#ffb84a",
+  mythic: "#ff5a7a",
+};
+export const RARITY_LABEL: Record<Rarity, string> = {
+  common: "Common", uncommon: "Uncommon", rare: "Rare",
+  epic: "Epic", legendary: "Legendary", mythic: "Mythic",
+};
 
 export interface PetDef {
   id: string;
@@ -28,8 +50,9 @@ export interface PetDef {
   splashDamage: number;
   homing: number;
   /** Visual builder tag. */
-  shape: "bee" | "drone" | "dragon" | "ghost" | "turret" | "wisp" | "piggy" | "totem";
+  shape: PetShape;
   range: number; // how far it will engage
+  rarity?: Rarity;
   /** Non-combat roles. "banker": earns gold over time + on kills nearby.
    *  "buffer": boosts other pets' damage. (default = combat shooter) */
   role?: "banker" | "buffer";
@@ -41,70 +64,160 @@ export interface PetDef {
   evolvesTo?: string;
 }
 
-/** Evolved pet forms — not buyable directly; a base pet evolves into these. */
-export const PET_EVOLUTIONS: PetDef[] = [
-  {
-    id: "beebot_evo", name: "Queen Bee", desc: "A royal swarm of stingers", cost: 0, color: 0xffcf3a, accent: 0x2a2a2a,
-    damage: 22, interval: 0.32, bulletColor: 0xffe14a, bulletScale: 0.7, pierce: 2, splashRadius: 0, splashDamage: 0, homing: 1, shape: "bee", range: 18,
-  },
-  {
-    id: "turret_evo", name: "War Drone", desc: "Twin piercing autocannons", cost: 0, color: 0x9fb6ff, accent: 0x2a3450,
-    damage: 70, interval: 0.45, bulletColor: 0x9fe8ff, bulletScale: 1.3, pierce: 5, splashRadius: 0, splashDamage: 0, homing: 0, shape: "turret", range: 22,
-  },
-  {
-    id: "ghost_evo", name: "Reaper", desc: "Wide haunting splash", cost: 0, color: 0x9a5ad6, accent: 0xf3e6ff,
-    damage: 55, interval: 0.7, bulletColor: 0xc792ea, bulletScale: 1.7, pierce: 1, splashRadius: 3.0, splashDamage: 50, homing: 1, shape: "ghost", range: 18,
-  },
-  {
-    id: "dragon_evo", name: "Elder Dragon", desc: "Devastating fireball barrage", cost: 0, color: 0xff3a2a, accent: 0xffd24a,
-    damage: 140, interval: 0.45, bulletColor: 0xff7a3a, bulletScale: 2.0, pierce: 4, splashRadius: 3.4, splashDamage: 110, homing: 1, shape: "dragon", range: 24,
-  },
-];
+type PetInit = Partial<PetDef> &
+  Pick<PetDef, "id" | "name" | "desc" | "cost" | "color" | "shape" | "rarity">;
 
-export function findAnyPet(id: string): PetDef | undefined {
-  return PETS.find((p) => p.id === id) ?? PET_EVOLUTIONS.find((p) => p.id === id);
+/** Terse factory — fills sensible combat defaults so each entry stays readable. */
+function mk(p: PetInit): PetDef {
+  return {
+    damage: 0,
+    interval: 1,
+    bulletColor: p.color,
+    bulletScale: 1,
+    pierce: 0,
+    splashRadius: 0,
+    splashDamage: 0,
+    homing: 0,
+    range: 16,
+    ...p,
+  };
 }
 
+/** Evolved pet forms — not buyable directly; a base pet evolves into these. */
+export const PET_EVOLUTIONS: PetDef[] = [
+  mk({ id: "beebot_evo", name: "Queen Bee", desc: "A royal swarm of stingers", cost: 0, rarity: "rare", color: 0xffcf3a, accent: 0x2a2a2a,
+    damage: 22, interval: 0.32, bulletColor: 0xffe14a, bulletScale: 0.7, pierce: 2, homing: 1, shape: "bee", range: 18 }),
+  mk({ id: "turret_evo", name: "War Drone", desc: "Twin piercing autocannons", cost: 0, rarity: "rare", color: 0x9fb6ff, accent: 0x2a3450,
+    damage: 70, interval: 0.45, bulletColor: 0x9fe8ff, bulletScale: 1.3, pierce: 5, shape: "turret", range: 22 }),
+  mk({ id: "ghost_evo", name: "Reaper", desc: "Wide haunting splash", cost: 0, rarity: "rare", color: 0x9a5ad6, accent: 0xf3e6ff,
+    damage: 55, interval: 0.7, bulletColor: 0xc792ea, bulletScale: 1.7, pierce: 1, splashRadius: 3.0, splashDamage: 50, homing: 1, shape: "ghost", range: 18 }),
+  mk({ id: "dragon_evo", name: "Elder Dragon", desc: "Devastating fireball barrage", cost: 0, rarity: "epic", color: 0xff3a2a, accent: 0xffd24a,
+    damage: 140, interval: 0.45, bulletColor: 0xff7a3a, bulletScale: 2.0, pierce: 4, splashRadius: 3.4, splashDamage: 110, homing: 1, shape: "dragon", range: 24 }),
+];
+
 export const PETS: PetDef[] = [
-  {
-    id: "beebot", name: "Bee Buddy", desc: "Fires homing stingers", cost: 300, color: 0xffd24a, accent: 0x2a2a2a,
-    damage: 14, interval: 0.5, bulletColor: 0xffe14a, bulletScale: 0.6, pierce: 1, splashRadius: 0, splashDamage: 0, homing: 1, shape: "bee", range: 16,
-    evolveLevel: 10, evolvesTo: "beebot_evo",
-  },
-  {
-    id: "wisp", name: "Spark Wisp", desc: "Rapid little zaps", cost: 450, color: 0x6ad7ff, accent: 0xeaffff,
-    damage: 10, interval: 0.28, bulletColor: 0x9fe8ff, bulletScale: 0.5, pierce: 0, splashRadius: 0, splashDamage: 0, homing: 0, shape: "wisp", range: 15,
-  },
-  {
-    id: "turret", name: "Mini Turret", desc: "Heavy piercing rounds", cost: 700, color: 0x8a98a8, accent: 0x3a4450,
-    damage: 40, interval: 0.7, bulletColor: 0xffc06a, bulletScale: 1.1, pierce: 3, splashRadius: 0, splashDamage: 0, homing: 0, shape: "turret", range: 18,
-    evolveLevel: 10, evolvesTo: "turret_evo",
-  },
-  {
-    id: "ghost", name: "Boo Ghost", desc: "Spooky splash orbs", cost: 900, color: 0xc792ea, accent: 0xf3e6ff,
-    damage: 30, interval: 0.9, bulletColor: 0xc792ea, bulletScale: 1.3, pierce: 0, splashRadius: 2.0, splashDamage: 24, homing: 1, shape: "ghost", range: 16,
-    evolveLevel: 10, evolvesTo: "ghost_evo",
-  },
-  {
-    id: "dragon", name: "Baby Dragon", desc: "Spits explosive fireballs", cost: 1600, color: 0xff5a3a, accent: 0xffd24a,
+  // ───────────────────────── COMMON ─────────────────────────
+  mk({ id: "ladybug", name: "Ladybug", desc: "Quick little nibbles", cost: 200, rarity: "common", color: 0xff5a4a, accent: 0x2a2a2a,
+    damage: 11, interval: 0.45, bulletColor: 0xff8a6a, bulletScale: 0.55, shape: "bee", range: 14 }),
+  mk({ id: "slime_g", name: "Green Slime", desc: "Splatty acid blobs", cost: 250, rarity: "common", color: 0x6fdc8c, accent: 0x3a8a5a,
+    damage: 9, interval: 0.6, bulletColor: 0x9bf0b0, bulletScale: 0.7, splashRadius: 1.2, splashDamage: 6, shape: "slime", range: 12 }),
+  mk({ id: "pebble", name: "Pebble Pup", desc: "Lobs heavy stones", cost: 280, rarity: "common", color: 0x9a8a78, accent: 0x4a4038,
+    damage: 16, interval: 0.9, bulletColor: 0xc8b89a, bulletScale: 0.8, pierce: 1, shape: "golem", range: 12 }),
+  mk({ id: "beebot", name: "Bee Buddy", desc: "Fires homing stingers", cost: 300, rarity: "common", color: 0xffd24a, accent: 0x2a2a2a,
+    damage: 14, interval: 0.5, bulletColor: 0xffe14a, bulletScale: 0.6, pierce: 1, homing: 1, shape: "bee", range: 16,
+    evolveLevel: 10, evolvesTo: "beebot_evo" }),
+  mk({ id: "sproutling", name: "Sproutling", desc: "Pelts thorny seeds", cost: 300, rarity: "common", color: 0x8fcf5a, accent: 0xc8a06a,
+    damage: 10, interval: 0.55, bulletColor: 0xbfe87a, bulletScale: 0.6, shape: "mushroom", range: 13 }),
+  mk({ id: "firefly", name: "Firefly", desc: "Rapid green sparks", cost: 350, rarity: "common", color: 0x9be86a, accent: 0xeaffd6,
+    damage: 8, interval: 0.3, bulletColor: 0xcfff8a, bulletScale: 0.45, shape: "wisp", range: 14 }),
+  mk({ id: "tadpole", name: "Tadpole", desc: "Spits little bubbles", cost: 380, rarity: "common", color: 0x5ad6b0, accent: 0xd6fff0,
+    damage: 11, interval: 0.5, bulletColor: 0x8ff0d6, bulletScale: 0.55, shape: "frog", range: 13 }),
+  mk({ id: "batling", name: "Batling", desc: "Homing screech bolts", cost: 400, rarity: "common", color: 0x6a6a8a, accent: 0x2a2a3a,
+    damage: 9, interval: 0.5, bulletColor: 0xa0a0d0, bulletScale: 0.5, homing: 1, shape: "ghost", range: 14 }),
+  mk({ id: "wisp", name: "Spark Wisp", desc: "Rapid little zaps", cost: 450, rarity: "common", color: 0x6ad7ff, accent: 0xeaffff,
+    damage: 10, interval: 0.28, bulletColor: 0x9fe8ff, bulletScale: 0.5, shape: "wisp", range: 15 }),
+  mk({ id: "coin_chick", name: "Coin Chick", desc: "Earns a trickle of gold", cost: 500, rarity: "common", color: 0xffe07a, accent: 0xffd6a0,
+    shape: "piggy", range: 0, role: "banker", roleValue: 0.8 }),
+
+  // ───────────────────────── UNCOMMON ─────────────────────────
+  mk({ id: "piggy", name: "Piggy Bank", desc: "Earns gold while you play", cost: 600, rarity: "uncommon", color: 0xff9ec7, accent: 0xffd6e6,
+    shape: "piggy", range: 0, role: "banker", roleValue: 1.2 }),
+  mk({ id: "kitling", name: "Kit Cat", desc: "Fast clawing darts", cost: 650, rarity: "uncommon", color: 0xffb87a, accent: 0x4a3a2a,
+    damage: 20, interval: 0.45, bulletColor: 0xffd6a0, bulletScale: 0.6, shape: "cat", range: 15 }),
+  mk({ id: "turret", name: "Mini Turret", desc: "Heavy piercing rounds", cost: 700, rarity: "uncommon", color: 0x8a98a8, accent: 0x3a4450,
+    damage: 40, interval: 0.7, bulletColor: 0xffc06a, bulletScale: 1.1, pierce: 3, shape: "turret", range: 18,
+    evolveLevel: 10, evolvesTo: "turret_evo" }),
+  mk({ id: "toadstool", name: "Toadstool", desc: "Bursting spore caps", cost: 700, rarity: "uncommon", color: 0xff5a6a, accent: 0xffe0e0,
+    damage: 24, interval: 0.7, bulletColor: 0xff8a9a, bulletScale: 0.9, splashRadius: 1.6, splashDamage: 12, shape: "mushroom", range: 14 }),
+  mk({ id: "crystalite", name: "Crystalite", desc: "Piercing shards", cost: 750, rarity: "uncommon", color: 0x6ad7ff, accent: 0xeaffff,
+    damage: 22, interval: 0.5, bulletColor: 0x9fe8ff, bulletScale: 0.7, pierce: 2, shape: "crystal", range: 16 }),
+  mk({ id: "peeper", name: "Peeper", desc: "Homing gaze bolts", cost: 780, rarity: "uncommon", color: 0xff9ec7, accent: 0xfff0f6,
+    damage: 28, interval: 0.6, bulletColor: 0xffc0e0, bulletScale: 0.7, homing: 1, shape: "eye", range: 17 }),
+  mk({ id: "scout_drone", name: "Scout Drone", desc: "Pierce-tipped bursts", cost: 850, rarity: "uncommon", color: 0x9fb6ff, accent: 0x2a3450,
+    damage: 26, interval: 0.55, bulletColor: 0xcfe0ff, bulletScale: 0.8, pierce: 1, shape: "drone", range: 18 }),
+  mk({ id: "starlet", name: "Starlet", desc: "Twinkling fast shots", cost: 900, rarity: "uncommon", color: 0xffe14a, accent: 0xfffbd0,
+    damage: 18, interval: 0.4, bulletColor: 0xfff080, bulletScale: 0.6, shape: "star", range: 16 }),
+  mk({ id: "garden_snake", name: "Garden Snake", desc: "Piercing venom spit", cost: 950, rarity: "uncommon", color: 0x8fd65a, accent: 0x3a6a2a,
+    damage: 30, interval: 0.65, bulletColor: 0xbfe87a, bulletScale: 0.8, pierce: 2, shape: "serpent", range: 16 }),
+  mk({ id: "emberling", name: "Emberling", desc: "Little fire bursts", cost: 1000, rarity: "uncommon", color: 0xff7a4a, accent: 0xffd24a,
+    damage: 30, interval: 0.6, bulletColor: 0xffa05a, bulletScale: 0.9, splashRadius: 1.4, splashDamage: 14, shape: "dragon", range: 16 }),
+
+  // ───────────────────────── RARE ─────────────────────────
+  mk({ id: "ghost", name: "Boo Ghost", desc: "Spooky splash orbs", cost: 1200, rarity: "rare", color: 0xc792ea, accent: 0xf3e6ff,
+    damage: 30, interval: 0.9, bulletColor: 0xc792ea, bulletScale: 1.3, splashRadius: 2.0, splashDamage: 24, homing: 1, shape: "ghost", range: 16,
+    evolveLevel: 10, evolvesTo: "ghost_evo" }),
+  mk({ id: "sapphire_shard", name: "Sapphire Shard", desc: "Deep piercing beams", cost: 1500, rarity: "rare", color: 0x5aa9ff, accent: 0xeaf4ff,
+    damage: 55, interval: 0.55, bulletColor: 0x9fd0ff, bulletScale: 0.9, pierce: 3, shape: "crystal", range: 18 }),
+  mk({ id: "dragon", name: "Baby Dragon", desc: "Spits explosive fireballs", cost: 1600, rarity: "rare", color: 0xff5a3a, accent: 0xffd24a,
     damage: 70, interval: 0.6, bulletColor: 0xff7a3a, bulletScale: 1.5, pierce: 2, splashRadius: 2.6, splashDamage: 60, homing: 1, shape: "dragon", range: 20,
-    evolveLevel: 10, evolvesTo: "dragon_evo",
-  },
-  // ---- non-combat roles (the idle-economy hooks) ----
-  {
-    id: "piggy", name: "Piggy Bank", desc: "Earns gold while you play", cost: 600, color: 0xff9ec7, accent: 0xffd6e6,
-    damage: 0, interval: 1, bulletColor: 0xffd24a, bulletScale: 0.5, pierce: 0, splashRadius: 0, splashDamage: 0, homing: 0, shape: "piggy", range: 0,
-    role: "banker", roleValue: 1.2, // gold/sec at level 1
-  },
-  {
-    id: "totem", name: "Power Totem", desc: "+25% damage to your other pets", cost: 1200, color: 0x7be0c0, accent: 0xffd24a,
-    damage: 0, interval: 1, bulletColor: 0x7be0c0, bulletScale: 0.5, pierce: 0, splashRadius: 0, splashDamage: 0, homing: 0, shape: "totem", range: 0,
-    role: "buffer", roleValue: 0.25,
-  },
+    evolveLevel: 10, evolvesTo: "dragon_evo" }),
+  mk({ id: "shadow_cat", name: "Shadow Cat", desc: "Blistering shadow claws", cost: 1700, rarity: "rare", color: 0x7a6aff, accent: 0x1a1430,
+    damage: 50, interval: 0.4, bulletColor: 0xb0a0ff, bulletScale: 0.7, pierce: 1, shape: "cat", range: 17 }),
+  mk({ id: "stone_golem", name: "Stone Golem", desc: "Crushing boulder slams", cost: 1800, rarity: "rare", color: 0x8a98a8, accent: 0x3a4450,
+    damage: 80, interval: 1.0, bulletColor: 0xc8d0d8, bulletScale: 1.3, pierce: 2, splashRadius: 1.8, splashDamage: 30, shape: "golem", range: 14 }),
+  mk({ id: "lil_saucer", name: "Lil' Saucer", desc: "Homing plasma pings", cost: 2000, rarity: "rare", color: 0x9fe8ff, accent: 0x3a4450,
+    damage: 40, interval: 0.45, bulletColor: 0xeaffff, bulletScale: 0.7, homing: 1, shape: "ufo", range: 20 }),
+  mk({ id: "money_toad", name: "Money Toad", desc: "Burps up steady gold", cost: 2000, rarity: "rare", color: 0x6fdc8c, accent: 0xffd24a,
+    shape: "frog", range: 0, role: "banker", roleValue: 2.4 }),
+  mk({ id: "phoenix_chick", name: "Phoenix Chick", desc: "Piercing ember feathers", cost: 2200, rarity: "rare", color: 0xff7a3a, accent: 0xffd24a,
+    damage: 45, interval: 0.5, bulletColor: 0xffb05a, bulletScale: 0.8, pierce: 2, shape: "phoenix", range: 18 }),
+  mk({ id: "nova_star", name: "Nova Star", desc: "Bursting starlight", cost: 2400, rarity: "rare", color: 0xffd24a, accent: 0xfffbd0,
+    damage: 48, interval: 0.45, bulletColor: 0xfff080, bulletScale: 0.9, splashRadius: 1.8, splashDamage: 22, shape: "star", range: 18 }),
+  mk({ id: "totem", name: "Power Totem", desc: "+25% damage to your other pets", cost: 2600, rarity: "rare", color: 0x7be0c0, accent: 0xffd24a,
+    shape: "totem", range: 0, role: "buffer", roleValue: 0.25 }),
+
+  // ───────────────────────── EPIC ─────────────────────────
+  mk({ id: "specter", name: "Specter", desc: "Wide haunting splash", cost: 3500, rarity: "epic", color: 0x9a5ad6, accent: 0xf3e6ff,
+    damage: 90, interval: 0.7, bulletColor: 0xc792ea, bulletScale: 1.5, splashRadius: 2.6, splashDamage: 60, homing: 1, shape: "ghost", range: 18 }),
+  mk({ id: "thunder_orb", name: "Thunder Orb", desc: "Machine-gun lightning", cost: 3800, rarity: "epic", color: 0x9fe8ff, accent: 0xffffff,
+    damage: 70, interval: 0.3, bulletColor: 0xeaffff, bulletScale: 0.7, pierce: 2, shape: "orb", range: 18 }),
+  mk({ id: "inferno_drake", name: "Inferno Drake", desc: "Roaring fireball storm", cost: 4000, rarity: "epic", color: 0xff3a2a, accent: 0xffd24a,
+    damage: 120, interval: 0.55, bulletColor: 0xff7a3a, bulletScale: 1.7, pierce: 3, splashRadius: 3.0, splashDamage: 90, homing: 1, shape: "dragon", range: 22 }),
+  mk({ id: "prism_totem", name: "Prism Totem", desc: "+45% damage to your other pets", cost: 4200, rarity: "epic", color: 0xc792ea, accent: 0xffd24a,
+    shape: "totem", range: 0, role: "buffer", roleValue: 0.45 }),
+  mk({ id: "heavy_turret", name: "Heavy Turret", desc: "Armor-piercing shells", cost: 4500, rarity: "epic", color: 0x7a8aa8, accent: 0x2a3450,
+    damage: 130, interval: 0.7, bulletColor: 0xffc06a, bulletScale: 1.4, pierce: 5, shape: "turret", range: 22 }),
+  mk({ id: "void_eye", name: "Void Eye", desc: "Homing void lances", cost: 4800, rarity: "epic", color: 0x9a5ad6, accent: 0x1a1030,
+    damage: 100, interval: 0.6, bulletColor: 0xc0a0ff, bulletScale: 1.0, homing: 1, splashRadius: 2.0, splashDamage: 40, shape: "eye", range: 20 }),
+  mk({ id: "golden_piggy", name: "Golden Piggy", desc: "Mints serious gold", cost: 5000, rarity: "epic", color: 0xffd24a, accent: 0xfff0b0,
+    shape: "piggy", range: 0, role: "banker", roleValue: 5 }),
+  mk({ id: "seraph_star", name: "Seraph Star", desc: "Holy starlight nova", cost: 5200, rarity: "epic", color: 0xffffff, accent: 0xffe14a,
+    damage: 120, interval: 0.45, bulletColor: 0xfffbd0, bulletScale: 1.2, splashRadius: 2.2, splashDamage: 55, shape: "star", range: 20 }),
+  mk({ id: "crystal_wyrm", name: "Crystal Wyrm", desc: "Shattering shard breath", cost: 5500, rarity: "epic", color: 0x6ad7ff, accent: 0xeaffff,
+    damage: 150, interval: 0.6, bulletColor: 0x9fe8ff, bulletScale: 1.6, pierce: 4, splashRadius: 2.6, splashDamage: 80, homing: 1, shape: "dragon", range: 22 }),
+  mk({ id: "solar_phoenix", name: "Solar Phoenix", desc: "Blazing rebirth flares", cost: 6000, rarity: "epic", color: 0xffb84a, accent: 0xff5a3a,
+    damage: 140, interval: 0.5, bulletColor: 0xffd24a, bulletScale: 1.3, pierce: 3, splashRadius: 2.4, splashDamage: 70, shape: "phoenix", range: 20 }),
+
+  // ───────────────────────── LEGENDARY ─────────────────────────
+  mk({ id: "reaper_lord", name: "Reaper Lord", desc: "Soul-harvest splash", cost: 8500, rarity: "legendary", color: 0x7a3aff, accent: 0xf3e6ff,
+    damage: 220, interval: 0.65, bulletColor: 0xc0a0ff, bulletScale: 1.9, splashRadius: 3.4, splashDamage: 140, homing: 1, shape: "ghost", range: 22 }),
+  mk({ id: "celestial_dragon", name: "Celestial Dragon", desc: "Starfire devastation", cost: 9000, rarity: "legendary", color: 0x9fe8ff, accent: 0xffd24a,
+    damage: 260, interval: 0.55, bulletColor: 0xeaffff, bulletScale: 1.9, pierce: 5, splashRadius: 3.2, splashDamage: 160, homing: 1, shape: "dragon", range: 24 }),
+  mk({ id: "divine_totem", name: "Divine Totem", desc: "+70% damage to your other pets", cost: 9500, rarity: "legendary", color: 0xffffff, accent: 0xffd24a,
+    shape: "totem", range: 0, role: "buffer", roleValue: 0.7 }),
+  mk({ id: "omni_cannon", name: "Omni Cannon", desc: "Ridiculous pierce barrage", cost: 10000, rarity: "legendary", color: 0xffd24a, accent: 0x2a3450,
+    damage: 320, interval: 0.6, bulletColor: 0xfff080, bulletScale: 1.8, pierce: 8, shape: "turret", range: 26 }),
+  mk({ id: "galaxy_orb", name: "Galaxy Orb", desc: "Hyper-rapid star bolts", cost: 11000, rarity: "legendary", color: 0xc792ea, accent: 0xffffff,
+    damage: 200, interval: 0.28, bulletColor: 0xeaccff, bulletScale: 1.1, pierce: 4, splashRadius: 2.0, splashDamage: 80, shape: "orb", range: 22 }),
+  mk({ id: "fortune_dragon", name: "Fortune Dragon", desc: "Hoards gold by the second", cost: 12000, rarity: "legendary", color: 0xffd24a, accent: 0xff5a3a,
+    shape: "dragon", range: 0, role: "banker", roleValue: 9 }),
+  mk({ id: "eclipse_phoenix", name: "Eclipse Phoenix", desc: "Apocalyptic firestorm", cost: 14000, rarity: "legendary", color: 0xff5a7a, accent: 0xffd24a,
+    damage: 340, interval: 0.5, bulletColor: 0xff8aa0, bulletScale: 1.7, pierce: 5, splashRadius: 3.0, splashDamage: 180, homing: 1, shape: "phoenix", range: 24 }),
+
+  // ───────────────────────── MYTHIC ─────────────────────────
+  mk({ id: "cosmic_serpent", name: "Cosmic Serpent", desc: "Ten-pierce cosmic venom", cost: 22000, rarity: "mythic", color: 0x7a3aff, accent: 0x9fe8ff,
+    damage: 500, interval: 0.5, bulletColor: 0xc0a0ff, bulletScale: 1.8, pierce: 10, splashRadius: 2.6, splashDamage: 200, homing: 1, shape: "serpent", range: 26 }),
+  mk({ id: "midas_golem", name: "Midas Golem", desc: "Turns the carnage to gold", cost: 26000, rarity: "mythic", color: 0xffd24a, accent: 0xfff0b0,
+    shape: "golem", range: 0, role: "banker", roleValue: 20 }),
+  mk({ id: "void_sovereign", name: "Void Sovereign", desc: "Reality-ending fireballs", cost: 30000, rarity: "mythic", color: 0x3a1a5a, accent: 0xff3aff,
+    damage: 800, interval: 0.5, bulletColor: 0xff3aff, bulletScale: 2.2, pierce: 8, splashRadius: 4.0, splashDamage: 400, homing: 1, shape: "dragon", range: 28 }),
 ];
 
 export function findPet(id: string): PetDef | undefined {
   return PETS.find((p) => p.id === id);
+}
+export function findAnyPet(id: string): PetDef | undefined {
+  return PETS.find((p) => p.id === id) ?? PET_EVOLUTIONS.find((p) => p.id === id);
 }
 
 /** Gold cost to take a pet from `level` to `level+1` (escalating). */
@@ -265,6 +378,133 @@ export class Pet {
         box(0.1, 0.14, 0.05, -0.12, 0.04, 0.24, glowMaterial(0xffd24a, 1.2)); // glowing eyes
         box(0.1, 0.14, 0.05, 0.12, 0.04, 0.24, glowMaterial(0xffd24a, 1.2));
         this.aura = box(0.7, 0.7, 0.7, 0, 0, 0, glowMaterial(this.def.color, 0.3)); // buff aura
+        break;
+      case "drone":
+        box(0.56, 0.16, 0.56, 0, 0, 0, body); // chassis
+        box(0.6, 0.06, 0.6, 0, 0.1, 0, accent); // top plate
+        box(0.12, 0.12, 0.12, -0.3, 0.04, 0.3, glow); // rotor lights
+        box(0.12, 0.12, 0.12, 0.3, 0.04, 0.3, glow);
+        box(0.12, 0.12, 0.12, -0.3, 0.04, -0.3, glow);
+        box(0.12, 0.12, 0.12, 0.3, 0.04, -0.3, glow);
+        box(0.1, 0.1, 0.05, -0.1, 0, 0.3, dark); // eyes
+        box(0.1, 0.1, 0.05, 0.1, 0, 0.3, dark);
+        box(0.16, 0.12, 0.3, 0, -0.06, 0.32, dark); // gun
+        this.muzzle = box(0.14, 0.14, 0.1, 0, -0.06, 0.52, glow);
+        break;
+      case "slime":
+        this.aura = box(0.66, 0.5, 0.66, 0, -0.02, 0, glowMaterial(col, 0.3));
+        box(0.6, 0.4, 0.6, 0, -0.04, 0, glowMaterial(col, 0.45));
+        box(0.42, 0.5, 0.42, 0, 0.08, 0, body);
+        box(0.08, 0.12, 0.05, -0.12, 0.1, 0.22, dark); // eyes
+        box(0.08, 0.12, 0.05, 0.12, 0.1, 0.22, dark);
+        this.muzzle = box(0.12, 0.12, 0.12, 0, 0.02, 0.32, glow);
+        break;
+      case "golem":
+        box(0.6, 0.6, 0.6, 0, 0, 0, body);
+        box(0.66, 0.2, 0.66, 0, -0.24, 0, accent); // base
+        box(0.2, 0.2, 0.06, -0.13, 0.08, 0.3, glow); // glowing eyes
+        box(0.2, 0.2, 0.06, 0.13, 0.08, 0.3, glow);
+        box(0.16, 0.3, 0.16, -0.4, -0.1, 0, body); // arms
+        box(0.16, 0.3, 0.16, 0.4, -0.1, 0, body);
+        this.muzzle = box(0.16, 0.16, 0.12, 0, 0, 0.36, glow);
+        break;
+      case "mushroom":
+        box(0.3, 0.34, 0.3, 0, -0.1, 0, accent); // stem
+        box(0.6, 0.3, 0.6, 0, 0.18, 0, body); // cap
+        box(0.12, 0.12, 0.12, -0.16, 0.22, 0.14, glowMaterial(0xffffff, 0.8)); // spots
+        box(0.12, 0.12, 0.12, 0.16, 0.22, -0.1, glowMaterial(0xffffff, 0.8));
+        box(0.08, 0.1, 0.05, -0.1, -0.08, 0.16, dark); // eyes
+        box(0.08, 0.1, 0.05, 0.1, -0.08, 0.16, dark);
+        this.muzzle = box(0.12, 0.12, 0.12, 0, 0.04, 0.3, glow);
+        break;
+      case "frog":
+        box(0.56, 0.34, 0.5, 0, 0, 0, body);
+        box(0.56, 0.12, 0.5, 0, -0.14, 0, accent); // belly
+        box(0.18, 0.18, 0.16, -0.16, 0.2, 0.06, body); // eye bulges
+        box(0.18, 0.18, 0.16, 0.16, 0.2, 0.06, body);
+        box(0.09, 0.09, 0.05, -0.16, 0.22, 0.16, glowMaterial(0xffffff, 0.6));
+        box(0.09, 0.09, 0.05, 0.16, 0.22, 0.16, glowMaterial(0xffffff, 0.6));
+        box(0.07, 0.07, 0.04, -0.16, 0.22, 0.2, dark);
+        box(0.07, 0.07, 0.04, 0.16, 0.22, 0.2, dark);
+        box(0.14, 0.1, 0.14, -0.24, -0.12, 0.1, body); // feet
+        box(0.14, 0.1, 0.14, 0.24, -0.12, 0.1, body);
+        this.muzzle = box(0.1, 0.1, 0.1, 0, 0, 0.3, glow);
+        break;
+      case "crystal":
+        this.aura = box(0.6, 0.7, 0.6, 0, 0, 0, glowMaterial(col, 0.35));
+        box(0.3, 0.6, 0.3, 0, 0.1, 0, glowMaterial(col, 0.8)); // central shard
+        box(0.18, 0.4, 0.18, -0.22, -0.05, 0, glowMaterial(col, 0.7));
+        box(0.18, 0.4, 0.18, 0.22, -0.05, 0, glowMaterial(col, 0.7));
+        box(0.16, 0.16, 0.16, 0, 0.42, 0, glow); // tip
+        this.muzzle = box(0.12, 0.12, 0.12, 0, 0.1, 0.3, glowMaterial(0xffffff, 1.2));
+        break;
+      case "star":
+        this.aura = box(0.6, 0.6, 0.2, 0, 0, 0, glowMaterial(col, 0.4));
+        box(0.5, 0.14, 0.16, 0, 0, 0, glow); // cross spikes
+        box(0.14, 0.5, 0.16, 0, 0, 0, glow);
+        box(0.36, 0.36, 0.14, 0, 0, 0, glowMaterial(col, 0.9)); // core
+        box(0.07, 0.07, 0.06, -0.08, 0.02, 0.12, dark); // eyes
+        box(0.07, 0.07, 0.06, 0.08, 0.02, 0.12, dark);
+        this.muzzle = box(0.12, 0.12, 0.12, 0, 0, 0.24, glowMaterial(0xffffff, 1.3));
+        break;
+      case "cat":
+        box(0.5, 0.42, 0.5, 0, 0, 0, body);
+        box(0.5, 0.12, 0.5, 0, -0.18, 0, accent);
+        box(0.14, 0.16, 0.05, -0.16, 0.28, 0.04, body); // ears
+        box(0.14, 0.16, 0.05, 0.16, 0.28, 0.04, body);
+        box(0.1, 0.1, 0.05, -0.12, 0.04, 0.24, glowMaterial(0xffe14a, 0.8)); // eyes
+        box(0.1, 0.1, 0.05, 0.12, 0.04, 0.24, glowMaterial(0xffe14a, 0.8));
+        box(0.06, 0.06, 0.05, 0, -0.04, 0.26, accent); // nose
+        box(0.1, 0.1, 0.34, 0, -0.04, -0.4, body); // tail
+        this.muzzle = box(0.1, 0.1, 0.1, 0, -0.02, 0.3, glow);
+        break;
+      case "eye":
+        this.aura = box(0.6, 0.6, 0.6, 0, 0, 0, glowMaterial(col, 0.3));
+        box(0.5, 0.5, 0.5, 0, 0, 0, glowMaterial(0xffffff, 0.5)); // sclera
+        box(0.26, 0.26, 0.1, 0, 0, 0.22, glowMaterial(col, 0.9)); // iris
+        box(0.12, 0.12, 0.06, 0, 0, 0.3, dark); // pupil
+        box(0.54, 0.12, 0.54, 0, 0.26, 0, accent); // brow
+        this.muzzle = box(0.12, 0.12, 0.12, 0, 0, 0.34, glow);
+        break;
+      case "serpent":
+        box(0.4, 0.38, 0.42, 0, 0.06, 0.2, body); // head
+        box(0.16, 0.12, 0.06, 0, 0.08, 0.42, accent); // snout
+        box(0.08, 0.1, 0.05, -0.1, 0.12, 0.34, glowMaterial(0xffe14a, 0.9)); // eyes
+        box(0.08, 0.1, 0.05, 0.1, 0.12, 0.34, glowMaterial(0xffe14a, 0.9));
+        box(0.3, 0.3, 0.3, 0, -0.02, -0.1, body); // segments
+        box(0.24, 0.24, 0.26, 0, -0.06, -0.4, accent);
+        box(0.18, 0.18, 0.22, 0, -0.08, -0.64, body);
+        this.muzzle = box(0.1, 0.1, 0.1, 0, 0.06, 0.5, glow);
+        break;
+      case "phoenix":
+        box(0.4, 0.46, 0.4, 0, 0, 0, body);
+        box(0.26, 0.26, 0.26, 0, 0.3, 0.04, body); // head
+        box(0.12, 0.1, 0.1, 0, 0.3, 0.2, accent); // beak
+        box(0.07, 0.08, 0.05, -0.08, 0.34, 0.16, dark); // eyes
+        box(0.07, 0.08, 0.05, 0.08, 0.34, 0.16, dark);
+        box(0.1, 0.16, 0.1, 0, 0.48, 0.02, glow); // crest
+        box(0.14, 0.1, 0.34, 0, -0.1, -0.34, glowMaterial(col, 0.7)); // tail flame
+        this.wingL = box(0.5, 0.06, 0.4, -0.42, 0.06, -0.04, glowMaterial(col, 0.6));
+        this.wingR = box(0.5, 0.06, 0.4, 0.42, 0.06, -0.04, glowMaterial(col, 0.6));
+        this.muzzle = box(0.12, 0.12, 0.12, 0, 0.28, 0.3, glowMaterial(0xffd24a, 1.4));
+        break;
+      case "ufo":
+        box(0.7, 0.12, 0.7, 0, 0, 0, accent); // disc
+        box(0.4, 0.16, 0.4, 0, 0.12, 0, glowMaterial(0xffffff, 0.6)); // dome
+        box(0.12, 0.12, 0.12, -0.28, -0.02, 0.18, glow); // running lights
+        box(0.12, 0.12, 0.12, 0.28, -0.02, 0.18, glow);
+        box(0.12, 0.12, 0.12, -0.28, -0.02, -0.18, glow);
+        box(0.12, 0.12, 0.12, 0.28, -0.02, -0.18, glow);
+        this.aura = box(0.3, 0.4, 0.3, 0, -0.24, 0, glowMaterial(col, 0.4)); // tractor beam
+        this.muzzle = box(0.14, 0.14, 0.14, 0, -0.1, 0.2, glowMaterial(0x9fe8ff, 1.2));
+        break;
+      case "orb":
+        this.aura = box(0.6, 0.6, 0.6, 0, 0, 0, glowMaterial(col, 0.4));
+        box(0.4, 0.4, 0.4, 0, 0, 0, glow);
+        box(0.6, 0.1, 0.1, 0, 0, 0, glowMaterial(0xffffff, 0.7)); // rings
+        box(0.1, 0.6, 0.1, 0, 0, 0, glowMaterial(0xffffff, 0.7));
+        box(0.1, 0.1, 0.6, 0, 0, 0, glowMaterial(0xffffff, 0.7));
+        this.muzzle = box(0.14, 0.14, 0.14, 0, 0, 0.3, glowMaterial(0xffffff, 1.4));
         break;
       default:
         box(0.5, 0.5, 0.5, 0, 0, 0, body);

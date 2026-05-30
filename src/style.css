@@ -169,10 +169,18 @@ body.touch .controls { display: none; }
 /* ---- Pets tab ---- */
 .pets-hint { font-size: 11px; opacity: 0.6; }
 .pets-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.pet-rarity-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--rc, #b8c2cc); margin: 12px 2px 6px;
+  padding-bottom: 3px; border-bottom: 1px solid color-mix(in srgb, var(--rc, #b8c2cc) 35%, transparent);
+}
+.pet-rarity-head:first-child { margin-top: 4px; }
+.pet-rarity-count { font-size: 10px; opacity: 0.7; font-weight: 700; letter-spacing: 0; }
 .pet-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   padding: 9px 11px; border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--pc) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rc, var(--pc)) 55%, transparent);
   background: color-mix(in srgb, var(--pc) 12%, rgba(0,0,0,0.25));
   color: #fff; cursor: pointer; text-align: left;
 }
