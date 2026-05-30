@@ -57,21 +57,55 @@ function blank(): SaveData {
   };
 }
 
+/** Coerce to a finite, non-negative number — guards against corrupt/forged
+ *  saves where a field is null / NaN / a string (which would otherwise turn
+ *  the whole economy into NaN and permanently break the shop). */
+function num(v: unknown, fallback = 0): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function sanitizeStash(raw: unknown): SavedItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SavedItem[] = [];
+  for (const it of raw) {
+    if (!it || typeof it !== "object") continue;
+    const o = it as Partial<SavedItem>;
+    if (typeof o.id !== "string" || typeof o.name !== "string" || typeof o.rarity !== "string") continue;
+    out.push({ id: o.id, name: o.name, rarity: o.rarity, gold: num(o.gold) });
+  }
+  return out;
+}
+
+function strArray(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+}
+
 export function loadSave(): SaveData {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return blank();
     const data = JSON.parse(raw) as Partial<SaveData>;
-    const base = blank();
+    const skins = strArray(data.skins);
     return {
-      ...base,
-      ...data,
-      owned: data.owned ?? [],
-      skins: data.skins && data.skins.length ? data.skins : ["classic"],
-      skin: data.skin ?? "classic",
-      claimed: data.claimed ?? [],
-      stash: data.stash ?? [],
-      stats: { ...base.stats, ...(data.stats ?? {}) },
+      essence: num(data.essence),
+      gold: num(data.gold),
+      goldEarned: num(data.goldEarned),
+      bestRound: num(data.bestRound),
+      bestScore: num(data.bestScore),
+      owned: strArray(data.owned),
+      skins: skins.length ? skins : ["classic"],
+      skin: typeof data.skin === "string" ? data.skin : "classic",
+      claimed: strArray(data.claimed),
+      stash: sanitizeStash(data.stash),
+      stats: {
+        kills: num(data.stats?.kills),
+        crits: num(data.stats?.crits),
+        bossKills: num(data.stats?.bossKills),
+        drops: num(data.stats?.drops),
+        games: num(data.stats?.games),
+      },
+      muted: !!data.muted,
     };
   } catch {
     return blank();
