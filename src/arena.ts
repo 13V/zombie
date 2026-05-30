@@ -127,10 +127,10 @@ export class Arena {
   }
 
   private buildLights(scene: THREE.Scene) {
-    // Bright sky-dome fill keeps shadows soft & airy (never crushed to black) —
-    // the clean, cheerful daylight of the toy-diorama reference.
-    scene.add(new THREE.HemisphereLight(0xdcefff, 0x8fa05a, 0.72));
-    const key = new THREE.DirectionalLight(0xfff4dc, 1.45);
+    // Soft sky-dome fill — keeps shadows from crushing to black without washing
+    // the scene out (the clean, cheerful daylight of the toy-diorama reference).
+    scene.add(new THREE.HemisphereLight(0xdcefff, 0x8fa05a, 0.5));
+    const key = new THREE.DirectionalLight(0xfff4dc, 1.32);
     key.position.set(20, 34, 16);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -140,13 +140,12 @@ export class Arena {
     cam.near = 1; cam.far = 100;
     key.shadow.bias = -0.0004;
     key.shadow.normalBias = 0.03;
-    // Lighter, warmer shadows so they read as soft contact AO, not hard black.
-    key.shadow.intensity = 0.78;
+    // Soft contact-AO shadows — defined enough to read as crisp, not hard black.
+    key.shadow.intensity = 0.9;
     scene.add(key);
 
-    // A gentle cool fill from the opposite side lifts shadowed faces, matching
-    // the soft ambient-occlusion feel of the reference render.
-    const fill = new THREE.DirectionalLight(0xcfe2ff, 0.35);
+    // A subtle cool fill from the opposite side just lifts shadowed faces.
+    const fill = new THREE.DirectionalLight(0xcfe2ff, 0.18);
     fill.position.set(-18, 16, -14);
     scene.add(fill);
   }
