@@ -3,6 +3,7 @@ import { ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
 import { Zombie } from "./zombie";
 import { Arena } from "./arena";
 import { AssetManager } from "./assets";
+import { SpatialGrid } from "./grid";
 
 type Phase = "pre" | "active" | "intermission";
 
@@ -12,6 +13,8 @@ type Phase = "pre" | "active" | "intermission";
  */
 export class RoundManager {
   readonly zombies: Zombie[] = [];
+  /** Per-frame spatial index of alive zombies (rebuilt in update). */
+  readonly grid = new SpatialGrid();
   round = 0;
   phase: Phase = "pre";
 
@@ -109,6 +112,8 @@ export class RoundManager {
   }
 
   update(dt: number, arena: Arena, playerPositions: THREE.Vector3[]) {
+    // Rebuild the spatial grid once per frame; zombies + combat systems query it.
+    this.grid.rebuild(this.zombies);
     if (this.phase === "active") {
       // boss rounds: drop the boss in first, then the supporting horde
       if (this.bossPending) this.spawnBoss(arena);
@@ -133,7 +138,7 @@ export class RoundManager {
       if (z.alive) {
         const target = this.nearestPlayer(z.pos, playerPositions);
         if (target) {
-          z.update(dt, target, this.zombies);
+          z.update(dt, target, this.grid);
           arena.resolveObstacles(z.pos, ZOMBIE.radius);
           z.group.position.x = z.pos.x;
           z.group.position.z = z.pos.z;

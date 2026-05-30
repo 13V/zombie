@@ -1158,10 +1158,13 @@ class Game implements GameApi {
   private resolveBulletHits() {
     const dmgMul = this.powerups.damageMul();
     const sMul = this.powerups.scoreMul();
+    const grid = this.rounds.grid;
     for (const b of this.bullets.bullets) {
       if (!b.alive) continue;
-      for (const z of this.rounds.zombies) {
-        if (!z.alive || b.hit.has(z.id)) continue;
+      // query only zombies in cells near the bullet (was: scan all zombies)
+      grid.forNear(b.mesh.position.x, b.mesh.position.z, ZOMBIE.radius * 2 + 0.25, (z) => {
+        if (!b.alive) return false; // bullet already retired this pass
+        if (!z.alive || b.hit.has(z.id)) return;
         const scale = z.group.scale.x;
         const hitR = ZOMBIE.radius * scale + 0.25;
         const dx = z.pos.x - b.mesh.position.x;
@@ -1190,18 +1193,19 @@ class Game implements GameApi {
             this.splash(z.pos, splashR, sd, z.id, sMul);
           }
           if (this.mods.chainCount > 0) this.chainLightning(z, dmg * 0.5, sMul);
-          // pierce first, then ricochet, then the round stops
+          // pierce first, then ricochet, then the round stops (return false to
+          // end this bullet's grid scan)
           if (b.pierce > 0) {
             b.pierce--;
           } else if (b.bounces > 0 && this.ricochetBullet(b)) {
             b.bounces--;
-            break;
+            return false;
           } else {
             this.bullets.retire(b);
-            break;
+            return false;
           }
         }
-      }
+      });
     }
   }
 
@@ -1244,17 +1248,13 @@ class Game implements GameApi {
   /** Arc bonus damage to a few zombies near `from`. */
   private chainLightning(from: Zombie, dmg: number, sMul: number) {
     let hits = 0;
-    for (const z of this.rounds.zombies) {
-      if (hits >= this.mods.chainCount) break;
-      if (!z.alive || z === from) continue;
-      const dx = z.pos.x - from.pos.x;
-      const dz = z.pos.z - from.pos.z;
-      if (dx * dx + dz * dz < 25) {
-        this.puffs.burst(z.pos, 0x9fe8ff, 4);
-        this.damageZombie(z, dmg, sMul);
-        hits++;
-      }
-    }
+    this.rounds.grid.forNear(from.pos.x, from.pos.z, 5, (z) => {
+      if (hits >= this.mods.chainCount) return false;
+      if (!z.alive || z === from) return;
+      this.puffs.burst(z.pos, 0x9fe8ff, 4);
+      this.damageZombie(z, dmg, sMul);
+      hits++;
+    });
   }
 
   /** Nearest alive zombie to (x,z) within `range`, skipping ids in `skip`. */
@@ -1326,15 +1326,15 @@ class Game implements GameApi {
   /** AoE damage to every zombie in range (except the one already hit directly). */
   private splash(center: THREE.Vector3, radius: number, dmg: number, exceptId: number, scoreMul: number) {
     const r2 = radius * radius;
-    for (const z of this.rounds.zombies) {
-      if (!z.alive || z.id === exceptId) continue;
+    this.rounds.grid.forNear(center.x, center.z, radius, (z) => {
+      if (!z.alive || z.id === exceptId) return;
       const dx = z.pos.x - center.x;
       const dz = z.pos.z - center.z;
       if (dx * dx + dz * dz < r2) {
         z.knockback(center.x, center.z, 4);
         this.damageZombie(z, dmg, scoreMul);
       }
-    }
+    });
   }
 
   private resolveZombieTouch(dt: number) {

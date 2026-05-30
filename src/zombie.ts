@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
 import { AssetManager, CharacterRig } from "./assets";
 import { VoxelChar } from "./voxelChar";
+import type { SpatialGrid } from "./grid";
 
 const _tmp = new THREE.Vector3();
 let _nextId = 1;
@@ -131,7 +132,7 @@ export class Zombie {
     this.slowTimer = Math.max(this.slowTimer, dur);
   }
 
-  update(dt: number, target: THREE.Vector3, others: Zombie[]) {
+  update(dt: number, target: THREE.Vector3, grid: SpatialGrid) {
     if (!this.alive) return;
     if (this.touchCooldown > 0) this.touchCooldown -= dt;
 
@@ -148,19 +149,20 @@ export class Zombie {
     if (dist > 0.0001) _tmp.divideScalar(dist);
     this.vel.copy(_tmp).multiplyScalar(speed);
 
-    for (const o of others) {
-      if (o === this || !o.alive) continue;
+    // separation: only check zombies in nearby grid cells (was O(n²))
+    const minD = ZOMBIE.separation;
+    grid.forNear(this.pos.x, this.pos.z, minD, (o) => {
+      if (o === this || !o.alive) return;
       const dx = this.pos.x - o.pos.x;
       const dz = this.pos.z - o.pos.z;
       const d2 = dx * dx + dz * dz;
-      const minD = ZOMBIE.separation;
       if (d2 > 0.0001 && d2 < minD * minD) {
         const d = Math.sqrt(d2);
         const push = (minD - d) / minD;
         this.vel.x += (dx / d) * push * this.speed * 1.4;
         this.vel.z += (dz / d) * push * this.speed * 1.4;
       }
-    }
+    });
 
     // apply + decay knockback (visual push, then snaps back to steering)
     this.pos.addScaledVector(this.vel, dt);
