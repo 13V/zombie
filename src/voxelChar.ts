@@ -140,10 +140,11 @@ export class VoxelChar implements CharacterRig {
       this.headMat.emissiveIntensity = 1;
       return;
     }
-    this.bodyMat.emissive.setRGB(amount, amount, amount);
-    this.headMat.emissive.setRGB(amount, amount, amount);
-    this.bodyMat.emissiveIntensity = 1;
-    this.headMat.emissiveIntensity = 1;
+    // flash RED on damage so hits read clearly (was white)
+    this.bodyMat.emissive.setRGB(amount, amount * 0.05, amount * 0.05);
+    this.headMat.emissive.setRGB(amount, amount * 0.05, amount * 0.05);
+    this.bodyMat.emissiveIntensity = 1.6;
+    this.headMat.emissiveIntensity = 1.6;
   }
 
   play(state: AnimState, _opts: { once?: boolean } = {}) {
