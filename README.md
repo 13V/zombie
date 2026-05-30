@@ -48,8 +48,16 @@ The game supports host-authoritative online co-op. There are two pieces:
 
 Then on the title screen: **Host Co-op** prints a 4-letter room code; friends
 pick **Join**, type the code, and drop into your world. One player (the host) is
-the authoritative simulation; everyone shares the round, the horde, and points.
-Solo play needs none of this.
+the authoritative simulation; everyone shares the round, the horde, and a **team
+points pool**. Solo play needs none of this.
+
+Guests are full participants: they have their own weapon inventory and can
+**buy from the Mystery Box / wall-buys, swap weapons (Q), Pack-a-Punch, grab
+perks, and chew Gobblegum**, with buy confirmations pushed back to them. Their
+own ammo HUD + buy prompts are driven by the host snapshot. The free relay can
+cold-start, so Host/Join pings the server's health endpoint first and waits up
+to ~45s. (Known limits: guests don't yet see the boss bar / gum timers, and
+their level-up picks are host-only.)
 
 ## Controls
 

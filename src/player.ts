@@ -20,6 +20,8 @@ export class Player {
   maxHealth = PLAYER.maxHealth;
   timeSinceHit = 99;
   alive = true;
+  /** True while the figure is walking this frame (for networked animation). */
+  moving = false;
 
   // buffs (perks)
   speedMul = 1;
@@ -95,6 +97,7 @@ export class Player {
     }
 
     const moving = moveX !== 0 || moveZ !== 0;
+    this.moving = moving;
     this.char.play(moving ? "walk" : "idle");
     this.char.update(dt);
     this.updateFlash(dt);
@@ -124,6 +127,14 @@ export class Player {
   /** Used on the menu / paused screens so the figure keeps breathing. */
   idle(dt: number) {
     this.char.play("idle");
+    this.char.update(dt);
+    this.updateFlash(dt);
+  }
+
+  /** Animate the rig (walk/idle) without moving — for a guest's own networked
+   *  figure, whose position comes from the host snapshot. */
+  netAnimate(dt: number, walking: boolean) {
+    this.char.play(walking ? "walk" : "idle");
     this.char.update(dt);
     this.updateFlash(dt);
   }

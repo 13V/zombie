@@ -90,11 +90,21 @@ class ZombieView {
 }
 
 /** Host-side record for a connected guest: the Player we simulate for them. */
-interface GuestSlot {
+export interface GuestSlot {
+  id: number;
   player: Player;
-  weapon: Weapon;
+  /** Full per-guest weapon inventory so guests can buy / swap / Pack-a-Punch. */
+  weapons: Weapon[];
+  activeSlot: number;
+  perks: Set<"tough" | "quick">;
   input: InputMsg;
   aim: THREE.Vector3;
+  /** Edge events latched on message receipt so a press isn't lost to frame
+   *  timing between the guest's send rate and the host's sim rate. */
+  pendingSwap: boolean;
+  pendingInteract: boolean;
+  /** Consumed by the game layer to run the guest's queued interaction. */
+  wantInteract: boolean;
 }
 
 const PLAYER_COLORS = [COLORS.player, 0xe06a4a, 0x53b36a, 0xc78ad8];
@@ -120,6 +130,13 @@ export class NetPlay {
   netPoints = 0;
   myHp = 100;
   myMaxHp = 100;
+  // local guest's own weapon display (driven by the snapshot)
+  myWeapon = "Peashooter";
+  myAmmo = 0;
+  myReserve = "∞";
+  myReloading = false;
+  /** Set by main: show a toast pushed from the host. */
+  onToast?: (msg: string) => void;
 
   constructor(
     net: NetClient,
@@ -141,17 +158,29 @@ export class NetPlay {
   private addGuest(id: number) {
     if (!this.isHost || this.guests.has(id)) return;
     const player = new Player(this.scene, this.assets);
+    player.setSkin(PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length], COLORS.playerAccent);
     player.pos.set((Math.random() - 0.5) * 4, 0, 9);
     this.guests.set(id, {
+      id,
       player,
-      weapon: new Weapon(WEAPONS.peashooter),
+      weapons: [new Weapon(WEAPONS.peashooter)],
+      activeSlot: 0,
+      perks: new Set(),
       input: { t: "input", mx: 0, mz: 0, ax: 0, az: -1, fire: false, reload: false, swap: false, interact: false },
       aim: new THREE.Vector3(),
+      pendingSwap: false,
+      pendingInteract: false,
+      wantInteract: false,
     });
   }
 
   /** Simulate every guest's Player from their last input. Call inside host sim. */
-  hostSimulateGuests(dt: number, arena: { clamp: Function; resolveObstacles: Function }, bullets: BulletSystem, onShot: (x: number, z: number, dx: number, dz: number) => void) {
+  hostSimulateGuests(
+    dt: number,
+    arena: { clamp: Function; resolveObstacles: Function },
+    bullets: BulletSystem,
+    onShot: (x: number, z: number, dx: number, dz: number, color: number, scale: number) => void,
+  ) {
     if (!this.isHost) return;
     for (const slot of this.guests.values()) {
       const inp = slot.input;
@@ -161,15 +190,29 @@ export class NetPlay {
       arena.resolveObstacles(slot.player.pos, 0.55);
       slot.player.group.position.copy(slot.player.pos);
 
-      slot.weapon.update(dt, 1);
+      // weapon swap (latched edge)
+      if (slot.pendingSwap) {
+        slot.pendingSwap = false;
+        if (slot.weapons.length > 1) slot.activeSlot = (slot.activeSlot + 1) % slot.weapons.length;
+      }
+      // interact (latched edge) — handled by the game layer (needs interactables)
+      if (slot.pendingInteract) {
+        slot.pendingInteract = false;
+        slot.wantInteract = true;
+      }
+
+      const w = slot.weapons[slot.activeSlot];
+      w.update(dt, slot.player.reloadMul);
       if (inp.fire && slot.player.alive) {
-        const before = slot.weapon.ammo;
-        slot.weapon.tryFire(slot.player.muzzle, slot.player.aimDir, bullets);
-        if (slot.weapon.ammo < before) {
-          onShot(slot.player.muzzle.x, slot.player.muzzle.z, slot.player.aimDir.x, slot.player.aimDir.z);
+        const before = w.ammo;
+        if (w.tryFire(slot.player.muzzle, slot.player.aimDir, bullets) && w.ammo < before) {
+          onShot(
+            slot.player.muzzle.x, slot.player.muzzle.z, slot.player.aimDir.x, slot.player.aimDir.z,
+            w.def.bulletColor ?? COLORS.bullet, w.def.bulletScale ?? 1,
+          );
         }
       }
-      if (inp.reload) slot.weapon.reload();
+      if (inp.reload) w.reload();
     }
   }
 
@@ -186,20 +229,28 @@ export class NetPlay {
   }
 
   /** Build + broadcast the world snapshot (rate-limited). */
-  hostBroadcast(dt: number, localPlayer: Player, zombies: ZombieSnap[], round: number, points: number, phase: string) {
+  hostBroadcast(
+    dt: number,
+    localPlayer: Player,
+    hostWeapon: Weapon,
+    zombies: ZombieSnap[],
+    round: number,
+    points: number,
+    phase: string,
+  ) {
     if (!this.isHost) return;
     this.snapAccum += dt;
     if (this.snapAccum < this.snapRate) return;
     this.snapAccum = 0;
 
-    const players: PlayerSnap[] = [this.snapOf(1, localPlayer)];
-    for (const [id, s] of this.guests) players.push(this.snapOf(id, s.player));
+    const players: PlayerSnap[] = [this.snapOf(1, localPlayer, hostWeapon)];
+    for (const [id, s] of this.guests) players.push(this.snapOf(id, s.player, s.weapons[s.activeSlot]));
 
     const msg: SnapMsg = { t: "snap", players, zombies, round, points, phase };
     this.net.send(msg);
   }
 
-  private snapOf(id: number, p: Player): PlayerSnap {
+  private snapOf(id: number, p: Player, w?: Weapon): PlayerSnap {
     return {
       id,
       x: p.pos.x,
@@ -208,7 +259,11 @@ export class NetPlay {
       hp: p.health,
       maxHp: p.maxHealth,
       alive: p.alive,
-      walking: true,
+      walking: p.moving,
+      wn: w?.def.name,
+      am: w?.ammo,
+      rs: w?.reserveLabel,
+      rl: w?.reloading,
     };
   }
 
@@ -216,6 +271,18 @@ export class NetPlay {
   hostShot(x: number, z: number, dx: number, dz: number, color: number, scale: number) {
     if (!this.isHost) return;
     this.net.send({ t: "shot", x, z, dx, dz, color, scale });
+  }
+
+  /** Host → one guest: a feedback toast (buy confirmations, "not enough", …). */
+  hostToast(id: number, msg: string) {
+    if (!this.isHost) return;
+    this.net.send({ t: "toast", msg }, id);
+  }
+
+  /** Host → all guests: a broadcast toast (e.g. run over / new round). */
+  hostNotify(msg: string) {
+    if (!this.isHost) return;
+    this.net.send({ t: "toast", msg });
   }
 
   // ================= GUEST =================
@@ -240,7 +307,11 @@ export class NetPlay {
         localPlayer.alive = ps.alive;
         this.myHp = ps.hp;
         this.myMaxHp = ps.maxHp;
-        localPlayer.idle(dt);
+        if (ps.wn !== undefined) this.myWeapon = ps.wn;
+        if (ps.am !== undefined) this.myAmmo = ps.am;
+        if (ps.rs !== undefined) this.myReserve = ps.rs;
+        this.myReloading = !!ps.rl;
+        localPlayer.netAnimate(dt, ps.walking);
       } else {
         let fig = this.remote.get(ps.id);
         if (!fig) {
@@ -280,7 +351,12 @@ export class NetPlay {
   private onMessage(from: number, msg: NetMsg) {
     if (msg.t === "input" && this.isHost) {
       const slot = this.guests.get(from);
-      if (slot) slot.input = msg;
+      if (slot) {
+        slot.input = msg;
+        // latch discrete presses so they survive send/sim rate mismatch
+        if (msg.swap) slot.pendingSwap = true;
+        if (msg.interact) slot.pendingInteract = true;
+      }
     } else if (msg.t === "snap" && !this.isHost) {
       this.latest = msg;
     } else if (msg.t === "shot" && !this.isHost) {
@@ -290,6 +366,8 @@ export class NetPlay {
       this.tracers.spawn(origin, dir, {
         speed: 64, damage: 0, pierce: 0, splashRadius: 0, splashDamage: 0, color: msg.color, scale: msg.scale,
       });
+    } else if (msg.t === "toast" && !this.isHost) {
+      this.onToast?.(msg.msg);
     }
   }
 

@@ -16,6 +16,20 @@
 export const SERVER_URL: string =
   ((import.meta as any).env?.VITE_SERVER_URL as string | undefined) ?? "wss://zombie-kwhm.onrender.com";
 
+/**
+ * Free hosting tiers (Render) spin the server down when idle, so the first
+ * connection can take 30–60s to cold-start. Poke the HTTP health endpoint to
+ * wake the dyno before we open the WebSocket, which makes the WS connect fast.
+ */
+export function warmServer(): void {
+  try {
+    const httpUrl = SERVER_URL.replace(/^ws/, "http").replace(/\/$/, "") + "/health";
+    fetch(httpUrl, { mode: "no-cors" }).catch(() => {});
+  } catch {
+    /* best-effort */
+  }
+}
+
 // ---- application-level messages (carried inside relay `data`) ----
 
 export interface PlayerSnap {
@@ -27,6 +41,11 @@ export interface PlayerSnap {
   maxHp: number;
   alive: boolean;
   walking: boolean;
+  /** Active weapon display (so a guest can show its own ammo HUD). */
+  wn?: string;
+  am?: number;
+  rs?: string;
+  rl?: boolean;
 }
 
 export interface ZombieSnap {
@@ -61,6 +80,12 @@ export interface ShotMsg {
   scale: number;
 }
 
+/** Host → a specific guest: a short feedback message (buy confirmations, etc.). */
+export interface ToastMsg {
+  t: "toast";
+  msg: string;
+}
+
 /** Guest → host, sent each frame: that player's intent. */
 export interface InputMsg {
   t: "input";
@@ -75,7 +100,7 @@ export interface InputMsg {
   interact: boolean;
 }
 
-export type NetMsg = SnapMsg | ShotMsg | InputMsg;
+export type NetMsg = SnapMsg | ShotMsg | InputMsg | ToastMsg;
 
 // ---- transport envelopes (to/from the relay server) ----
 
@@ -179,7 +204,8 @@ export class NetClient {
         return;
       }
       this.ws = ws;
-      const to = setTimeout(() => reject(new Error("Connection timed out")), 8000);
+      // Generous timeout: the free server may be cold-starting (~30–60s).
+      const to = setTimeout(() => reject(new Error("Connection timed out — the server may be waking up; try again")), 45000);
       ws.onerror = () => reject(new Error("Could not reach the server"));
       ws.onclose = () => {
         if (this.connected) {

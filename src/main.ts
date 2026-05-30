@@ -28,8 +28,8 @@ import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
-import { NetClient, InputMsg, ZombieSnap } from "./net";
-import { NetPlay } from "./netplay";
+import { NetClient, InputMsg, ZombieSnap, warmServer } from "./net";
+import { NetPlay, GuestSlot } from "./netplay";
 import { COLORS } from "./palette";
 import { TiltShift } from "./tiltShift";
 
@@ -121,6 +121,8 @@ class Game implements GameApi {
   private net?: NetClient;
   private netplay?: NetPlay;
   private myId = 1;
+  /** When set, GameApi buy/perk actions target this guest instead of the host. */
+  private acting: GuestSlot | null = null;
 
   private tilt: TiltShift;
 
@@ -411,6 +413,8 @@ class Game implements GameApi {
     this.audio.stopMusic();
     this.audio.hurt();
     this.hud.hideBoss();
+    // Co-op host: let guests know the team wiped (they resume when host replays).
+    this.netplay?.hostNotify("Team wiped — waiting for host…");
 
     // Every run pays out Essence and may set a new personal best.
     const earned = essenceFor(this.rounds.round, this.points, this.mods.essenceMul);
@@ -454,7 +458,8 @@ class Game implements GameApi {
 
   // ---- multiplayer ----
   private async hostGame() {
-    this.hud.setLobbyStatus("Connecting…");
+    warmServer(); // poke the dyno in case it's cold-starting
+    this.hud.setLobbyStatus("Connecting… (server may take ~30s to wake)");
     try {
       this.net = new NetClient();
       this.net.onClose = (r) => this.onNetClose(r);
@@ -474,13 +479,15 @@ class Game implements GameApi {
       this.hud.setLobbyStatus("Enter a room code");
       return;
     }
-    this.hud.setLobbyStatus("Joining…");
+    warmServer();
+    this.hud.setLobbyStatus("Joining… (server may take ~30s to wake)");
     try {
       this.net = new NetClient();
       this.net.onClose = (r) => this.onNetClose(r);
       const { id } = await this.net.join(code);
       this.myId = id;
       this.netplay = new NetPlay(this.net, this.scene, this.assets, this.bullets);
+      this.netplay.onToast = (m) => this.hud.toast(m); // host-pushed feedback
       // guests render the host's authoritative world; no local sim
       this.resetRun();
       this.hud.hideStart();
@@ -508,9 +515,11 @@ class Game implements GameApi {
   }
 
   // ---- GameApi (used by interactables) ----
+  // Points are a shared team pool. When `this.acting` is set, weapon/perk
+  // actions target that guest's inventory instead of the host's.
   spend(amount: number): boolean {
     if (this.points < amount) {
-      this.hud.toast("Not enough points");
+      this.toast("Not enough points");
       this.audio.deny();
       return false;
     }
@@ -523,24 +532,39 @@ class Game implements GameApi {
     this.points += n;
     this.hud.setPoints(this.points);
   }
+  /** Weapon inventory of whoever is currently acting (host or a guest). */
+  private actorWeapons(): Weapon[] {
+    return this.acting ? this.acting.weapons : this.weapons;
+  }
+  private actorSlot(): number {
+    return this.acting ? this.acting.activeSlot : this.activeSlot;
+  }
+  private setActorSlot(i: number) {
+    if (this.acting) this.acting.activeSlot = i;
+    else this.activeSlot = i;
+  }
+  private actorWeapon(): Weapon {
+    return this.actorWeapons()[this.actorSlot()];
+  }
   giveWeapon(id: string) {
     const def = WEAPONS[id];
-    const existing = this.weapons.findIndex((w) => w.def.id === id);
+    const weapons = this.actorWeapons();
+    const existing = weapons.findIndex((w) => w.def.id === id);
     if (existing >= 0) {
-      const w = this.weapons[existing];
+      const w = weapons[existing];
       w.ammo = def.magSize;
       w.reserve = def.reserve;
-      this.activeSlot = existing;
+      this.setActorSlot(existing);
     } else {
       const w = new Weapon(def);
-      if (this.weapons.length < 2) {
-        this.weapons.push(w);
-        this.activeSlot = this.weapons.length - 1;
+      if (weapons.length < 2) {
+        weapons.push(w);
+        this.setActorSlot(weapons.length - 1);
       } else {
-        this.weapons[this.activeSlot] = w;
+        weapons[this.actorSlot()] = w;
       }
     }
-    this.syncWeaponHud();
+    if (!this.acting) this.syncWeaponHud();
   }
   randomBoxWeapon(): string {
     // ~12% of pulls are a wonder weapon; the rest are normal guns.
@@ -548,42 +572,46 @@ class Game implements GameApi {
     return BOX_POOL[Math.floor(Math.random() * BOX_POOL.length)];
   }
   grantPerk(perk: "tough" | "quick") {
-    this.perks.add(perk);
+    const perks = this.acting ? this.acting.perks : this.perks;
+    const player = this.acting ? this.acting.player : this.player;
+    perks.add(perk);
     if (perk === "tough") {
-      this.player.maxHealth = 200;
-      this.player.health = 200;
+      player.maxHealth = 200;
+      player.health = 200;
     } else {
-      this.player.speedMul = 1.35;
-      this.player.reloadMul = 1.7;
+      player.speedMul = 1.35;
+      player.reloadMul = 1.7;
     }
   }
   hasPerk(perk: "tough" | "quick"): boolean {
-    return this.perks.has(perk);
+    return (this.acting ? this.acting.perks : this.perks).has(perk);
   }
   upgradeCurrentWeapon() {
-    const w = this.weapon;
+    const w = this.actorWeapon();
     if (w.upgraded) {
-      this.hud.toast("Already Pack-a-Punched");
+      this.toast("Already Pack-a-Punched");
       return;
     }
     if (!this.spend(COSTS.packAPunch)) return;
     w.upgrade();
-    this.syncWeaponHud();
-    this.hud.toast(`${w.def.name}!`);
+    if (!this.acting) this.syncWeaponHud();
+    this.toast(`${w.def.name}!`);
   }
   giveRandomGum() {
     const id = this.powerups.randomId();
     const def = this.powerups.grant(id);
     if (!def) return;
     if (id === "fullPockets") {
-      for (const w of this.weapons) w.refill();
-      this.syncWeaponHud();
+      for (const w of this.actorWeapons()) w.refill();
+      if (!this.acting) this.syncWeaponHud();
     }
     this.audio.powerup();
-    this.hud.toast(`${def.name}!`);
+    this.toast(`${def.name}!`);
   }
+  /** Feedback message — shown locally for the host, sent over the wire to a guest. */
   toast(msg: string) {
-    this.hud.toast(msg);
+    if (this.acting && this.netplay) this.netplay.hostToast(this.acting.id, msg);
+    else this.hud.toast(msg);
   }
 
   private get weapon(): Weapon {
@@ -592,6 +620,52 @@ class Game implements GameApi {
   private syncWeaponHud() {
     const w = this.weapon;
     this.hud.setWeapon(w.def.name, w.ammo, w.reserveLabel, w.reloading);
+  }
+
+  /** Run `fn` with `actor` as the acting player, restoring the previous actor
+   *  after. Used so deferred interactable rewards bill the right inventory. */
+  private withActor<T>(actor: GuestSlot, fn: () => T): T {
+    const prev = this.acting;
+    this.acting = actor;
+    try {
+      return fn();
+    } finally {
+      this.acting = prev;
+    }
+  }
+
+  /**
+   * A GameApi view bound to one guest. The Mystery Box (and anything else that
+   * defers its reward to a later frame) captures this, so the deferred reward
+   * still bills/credits the guest who pulled it — not whoever acts next.
+   */
+  private apiFor(actor: GuestSlot): GameApi {
+    const self = this;
+    return {
+      get points() {
+        return self.points;
+      },
+      spend: (a) => self.withActor(actor, () => self.spend(a)),
+      giveWeapon: (id) => self.withActor(actor, () => self.giveWeapon(id)),
+      randomBoxWeapon: () => self.randomBoxWeapon(),
+      grantPerk: (p) => self.withActor(actor, () => self.grantPerk(p)),
+      hasPerk: (p) => self.withActor(actor, () => self.hasPerk(p)),
+      upgradeCurrentWeapon: () => self.withActor(actor, () => self.upgradeCurrentWeapon()),
+      giveRandomGum: () => self.withActor(actor, () => self.giveRandomGum()),
+      toast: (m) => self.withActor(actor, () => self.toast(m)),
+    };
+  }
+
+  /** Host: run any guest interactions queued this tick (buy / perk / Pack-a-Punch). */
+  private processGuestInteractions() {
+    if (!this.netplay) return;
+    for (const slot of this.netplay.hostGuestSlots()) {
+      if (!slot.wantInteract) continue;
+      slot.wantInteract = false;
+      if (!slot.player.alive) continue;
+      const near = this.interactables.nearest(slot.player.pos);
+      if (near) near.interact(this.apiFor(slot));
+    }
   }
 
   // ---- main loop ----
@@ -674,9 +748,10 @@ class Game implements GameApi {
 
     // host also simulates each connected guest's player into the shared world
     if (this.netplay) {
-      this.netplay.hostSimulateGuests(dt, this.arena, this.bullets, (x, z, dx, dz) =>
-        this.netplay!.hostShot(x, z, dx, dz, COLORS.bullet, 1),
+      this.netplay.hostSimulateGuests(dt, this.arena, this.bullets, (x, z, dx, dz, color, scale) =>
+        this.netplay!.hostShot(x, z, dx, dz, color, scale),
       );
+      this.processGuestInteractions();
     }
 
     this.bullets.update(dt);
@@ -693,7 +768,7 @@ class Game implements GameApi {
         if (!z.alive && !z.dying) continue;
         zs.push({ id: z.id, x: z.pos.x, z: z.pos.z, ry: z.group.rotation.y, type: z.typeIndex, state: z.dying ? 1 : 0 });
       }
-      this.netplay.hostBroadcast(dt, this.player, zs, this.rounds.round, this.points, this.rounds.phase);
+      this.netplay.hostBroadcast(dt, this.player, this.weapon, zs, this.rounds.round, this.points, this.rounds.phase);
     }
 
     // interaction prompt + buy
@@ -804,7 +879,19 @@ class Game implements GameApi {
     this.hud.setRound(this.netplay!.netRound);
     this.hud.setPoints(this.netplay!.netPoints);
     this.hud.setHealth(this.netplay!.myHp, this.netplay!.myMaxHp);
-    this.hud.hidePrompt();
+    this.hud.setWeapon(this.netplay!.myWeapon, this.netplay!.myAmmo, this.netplay!.myReserve, this.netplay!.myReloading);
+
+    // Local buy prompt: interactables sit at fixed positions, so the guest can
+    // compute its own prompt from the snapshot-driven position + shared points.
+    this.points = this.netplay!.netPoints; // so prompt affordability is correct
+    const near = this.interactables.nearest(this.player.pos);
+    if (near) {
+      const p = near.prompt(this);
+      if (p) this.hud.showPrompt(p.text, p.affordable);
+      else this.hud.hidePrompt();
+    } else {
+      this.hud.hidePrompt();
+    }
   }
 
   private resolveBulletHits() {
