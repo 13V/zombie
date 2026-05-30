@@ -142,6 +142,10 @@ export class Hud {
           </div>
         </div>
         <div class="lobby-status" id="lobby-status"></div>
+        <div class="wallet-row">
+          <button class="coop-btn wallet" id="btn-wallet">Connect Wallet</button>
+          <span class="wallet-bal" id="wallet-bal"></span>
+        </div>
         <button class="link-btn" id="btn-server">⚙ Co-op server</button>
       </div>
 
@@ -383,6 +387,15 @@ export class Hud {
   }
   onServer(cb: () => void) {
     this.q("#btn-server").addEventListener("click", cb);
+  }
+  onWallet(cb: () => void) {
+    this.q("#btn-wallet").addEventListener("click", cb);
+  }
+  /** Reflect wallet connection state on the menu button + balance chip. */
+  setWallet(connected: boolean, short: string, balanceLabel: string) {
+    this.q("#btn-wallet").textContent = connected ? short : "Connect Wallet";
+    this.q("#btn-wallet").classList.toggle("connected", connected);
+    this.q("#wallet-bal").textContent = connected ? balanceLabel : "";
   }
   showRoomCode(code: string) {
     this.q("#hud-room-code").textContent = code;
