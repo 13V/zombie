@@ -30,6 +30,7 @@ export interface SaveData {
   skin: string; // equipped skin id
   claimed: string[]; // completed challenge ids
   stash: SavedItem[]; // tradable loot inventory
+  pets: string[]; // owned companion pet ids (bought with gold)
   stats: LifetimeStats;
   muted: boolean;
 }
@@ -52,6 +53,7 @@ function blank(): SaveData {
     skin: "classic",
     claimed: [],
     stash: [],
+    pets: [],
     stats: blankStats(),
     muted: false,
   };
@@ -98,6 +100,7 @@ export function loadSave(): SaveData {
       skin: typeof data.skin === "string" ? data.skin : "classic",
       claimed: strArray(data.claimed),
       stash: sanitizeStash(data.stash),
+      pets: strArray(data.pets),
       stats: {
         kills: num(data.stats?.kills),
         crits: num(data.stats?.crits),

@@ -24,6 +24,7 @@ import { Audio } from "./audio";
 import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
+import { Pet, PETS, findPet } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
@@ -113,6 +114,9 @@ class Game implements GameApi {
   private floaters: FloatingText;
   private drops: Drops;
   private explosions: Explosions;
+  private pets: Pet[] = [];
+  private _petTgt = { x: 0, z: 0 };
+  private _petDir = new THREE.Vector3();
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
@@ -296,6 +300,7 @@ class Game implements GameApi {
     this.player.group.position.copy(this.player.pos);
     this.bullets.clear();
     this.rounds.reset();
+    this.spawnPets();
     this.points = SCORE.startingPoints + this.mods.startPointsBonus;
     const starter = this.mods.startWeapon && WEAPONS[this.mods.startWeapon] ? WEAPONS[this.mods.startWeapon] : WEAPONS.peashooter;
     this.weapons = [new Weapon(starter)];
@@ -368,6 +373,34 @@ class Game implements GameApi {
       (id) => this.sellItem(id),
       () => this.sellAll(),
     );
+
+    // Pets: buy companions with gold (the gold sink + late-game chaos).
+    this.hud.renderPets(
+      this.save.gold,
+      PETS.map((p) => ({
+        id: p.id, name: p.name, desc: p.desc, cost: p.cost,
+        color: `#${p.color.toString(16).padStart(6, "0")}`,
+        owned: this.save.pets.includes(p.id),
+        affordable: this.save.gold >= p.cost,
+      })),
+      (id) => this.buyPet(id),
+    );
+  }
+
+  /** Buy a companion pet with gold; it joins you on the next run (and this one). */
+  private buyPet(id: string) {
+    const def = findPet(id);
+    if (!def || this.save.pets.includes(id)) return;
+    if (this.save.gold < def.cost) {
+      this.audio.deny();
+      return;
+    }
+    this.save.gold -= def.cost;
+    this.save.pets.push(id);
+    writeSave(this.save);
+    this.audio.powerup();
+    this.spawnPets(); // live update so a mid-menu purchase shows immediately
+    this.renderShop();
   }
 
   /** Add a freshly-dropped item to the stash + announce it in-run. */
@@ -982,6 +1015,7 @@ class Game implements GameApi {
     this.bullets.update(dt);
     const targets = this.netplay ? this.netplay.hostPlayerPositions(this.player) : [this.player.pos];
     this.rounds.update(dt, this.arena, targets);
+    this.updatePets(dt);
 
     this.resolveBulletHits();
     this.resolveZombieTouch(dt);
@@ -1230,6 +1264,48 @@ class Game implements GameApi {
           }
         }
       });
+    }
+  }
+
+  /** Rebuild live pets from the owned list (called on run start / purchase). */
+  private spawnPets() {
+    for (const p of this.pets) this.scene.remove(p.group);
+    this.pets = [];
+    this.save.pets.forEach((id, i) => {
+      const def = findPet(id);
+      if (!def) return;
+      const pet = new Pet(def, (i / Math.max(1, this.save.pets.length)) * Math.PI * 2);
+      this.scene.add(pet.group);
+      this.pets.push(pet);
+    });
+  }
+
+  /** Tick companion pets: orbit the player, auto-target, fire real bullets. */
+  private updatePets(dt: number) {
+    if (!this.pets.length) return;
+    const px = this.player.pos.x;
+    const pz = this.player.pos.z;
+    const grid = this.rounds.grid;
+    for (let i = 0; i < this.pets.length; i++) {
+      const pet = this.pets[i];
+      // nearest zombie to the pet, within its range
+      const near = grid.nearest(pet.group.position.x, pet.group.position.z, pet.def.range);
+      let tgt: { x: number; z: number } | null = null;
+      if (near) {
+        this._petTgt.x = near.pos.x;
+        this._petTgt.z = near.pos.z;
+        tgt = this._petTgt;
+      }
+      const shot = pet.update(dt, px, pz, i, this.pets.length, tgt);
+      if (shot) {
+        const d = pet.def;
+        this.hitTmp.set(shot.ox, 1.0, shot.oz);
+        this._petDir.set(shot.dx, 0, shot.dz);
+        this.bullets.spawn(this.hitTmp, this._petDir, {
+          speed: 56, damage: d.damage, pierce: d.pierce, splashRadius: d.splashRadius,
+          splashDamage: d.splashDamage, color: d.bulletColor, scale: d.bulletScale, homing: d.homing,
+        });
+      }
     }
   }
 

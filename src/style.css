@@ -166,6 +166,25 @@ body.touch .controls { display: none; }
 .mkt-empty { opacity: 0.7; font-size: 13px; padding: 16px; text-align: center; }
 .mkt-note { margin-top: 8px; font-size: 11px; opacity: 0.55; text-align: center; }
 
+/* ---- Pets tab ---- */
+.pets-hint { font-size: 11px; opacity: 0.6; }
+.pets-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.pet-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  padding: 9px 11px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--pc) 55%, transparent);
+  background: color-mix(in srgb, var(--pc) 12%, rgba(0,0,0,0.25));
+  color: #fff; cursor: pointer; text-align: left;
+}
+.pet-card:hover:not(:disabled) { background: color-mix(in srgb, var(--pc) 24%, rgba(0,0,0,0.25)); }
+.pet-card.locked { opacity: 0.5; cursor: not-allowed; }
+.pet-card.owned { opacity: 0.7; cursor: default; border-color: rgba(120,230,140,0.5); }
+.pet-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--pc); box-shadow: 0 0 8px var(--pc); }
+.pet-name { font-weight: 800; font-size: 14px; color: var(--pc); }
+.pet-desc { font-size: 11px; opacity: 0.8; }
+.pet-cost { font-size: 12px; font-weight: 800; color: #ffd24a; margin-top: 2px; }
+.pet-card.owned .pet-cost { color: #7be08a; }
+
 #ui {
   position: absolute;
   inset: 0;

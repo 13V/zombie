@@ -128,6 +128,7 @@ export class Hud {
               <button class="shop-tab" data-tab="skins">Skins</button>
               <button class="shop-tab" data-tab="challenges">Challenges</button>
               <button class="shop-tab" data-tab="market">Market</button>
+              <button class="shop-tab" data-tab="pets">Pets</button>
             </div>
             <span class="shop-essence">✦ <span id="essence-bal">0</span></span>
           </div>
@@ -135,6 +136,7 @@ export class Hud {
           <div class="tab hidden" id="tab-skins"></div>
           <div class="tab hidden" id="tab-challenges"></div>
           <div class="tab hidden" id="tab-market"></div>
+          <div class="tab hidden" id="tab-pets"></div>
         </div>
         <div class="controls">
           <span class="k">WASD</span><span>Move</span>
@@ -199,7 +201,7 @@ export class Hud {
       btn.addEventListener("click", () => {
         const tab = btn.dataset.tab!;
         this.root.querySelectorAll(".shop-tab").forEach((b) => b.classList.toggle("active", b === btn));
-        for (const name of ["upgrades", "skins", "challenges", "market"]) {
+        for (const name of ["upgrades", "skins", "challenges", "market", "pets"]) {
           this.q(`#tab-${name}`).classList.toggle("hidden", name !== tab);
         }
       });
@@ -335,6 +337,31 @@ export class Hud {
     });
     const sa = this.root.querySelector("#mkt-sellall");
     if (sa) sa.addEventListener("click", () => onSellAll());
+  }
+
+  /** Pets tab: buy companion pets with gold. */
+  renderPets(
+    gold: number,
+    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; affordable: boolean }[],
+    onBuy: (id: string) => void,
+  ) {
+    this.q("#tab-pets").innerHTML = `
+      <div class="mkt-head"><span>Gold: <b>⛀ ${gold}</b></span><span class="pets-hint">Pets fight beside you</span></div>
+      <div class="pets-grid">
+        ${rows
+          .map(
+            (r) => `<button class="pet-card ${r.owned ? "owned" : r.affordable ? "" : "locked"}" data-id="${r.id}" ${r.owned ? "disabled" : ""} style="--pc:${r.color}">
+              <span class="pet-dot"></span>
+              <span class="pet-name">${r.name}</span>
+              <span class="pet-desc">${r.desc}</span>
+              <span class="pet-cost">${r.owned ? "OWNED" : `⛀ ${r.cost}`}</span>
+            </button>`,
+          )
+          .join("")}
+      </div>`;
+    this.q("#tab-pets").querySelectorAll<HTMLButtonElement>(".pet-card").forEach((btn) => {
+      btn.addEventListener("click", () => onBuy(btn.dataset.id!));
+    });
   }
 
   /**
