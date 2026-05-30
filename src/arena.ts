@@ -296,6 +296,7 @@ export class Arena {
     this.buildFences(props);
     this.buildCovers(props);
     this.buildClutter(props);
+    this.buildFoliage(props);
     this.buildCampfire(props, 4.5, 4.5);
   }
 
@@ -433,22 +434,27 @@ export class Arena {
   }
 
   private propJerryCan(props: VoxelBatch, x: number, z: number) {
-    props.add(x, 0.45, z, VOX.jerryCan, 0.55, 0.85, 0.42);
-    props.add(x, 0.5, z + 0.21, VOX.jerryCanDark, 0.4, 0.55, 0.05); // recessed X panel
-    props.add(x, 0.78, z + 0.22, VOX.jerryCanDark, 0.46, 0.08, 0.04); // top ridge
-    props.add(x - 0.18, 0.95, z, VOX.jerryCanDark, 0.18, 0.18, 0.34); // handle
-    props.add(x + 0.16, 0.95, z, VOX.steelDark, 0.16, 0.14, 0.16); // spout cap
+    this.denseShell(props, x, 0.5, z, 0.56, 0.86, 0.44, 0.2, (vx, vy, _vz) => {
+      if (Math.abs(vx) < 0.2 && Math.abs(vy) < 0.26) return VOX.jerryCanDark; // recessed X panel
+      return VOX.jerryCan;
+    });
+    props.add(x, 0.86, z, VOX.jerryCanDark, 0.48, 0.12, 0.46);   // rim
+    props.add(x - 0.18, 0.99, z, VOX.jerryCanDark, 0.18, 0.16, 0.34); // handle
+    props.add(x + 0.16, 0.99, z, VOX.steelDark, 0.16, 0.16, 0.16);    // spout cap
   }
 
   private propPropane(props: VoxelBatch, x: number, z: number) {
-    props.add(x, 0.55, z, VOX.propane, 0.5, 1.0, 0.5);
-    props.add(x, 1.08, z, VOX.steel, 0.26, 0.16, 0.26); // valve
+    this.denseShell(props, x, 0.55, z, 0.52, 1.0, 0.52, 0.2, (_vx, vy, _vz) =>
+      Math.abs(vy - 0.2) < 0.12 || Math.abs(vy + 0.35) < 0.12 ? VOX.steelDark : VOX.propane);
+    props.add(x, 1.1, z, VOX.steel, 0.28, 0.18, 0.28);   // valve
+    props.add(x, 1.22, z, VOX.steelDark, 0.16, 0.1, 0.16); // knob
   }
 
   private propToolbox(props: VoxelBatch, x: number, z: number) {
-    props.add(x, 0.3, z, VOX.toolbox, 0.9, 0.5, 0.55);
-    props.add(x, 0.56, z, VOX.toolboxDark, 0.92, 0.1, 0.57); // lid lip
-    props.add(x, 0.7, z, VOX.steel, 0.34, 0.1, 0.12); // handle
+    this.denseShell(props, x, 0.32, z, 0.92, 0.5, 0.56, 0.2, (_vx, vy, _vz) =>
+      vy > 0.12 ? VOX.toolboxDark : VOX.toolbox);   // darker lid
+    props.add(x, 0.58, z, VOX.toolboxDark, 0.94, 0.08, 0.58); // lid lip
+    props.add(x, 0.72, z, VOX.steel, 0.36, 0.1, 0.14);        // handle
   }
 
   private propTire(props: VoxelBatch, x: number, z: number) {
@@ -511,16 +517,94 @@ export class Arena {
     }
   }
 
-  /** Kintara-style tiered voxel tree: thin trunk + stacked green tiers. */
+  /**
+   * A detailed voxel tree: a tapered bark trunk and a rounded, multi-tone
+   * canopy (lit on top, shaded below) built from fine overlapping voxels, with
+   * the odd blossom/fruit fleck. Cherry variants bloom pink.
+   */
   private buildTree(props: VoxelBatch, ox: number, oz: number) {
-    props.add(ox, 0.5, oz, VOX.trunk, 0.45, 1, 0.45);
-    props.add(ox, 1.5, oz, VOX.trunk, 0.45, 1, 0.45);
-    const pink = Math.random() < 0.2;
-    const leaf = pink ? VOX.leafPink : VOX.leaf;
-    const leafD = pink ? VOX.leafPink : VOX.leafDark;
-    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) props.add(ox + i, 2.4, oz + j, (i + j) % 2 ? leafD : leaf);
-    for (let i = 0; i <= 1; i++) for (let j = 0; j <= 1; j++) props.add(ox + i - 0.5, 3.2, oz + j - 0.5, leaf);
-    props.add(ox, 3.9, oz, leaf, 0.8, 0.8, 0.8);
+    const cherry = Math.random() < 0.28;
+    const leaf = cherry ? VOX.leafPink : VOX.leaf;
+    const leafLit = cherry ? VOX.flowerPink : VOX.leafLight;
+    const leafDark = cherry ? 0xd98fb4 : VOX.leafDark;
+    const fleck = cherry ? VOX.flowerWhite : VOX.flowerYellow;
+
+    // tapered bark trunk
+    const th = 1.5 + Math.random() * 0.8;
+    for (let y = 0; y < th; y += 0.4) {
+      const w = 0.5 - (y / th) * 0.12;
+      props.add(ox, 0.5 + y, oz, Math.random() < 0.3 ? VOX.barkDark : VOX.bark, w, 0.46, w);
+    }
+
+    // rounded canopy: an ellipsoid shell of fine overlapping voxels
+    const cy = 0.5 + th + 0.7;
+    const rx = 1.25 + Math.random() * 0.35;
+    const ry = 1.05 + Math.random() * 0.3;
+    const s = 0.42, v = s * 1.2;
+    for (let x = -rx; x <= rx; x += s)
+      for (let y = -ry; y <= ry; y += s)
+        for (let z = -rx; z <= rx; z += s) {
+          const dd = (x * x) / (rx * rx) + (y * y) / (ry * ry) + (z * z) / (rx * rx);
+          if (dd > 1) continue;
+          if (dd < 0.32) continue; // hollow core (saves voxels, same look)
+          let col = y > ry * 0.18 ? leafLit : y < -ry * 0.25 ? leafDark : leaf;
+          if (Math.random() < 0.06) col = fleck; // blossom / fruit fleck
+          props.add(ox + x, cy + y, oz + z, col, v, v, v);
+        }
+  }
+
+  /**
+   * Lush ground dressing scattered across the grass — tufts, wildflowers,
+   * clover, pebbles and mushrooms — to make the field feel alive and detailed.
+   * All baked into the instanced props batch (cheap).
+   */
+  private buildFoliage(props: VoxelBatch) {
+    const ok = (x: number, z: number) =>
+      this.inArena(Math.round(x), Math.round(z)) &&
+      Math.max(Math.abs(x), Math.abs(z)) > this.plaza + 0.5 &&
+      Math.abs(x) > 1.2 && Math.abs(z) > 1.2 &&
+      !this.insideObstacle(x, z, 0.4);
+
+    const scatter = (count: number, place: (x: number, z: number) => void) => {
+      let n = 0, tries = 0;
+      while (n < count && tries++ < count * 8) {
+        const x = (Math.random() * 2 - 1) * (this.half - 2);
+        const z = (Math.random() * 2 - 1) * (this.half - 2);
+        if (!ok(x, z)) continue;
+        place(x, z);
+        n++;
+      }
+    };
+
+    // grass tufts — little blades poking up
+    scatter(190, (x, z) => {
+      const c = Math.random() < 0.4 ? VOX.grassLight : VOX.leaf;
+      for (let b = 0; b < 3; b++)
+        props.add(x + (Math.random() - 0.5) * 0.45, 0.18 + Math.random() * 0.12, z + (Math.random() - 0.5) * 0.45,
+          c, 0.12, 0.32 + Math.random() * 0.2, 0.12);
+    });
+    // wildflowers — stem + colored head
+    const blooms = [VOX.flowerPink, VOX.flowerYellow, VOX.flowerWhite, VOX.flowerRed];
+    scatter(75, (x, z) => {
+      props.add(x, 0.28, z, VOX.flowerStem, 0.08, 0.4, 0.08);
+      props.add(x, 0.52, z, blooms[(Math.random() * blooms.length) | 0], 0.22, 0.18, 0.22);
+    });
+    // clover/leaf patches — low ground cover
+    scatter(60, (x, z) => {
+      for (let b = 0; b < 4; b++)
+        props.add(x + (Math.random() - 0.5) * 0.6, 0.14, z + (Math.random() - 0.5) * 0.6,
+          Math.random() < 0.5 ? VOX.leaf : VOX.leafDark, 0.2, 0.16, 0.2);
+    });
+    // pebbles
+    scatter(55, (x, z) => {
+      props.add(x, 0.14, z, Math.random() < 0.5 ? VOX.pebble : VOX.pebbleDark, 0.26, 0.2, 0.26);
+      if (Math.random() < 0.5) props.add(x + 0.28, 0.1, z + 0.12, VOX.pebbleDark, 0.16, 0.14, 0.16);
+    });
+    // mushrooms — toadstools for charm
+    scatter(22, (x, z) => {
+      props.add(x, 0.22, z, VOX.mushroomStem, 0.12, 0.26, 0.12);
+      props.add(x, 0.4, z, VOX.mushroomCap, 0.28, 0.16, 0.28);
+    });
   }
 
   private insideObstacle(x: number, z: number, pad = 0): boolean {
