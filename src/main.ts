@@ -488,7 +488,7 @@ class Game implements GameApi {
   /** Pause the breather and offer 1 of 3 stacking run upgrades. */
   private offerLevelUp() {
     this.levelNum++;
-    this.levelCards = rollUpgrades(3);
+    this.levelCards = rollUpgrades(3, this.rounds.round);
     this.rerollCost = 500;
     this.levelPicking = false;
     this.state = "levelup";
@@ -518,7 +518,7 @@ class Game implements GameApi {
     if (this.levelPicking) return;
     if (!this.spend(this.rerollCost)) return; // handles "can't afford" feedback
     this.rerollCost += 250;
-    this.levelCards = rollUpgrades(3);
+    this.levelCards = rollUpgrades(3, this.rounds.round);
     this.audio.ui();
     this.renderLevelUp();
   }
