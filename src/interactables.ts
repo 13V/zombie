@@ -1,7 +1,25 @@
 import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { COSTS, GUMS } from "./config";
-import { COLORS, glowMaterial, toyMaterial } from "./palette";
+import { COLORS, VOX, glowMaterial, voxelMaterial } from "./palette";
 import { WEAPONS } from "./weapons";
+
+/** Shared beveled unit cube, scaled per-mesh into chunky voxel forms. */
+const BOX = new RoundedBoxGeometry(1, 1, 1, 2, 0.08);
+
+/** Helper: a beveled voxel box at (x,y,z) sized (w,h,d) with the given material. */
+function vox(
+  w: number, h: number, d: number,
+  x: number, y: number, z: number,
+  mat: THREE.Material,
+  shadow = false,
+): THREE.Mesh {
+  const m = new THREE.Mesh(BOX, mat);
+  m.scale.set(w, h, d);
+  m.position.set(x, y, z);
+  if (shadow) m.castShadow = true;
+  return m;
+}
 
 /** What an interactable needs from the game to do its thing. Avoids a circular import. */
 export interface GameApi {
@@ -32,15 +50,27 @@ class WallBuy implements Interactable {
   range = 2.6;
   constructor(public pos: THREE.Vector3, private weaponId: string, private cost: number) {
     const def = WEAPONS[weaponId];
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(2, 1.3, 0.2), glowMaterial(COLORS.wallBuy, 0.5));
-    panel.position.copy(pos);
-    panel.position.y = 1.6;
-    this.group.add(panel);
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.3, 0.3), toyMaterial(0x3a2f25));
-    gun.position.copy(pos);
-    gun.position.y = 1.6;
-    gun.position.z += 0.2;
-    this.group.add(gun);
+    const { x, z } = pos;
+    const crateMat = voxelMaterial(VOX.crate);
+    const crateDarkMat = voxelMaterial(VOX.crateDark);
+    const steelMat = voxelMaterial(VOX.steelDark);
+    // backing board / mounted crate
+    this.group.add(vox(2.0, 1.4, 0.2, x, 1.6, z, crateMat, true));
+    // crate plank frame (darker beveled trim)
+    this.group.add(vox(2.0, 0.16, 0.26, x, 2.25, z, crateDarkMat));
+    this.group.add(vox(2.0, 0.16, 0.26, x, 0.95, z, crateDarkMat));
+    this.group.add(vox(0.16, 1.4, 0.26, x - 0.9, 1.6, z, crateDarkMat));
+    this.group.add(vox(0.16, 1.4, 0.26, x + 0.9, 1.6, z, crateDarkMat));
+    // pegs the rifle rests on
+    this.group.add(vox(0.1, 0.1, 0.36, x - 0.5, 1.45, z + 0.2, steelMat));
+    this.group.add(vox(0.1, 0.1, 0.36, x + 0.5, 1.45, z + 0.2, steelMat));
+    // chunky voxel rifle: body + barrel + magazine + stock
+    this.group.add(vox(1.0, 0.22, 0.22, x, 1.62, z + 0.34, steelMat, true));
+    this.group.add(vox(0.62, 0.12, 0.12, x + 0.62, 1.62, z + 0.34, steelMat));
+    this.group.add(vox(0.18, 0.34, 0.18, x - 0.12, 1.4, z + 0.34, voxelMaterial(VOX.toolboxDark)));
+    this.group.add(vox(0.34, 0.18, 0.18, x - 0.56, 1.6, z + 0.34, crateDarkMat));
+    // glowing "buyable" accent strip
+    this.group.add(vox(2.0, 0.12, 0.06, x, 2.36, z + 0.12, glowMaterial(COLORS.wallBuy, 0.9)));
     this.def = def;
   }
   private def;
@@ -77,54 +107,49 @@ class PrizeWheel implements Interactable {
   ];
 
   constructor(public pos: THREE.Vector3, private cost: number) {
-    // base + posts (the stand)
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.05, 0.5, 16), toyMaterial(0x6e4a2c));
-    base.position.set(pos.x, 0.25, pos.z);
-    base.castShadow = true;
-    this.group.add(base);
+    const { x, z } = pos;
+    const woodMat = voxelMaterial(VOX.crate);
+    const woodDarkMat = voxelMaterial(VOX.crateDark);
+    // chunky voxel crate base + posts (the wooden stand)
+    this.group.add(vox(1.8, 0.5, 1.4, x, 0.25, z, woodDarkMat, true));
+    this.group.add(vox(1.5, 0.3, 1.1, x, 0.6, z, woodMat, true));
     for (const dx of [-0.7, 0.7]) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.7, 0.18), toyMaterial(0x8a6a3a));
-      post.position.set(pos.x + dx, 1.25, pos.z);
-      post.castShadow = true;
-      this.group.add(post);
+      this.group.add(vox(0.2, 1.7, 0.2, x + dx, 1.25, z, woodMat, true));
     }
 
     // the wheel itself, tilted back so the diorama camera sees its face
-    this.wheel.position.set(pos.x, 2.1, pos.z);
+    this.wheel.position.set(x, 2.1, z);
     this.wheel.rotation.x = -0.32;
     this.group.add(this.wheel);
 
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.18, 24), glowMaterial(COLORS.boxGold, 0.5));
-    disc.rotation.x = Math.PI / 2; // circular face toward +Z (camera)
+    // chunky voxel disc (square-ish beveled slab) as the wheel face
+    const disc = vox(2.0, 2.0, 0.18, 0, 0, 0, glowMaterial(COLORS.boxGold, 0.5));
     this.wheel.add(disc);
+    const discDark = vox(1.5, 1.5, 0.22, 0, 0, -0.02, voxelMaterial(VOX.crateDark));
+    this.wheel.add(discDark);
 
     const n = PrizeWheel.SEG.length;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
-      // colored prize gem near the rim
-      const gem = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.16), glowMaterial(PrizeWheel.SEG[i], 1.0));
-      gem.position.set(Math.cos(a) * 0.66, Math.sin(a) * 0.66, 0.12);
+      // colored prize gem (glow voxel) near the rim
+      const gem = vox(0.3, 0.3, 0.16, Math.cos(a) * 0.66, Math.sin(a) * 0.66, 0.12, glowMaterial(PrizeWheel.SEG[i], 1.0));
       gem.rotation.z = a;
       this.wheel.add(gem);
-      // divider spoke
-      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.9, 0.05), toyMaterial(0x4a3522));
-      spoke.position.z = 0.1;
+      // divider spoke voxel
+      const spoke = vox(0.05, 1.9, 0.05, 0, 0, 0.1, voxelMaterial(VOX.crateDark));
       spoke.rotation.z = a + Math.PI / n;
       this.wheel.add(spoke);
     }
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.24, 16), glowMaterial(0xffffff, 1.2));
-    hub.rotation.x = Math.PI / 2;
-    hub.position.z = 0.14;
-    this.wheel.add(hub);
+    // hub voxel
+    this.wheel.add(vox(0.34, 0.34, 0.24, 0, 0, 0.14, glowMaterial(0xffffff, 1.2)));
 
-    // fixed pointer at the top (does not spin)
-    const pointer = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.4, 4), glowMaterial(0xffffff, 1.4));
-    pointer.position.set(pos.x, 3.2, pos.z + 0.2);
-    pointer.rotation.x = Math.PI; // point down into the wheel
+    // fixed pointer voxel at the top (does not spin) — a downward-pointing wedge block
+    const pointer = vox(0.22, 0.4, 0.22, x, 3.2, z + 0.2, glowMaterial(0xffffff, 1.4));
+    pointer.rotation.z = Math.PI / 4;
     this.group.add(pointer);
 
     const glow = new THREE.PointLight(COLORS.boxGold, 6, 9, 2);
-    glow.position.set(pos.x, 2.4, pos.z + 0.6);
+    glow.position.set(x, 2.4, z + 0.6);
     this.group.add(glow);
   }
 
@@ -173,21 +198,26 @@ class PackAPunch implements Interactable {
   private ring: THREE.Mesh;
   private t = 0;
   constructor(public pos: THREE.Vector3, private cost: number) {
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.0, 1.2), toyMaterial(0x2f3b4a));
-    body.position.set(pos.x, 1.0, pos.z);
-    body.castShadow = true;
-    this.group.add(body);
+    const { x, z } = pos;
+    const steelMat = voxelMaterial(VOX.steel);
+    const steelDarkMat = voxelMaterial(VOX.steelDark);
+    // chunky steel voxel machine body
+    this.group.add(vox(1.8, 2.0, 1.2, x, 1.0, z, steelDarkMat, true));
+    // bolted steel panel + side ribs
+    this.group.add(vox(1.3, 1.4, 0.14, x, 1.2, z + 0.6, steelMat));
+    this.group.add(vox(0.18, 2.0, 1.2, x - 0.9, 1.0, z, steelMat));
+    this.group.add(vox(0.18, 2.0, 1.2, x + 0.9, 1.0, z, steelMat));
+    // vent stack on top
+    this.group.add(vox(0.4, 0.5, 0.4, x + 0.5, 2.25, z, steelDarkMat, true));
     // glowing intake slot
-    const slot = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.3, 0.2), glowMaterial(0x6ad7ff, 1.4));
-    slot.position.set(pos.x, 1.5, pos.z + 0.62);
-    this.group.add(slot);
-    // hovering halo ring above
+    this.group.add(vox(1.3, 0.3, 0.2, x, 1.5, z + 0.62, glowMaterial(VOX.rvWindow, 1.4)));
+    // hovering halo ring above (glow accent the bloom catches)
     this.ring = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.07, 8, 24), glowMaterial(COLORS.boxGold, 1.4));
-    this.ring.position.set(pos.x, 2.5, pos.z);
+    this.ring.position.set(x, 2.5, z);
     this.ring.rotation.x = Math.PI / 2;
     this.group.add(this.ring);
     const light = new THREE.PointLight(0x6ad7ff, 5, 8, 2);
-    light.position.set(pos.x, 2.0, pos.z + 0.5);
+    light.position.set(x, 2.0, z + 0.5);
     this.group.add(light);
   }
   prompt(game: GameApi) {
@@ -213,31 +243,30 @@ class Bubblegum implements Interactable {
   private globe: THREE.Mesh;
   private t = 0;
   constructor(public pos: THREE.Vector3, private cost: number) {
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 0.9, 16), toyMaterial(0xd23b3b));
-    base.position.set(pos.x, 0.45, pos.z);
-    base.castShadow = true;
-    this.group.add(base);
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 0.25, 16), toyMaterial(0xf0c33a));
-    neck.position.set(pos.x, 0.95, pos.z);
-    this.group.add(neck);
-    // glass globe
-    this.globe = new THREE.Mesh(
-      new THREE.SphereGeometry(0.62, 18, 14),
-      new THREE.MeshStandardMaterial({ color: 0xeaf6ff, roughness: 0.1, metalness: 0, transparent: true, opacity: 0.35 }),
-    );
-    this.globe.position.set(pos.x, 1.65, pos.z);
-    this.group.add(this.globe);
-    // candy gumballs in the colors of the actual gums
-    for (let i = 0; i < 14; i++) {
+    const { x, z } = pos;
+    const bodyMat = voxelMaterial(VOX.toolbox);
+    const bodyDarkMat = voxelMaterial(VOX.toolboxDark);
+    // boxy voxel vending machine / cooler body
+    this.group.add(vox(1.1, 2.2, 0.9, x, 1.1, z, bodyMat, true));
+    // dark base + top trim
+    this.group.add(vox(1.2, 0.3, 1.0, x, 0.15, z, bodyDarkMat, true));
+    this.group.add(vox(1.2, 0.22, 1.0, x, 2.3, z, bodyDarkMat));
+    // glowing display window on the front
+    this.group.add(vox(0.8, 1.0, 0.12, x, 1.45, z + 0.46, glowMaterial(VOX.windowGlow, 0.7)));
+    // dispense tray at the bottom
+    this.group.add(vox(0.7, 0.28, 0.18, x, 0.6, z + 0.46, bodyDarkMat));
+    // colored power-up gum voxels stacked behind the glass (GUMS colors)
+    for (let i = 0; i < 6; i++) {
       const c = GUMS[i % GUMS.length].color;
-      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), glowMaterial(c, 0.6));
-      const a = Math.random() * Math.PI * 2;
-      const rr = Math.random() * 0.36;
-      ball.position.set(pos.x + Math.cos(a) * rr, 1.45 + Math.random() * 0.35, pos.z + Math.sin(a) * rr);
-      this.group.add(ball);
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      this.group.add(vox(0.26, 0.26, 0.1, x - 0.18 + col * 0.36, 1.15 + row * 0.34, z + 0.5, glowMaterial(c, 0.7)));
     }
+    // spinning power-up display element (animated by update)
+    this.globe = vox(0.34, 0.34, 0.34, x, 1.95, z + 0.3, glowMaterial(GUMS[0].color, 1.1));
+    this.group.add(this.globe);
     const light = new THREE.PointLight(0xff7ab0, 3, 6, 2);
-    light.position.set(pos.x, 1.7, pos.z + 0.4);
+    light.position.set(x, 1.7, z + 0.4);
     this.group.add(light);
   }
   prompt(game: GameApi) {
@@ -249,7 +278,7 @@ class Bubblegum implements Interactable {
   update(dt: number) {
     this.t += dt;
     this.globe.rotation.y = this.t * 0.8;
-    this.globe.position.y = 1.65 + Math.sin(this.t * 2) * 0.03;
+    this.globe.position.y = 1.95 + Math.sin(this.t * 2) * 0.05;
   }
 }
 
@@ -269,28 +298,40 @@ class DebrisGate implements Interactable {
     private weaponId: string,
     private buyCost: number,
   ) {
-    // rubble pile (blocks the spot until cleared)
+    const { x, z } = pos;
+    // voxel rubble pile (beveled rock voxels) — blocks the spot until cleared
     for (let i = 0; i < 9; i++) {
       const s = 0.5 + Math.random() * 0.5;
-      const rock = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), toyMaterial(i % 2 ? 0x8a8a80 : 0x6f6f66));
-      rock.position.set(pos.x + (Math.random() - 0.5) * 1.6, 0.2 + Math.random() * 0.7, pos.z + (Math.random() - 0.5) * 1.0);
-      rock.rotation.set(Math.random(), Math.random(), Math.random());
-      rock.castShadow = true;
+      const rock = vox(
+        s, s, s,
+        x + (Math.random() - 0.5) * 1.6,
+        0.2 + Math.random() * 0.7,
+        z + (Math.random() - 0.5) * 1.0,
+        voxelMaterial(i % 2 ? VOX.rock : VOX.rockDark),
+        true,
+      );
+      rock.rotation.set(Math.random() * 0.4, Math.random(), Math.random() * 0.4);
       this.rubble.add(rock);
     }
-    const tape = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.12, 0.12), glowMaterial(0xffd24a, 0.8));
-    tape.position.set(pos.x, 1.0, pos.z + 0.2);
+    // glowing hazard-tape accent
+    const tape = vox(2.2, 0.14, 0.06, x, 1.0, z + 0.2, glowMaterial(VOX.emberHot, 0.9));
+    tape.rotation.z = -0.12;
     this.rubble.add(tape);
     this.group.add(this.rubble);
 
-    // hidden weapon stall revealed after clearing
+    // hidden voxel weapon stall/crate revealed after clearing
     const def = WEAPONS[weaponId];
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(2, 1.3, 0.2), glowMaterial(COLORS.wallBuy, 0.5));
-    panel.position.set(pos.x, 1.6, pos.z);
-    this.stall.add(panel);
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.3, 0.3), toyMaterial(0x3a2f25));
-    gun.position.set(pos.x, 1.6, pos.z + 0.2);
-    this.stall.add(gun);
+    const crateMat = voxelMaterial(VOX.crate);
+    const crateDarkMat = voxelMaterial(VOX.crateDark);
+    const steelMat = voxelMaterial(VOX.steelDark);
+    this.stall.add(vox(2.0, 1.4, 0.2, x, 1.6, z, crateMat, true));
+    this.stall.add(vox(2.0, 0.16, 0.26, x, 2.25, z, crateDarkMat));
+    this.stall.add(vox(2.0, 0.16, 0.26, x, 0.95, z, crateDarkMat));
+    // chunky voxel rifle on the stall
+    this.stall.add(vox(1.0, 0.22, 0.22, x, 1.62, z + 0.32, steelMat, true));
+    this.stall.add(vox(0.6, 0.12, 0.12, x + 0.6, 1.62, z + 0.32, steelMat));
+    this.stall.add(vox(0.18, 0.34, 0.18, x - 0.12, 1.4, z + 0.32, voxelMaterial(VOX.toolboxDark)));
+    this.stall.add(vox(2.0, 0.12, 0.06, x, 2.36, z + 0.12, glowMaterial(COLORS.wallBuy, 0.9)));
     this.stall.visible = false;
     this.group.add(this.stall);
     this.def = def;
@@ -330,18 +371,18 @@ class PerkPad implements Interactable {
     private label: string,
     color: number,
   ) {
-    const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.3, 20), glowMaterial(color, 0.8));
-    pad.position.copy(pos);
-    pad.position.y = 0.15;
-    this.group.add(pad);
+    const { x, z } = pos;
+    // chunky voxel supply pad on the ground, in the perk color
+    this.group.add(vox(2.0, 0.3, 2.0, x, 0.15, z, voxelMaterial(VOX.steelDark)));
+    this.group.add(vox(1.5, 0.22, 1.5, x, 0.34, z, glowMaterial(color, 0.8)));
+    // a low voxel crate marker in the middle
+    this.group.add(vox(0.7, 0.6, 0.7, x, 0.6, z, voxelMaterial(VOX.crate), true));
     this.ring = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.08, 8, 24), glowMaterial(color, 1.3));
-    this.ring.position.copy(pos);
-    this.ring.position.y = 1.4;
+    this.ring.position.set(x, 1.4, z);
     this.ring.rotation.x = Math.PI / 2;
     this.group.add(this.ring);
     const light = new THREE.PointLight(color, 4, 7, 2);
-    light.position.copy(pos);
-    light.position.y = 1.2;
+    light.position.set(x, 1.2, z);
     this.group.add(light);
   }
   prompt(game: GameApi) {

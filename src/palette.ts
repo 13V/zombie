@@ -60,6 +60,33 @@ export const VOX = {
   cloud: 0xffffff,
   skyTop: 0x73b4ec,
   skyBottom: 0xd9eeff,
+  // ---- survival-camp props (the reference diorama) ----
+  rvBody: 0xeef1f3,      // creamy white camper shell
+  rvBodyShade: 0xd9dee2,
+  rvStripe: 0x2f74b0,    // blue accent stripe
+  rvStripeDark: 0x215277,
+  rvTrim: 0x3a4650,      // bumpers / dark trim
+  rvWindow: 0xbfe2f0,    // glass (caught by bloom)
+  rvDoor: 0xdfe6ea,
+  tire: 0x26282d,        // wheels / rubber
+  rim: 0x9aa3ad,         // hubcaps / steel
+  steel: 0x9aa3ad,
+  steelDark: 0x6f7882,
+  jerryCan: 0xe7be33,    // yellow fuel can
+  jerryCanDark: 0xc79a1f,
+  propane: 0x4f9fd0,     // blue gas bottle
+  toolbox: 0xd23b3b,     // red toolbox
+  toolboxDark: 0xa52a2a,
+  crate: 0xb6884f,       // crate wood
+  crateDark: 0x8a6238,
+  barrel: 0x4a7a4a,      // military-green barrel
+  barrelRust: 0xb05a40,
+  sandbag: 0xcdb98a,
+  sandbagDark: 0xb6a273,
+  rock: 0x9a9a90,
+  rockDark: 0x7c7c71,
+  ember: 0xff7a2a,       // campfire flame (glow)
+  emberHot: 0xffd24a,
 };
 
 /** Matte, flat-shaded material for voxel blocks (crisp per-face shading). */
