@@ -76,6 +76,9 @@ export class Arena {
   private clouds: { group: THREE.Group; speed: number }[] = [];
   private plume?: THREE.Mesh;
   private smoke: { mesh: THREE.Mesh; baseX: number; baseY: number; baseZ: number; phase: number; speed: number; rise: number }[] = [];
+  // Soft drifting light motes (pollen / fireflies) that catch the bloom — the
+  // single coziest atmospheric touch, gently bobbing through the warm air.
+  private motes: { sprite: THREE.Sprite; baseX: number; baseY: number; baseZ: number; phase: number; bob: number; sway: number; speed: number }[] = [];
   private t = 0;
 
   constructor(scene: THREE.Scene) {
@@ -96,6 +99,7 @@ export class Arena {
 
     this.buildFountain();
     this.buildClouds(scene);
+    this.buildMotes(scene);
     scene.add(this.group);
   }
 
@@ -110,16 +114,23 @@ export class Arena {
         uniforms: {
           top: { value: new THREE.Color(VOX.skyTop) },
           bottom: { value: new THREE.Color(VOX.skyBottom) },
+          sun: { value: new THREE.Vector3(20, 34, 16).normalize() },
+          sunColor: { value: new THREE.Color(0xfff3d2) },
         },
         vertexShader: `
           varying vec3 vPos;
           void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
         `,
         fragmentShader: `
-          uniform vec3 top; uniform vec3 bottom; varying vec3 vPos;
+          uniform vec3 top; uniform vec3 bottom; uniform vec3 sun; uniform vec3 sunColor;
+          varying vec3 vPos;
           void main() {
             float h = clamp(vPos.y / 300.0 * 0.5 + 0.5, 0.0, 1.0);
-            gl_FragColor = vec4(mix(bottom, top, pow(h, 0.7)), 1.0);
+            vec3 col = mix(bottom, top, pow(h, 0.7));
+            // A soft warm sun halo bleeding into the sky for a dreamy, comforting glow.
+            float s = max(dot(normalize(vPos), sun), 0.0);
+            col = mix(col, sunColor, pow(s, 6.0) * 0.55);
+            gl_FragColor = vec4(col, 1.0);
           }
         `,
       }),
@@ -128,8 +139,10 @@ export class Arena {
   }
 
   private buildLights(scene: THREE.Scene) {
-    scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x6f7a4a, 0.55));
-    const key = new THREE.DirectionalLight(0xfff2d4, 1.35);
+    // Bright sky-dome fill keeps shadows soft & airy (never crushed to black) —
+    // the clean, cheerful daylight of the toy-diorama reference.
+    scene.add(new THREE.HemisphereLight(0xdcefff, 0x8fa05a, 0.72));
+    const key = new THREE.DirectionalLight(0xfff4dc, 1.45);
     key.position.set(20, 34, 16);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -139,7 +152,15 @@ export class Arena {
     cam.near = 1; cam.far = 100;
     key.shadow.bias = -0.0004;
     key.shadow.normalBias = 0.03;
+    // Lighter, warmer shadows so they read as soft contact AO, not hard black.
+    key.shadow.intensity = 0.78;
     scene.add(key);
+
+    // A gentle cool fill from the opposite side lifts shadowed faces, matching
+    // the soft ambient-occlusion feel of the reference render.
+    const fill = new THREE.DirectionalLight(0xcfe2ff, 0.35);
+    fill.position.set(-18, 16, -14);
+    scene.add(fill);
   }
 
   // ---- ground generation ----
@@ -419,9 +440,78 @@ export class Arena {
     }
   }
 
+  // ---- floating light motes (pollen / fireflies) ----
+  /** A soft round falloff sprite texture, generated once for all motes. */
+  private static moteTexture?: THREE.Texture;
+  private moteSprite(): THREE.Texture {
+    if (Arena.moteTexture) return Arena.moteTexture;
+    const s = 64;
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = s;
+    const ctx = cv.getContext("2d")!;
+    const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.35, "rgba(255,248,224,0.7)");
+    g.addColorStop(1, "rgba(255,244,210,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, s, s);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    Arena.moteTexture = tex;
+    return tex;
+  }
+
+  /**
+   * Slow, soft motes of light drifting through the air — sunlit pollen that
+   * bobs and sways. Picked up by the bloom pass, this is the coziest, most
+   * comforting atmospheric layer in the scene.
+   */
+  private buildMotes(scene: THREE.Scene) {
+    const tex = this.moteSprite();
+    const R = this.half - 2;
+    for (let n = 0; n < 46; n++) {
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        color: Math.random() < 0.25 ? 0xfff0c0 : 0xffffff,
+        transparent: true,
+        opacity: 0.25 + Math.random() * 0.4,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        fog: true,
+      });
+      const sprite = new THREE.Sprite(mat);
+      const x = (Math.random() * 2 - 1) * R;
+      const z = (Math.random() * 2 - 1) * R;
+      const y = 1.2 + Math.random() * 7;
+      const sc = 0.12 + Math.random() * 0.22;
+      sprite.position.set(x, y, z);
+      sprite.scale.setScalar(sc);
+      scene.add(sprite);
+      this.motes.push({
+        sprite,
+        baseX: x, baseY: y, baseZ: z,
+        phase: Math.random() * Math.PI * 2,
+        bob: 0.4 + Math.random() * 0.8,
+        sway: 0.5 + Math.random() * 1.2,
+        speed: 0.25 + Math.random() * 0.4,
+      });
+    }
+  }
+
   // ---- per-frame ----
   update(dt: number) {
     this.t += dt;
+    for (const m of this.motes) {
+      const p = this.t * m.speed + m.phase;
+      m.sprite.position.set(
+        m.baseX + Math.sin(p) * m.sway,
+        m.baseY + Math.sin(p * 1.3) * m.bob,
+        m.baseZ + Math.cos(p * 0.8) * m.sway,
+      );
+      // a gentle twinkle so they shimmer rather than sit static
+      (m.sprite.material as THREE.SpriteMaterial).opacity =
+        0.3 + 0.25 * (0.5 + 0.5 * Math.sin(p * 2.1));
+    }
     for (const c of this.clouds) {
       c.group.position.x += c.speed * dt;
       if (c.group.position.x > 95) c.group.position.x = -95;

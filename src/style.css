@@ -678,9 +678,15 @@ body.touch .controls { display: none; }
   justify-content: center;
   gap: 14px;
   text-align: center;
-  background: rgba(40, 32, 24, 0.55);
+  /* Warm, soft scrim so the cozy scene glows through gently. */
+  background: radial-gradient(ellipse at 50% 38%, rgba(58, 44, 30, 0.42), rgba(34, 26, 18, 0.62));
   backdrop-filter: blur(3px);
   pointer-events: auto;
+  animation: overlay-in 0.4s ease both;
+}
+@keyframes overlay-in {
+  from { opacity: 0; backdrop-filter: blur(0px); }
+  to   { opacity: 1; backdrop-filter: blur(3px); }
 }
 .overlay.hidden { display: none; }
 .overlay h1 {
