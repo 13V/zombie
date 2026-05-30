@@ -93,7 +93,10 @@ class WallBuy implements Interactable {
  * lands on one gun which rises and glows — that's the weapon you get — then the
  * lid closes. The award is decided up front; the cycling is pure showmanship.
  */
-const CYCLE_STYLES: GunStyle[] = ["pistol", "smg", "shotgun", "cannon", "rifle", "arc", "singularity", "pyroclasm"];
+const CYCLE_STYLES: GunStyle[] = [
+  "pistol", "smg", "shotgun", "cannon", "rifle", "arc", "singularity", "pyroclasm",
+  "confetti", "potato", "fish", "chicken", "beejar", "bfg",
+];
 type ChestPhase = "idle" | "opening" | "cycling" | "reveal" | "closing";
 const LID_OPEN = -2.1; // radians
 

@@ -32,7 +32,24 @@ export interface WeaponDef {
   bulletScale?: number;
   /** Flagged for HUD / box flavor. */
   wonder?: boolean;
+  // ---- wacky-gun behaviors (optional) ----
+  knockback?: number; // extra shove on hit
+  homing?: number; // 0/1: bullets curve to enemies
+  bounces?: number; // ricochets to another enemy after a hit
+  rainbow?: boolean; // randomize each projectile's color (confetti!)
 }
+
+/** Per-shot modifiers from the player's run upgrades, applied at fire time. */
+export interface FireMods {
+  fireRateMul?: number;
+  bonusPellets?: number;
+  pierceBonus?: number;
+  scaleMul?: number;
+  homing?: number;
+  bounces?: number;
+}
+
+const RAINBOW = [0xff6f91, 0x6ad7ff, 0xffd24a, 0x8fcf6f, 0xc792ea, 0xff9f43, 0x4ec9ff, 0xff5d8f];
 
 export const WEAPONS: Record<string, WeaponDef> = {
   peashooter: {
@@ -89,6 +106,45 @@ export const WEAPONS: Record<string, WeaponDef> = {
     pierce: 1, splashRadius: 1.8, splashDamage: 42,
     bulletColor: 0xff7a3a, bulletScale: 1.3, wonder: true,
   },
+
+  // ---- wacky / funny guns ----
+  confetti: {
+    id: "confetti", name: "Confetti Cannon", style: "confetti", damage: 12, fireRate: 3,
+    magSize: 18, reserve: 180, pellets: 14, spread: 0.34,
+    bulletSpeed: 46, auto: false, reloadTime: 1.8,
+    bulletScale: 0.7, knockback: 2, rainbow: true,
+  },
+  spud: {
+    id: "spud", name: "Spud-o-Matic", style: "potato", damage: 24, fireRate: 9,
+    magSize: 40, reserve: 280, pellets: 1, spread: 0.08,
+    bulletSpeed: 50, auto: true, reloadTime: 1.7,
+    bulletColor: 0xc9a05a, bulletScale: 1.1, knockback: 2,
+  },
+  fishslap: {
+    id: "fishslap", name: "Fish Slapper", style: "fish", damage: 72, fireRate: 2.4,
+    magSize: 10, reserve: 80, pellets: 1, spread: 0.02,
+    bulletSpeed: 42, auto: false, reloadTime: 1.4,
+    bulletColor: 0x9fd0e0, bulletScale: 1.6, knockback: 16,
+  },
+  chicken: {
+    id: "chicken", name: "Rubber Chicken", style: "chicken", damage: 40, fireRate: 1.6,
+    magSize: 6, reserve: 48, pellets: 1, spread: 0.02,
+    bulletSpeed: 34, auto: false, reloadTime: 2.0,
+    splashRadius: 2.6, splashDamage: 50, bulletColor: 0xffe14a, bulletScale: 1.5, knockback: 9,
+  },
+  beejar: {
+    id: "beejar", name: "Bee Swarm Jar", style: "beejar", damage: 7, fireRate: 7,
+    magSize: 60, reserve: 300, pellets: 3, spread: 0.5,
+    bulletSpeed: 30, auto: true, reloadTime: 2.2,
+    pierce: 3, homing: 1, bulletColor: 0xffd24a, bulletScale: 0.5,
+  },
+  quacker: {
+    id: "quacker", name: "The Quacker", style: "bfg", damage: 220, fireRate: 0.8,
+    magSize: 2, reserve: 14, pellets: 1, spread: 0,
+    bulletSpeed: 30, auto: false, reloadTime: 3.0,
+    pierce: 99, splashRadius: 5.5, splashDamage: 300, knockback: 22,
+    bulletColor: 0x8fcf6f, bulletScale: 3.0, wonder: true,
+  },
 };
 
 /** Look up a weapon's gun style by display name (handles the "X +" PaP variant). */
@@ -98,10 +154,10 @@ export function styleForWeaponName(name: string): GunStyle {
   return NAME_STYLE.get(name) ?? NAME_STYLE.get(name.replace(/ \+$/, "")) ?? "pistol";
 }
 
-/** Normal weapons the Prize Wheel can hand out. */
-export const BOX_POOL = ["buzzgun", "scattershot", "boomstick", "marksman"];
-/** The crazy ones — rolled rarely by the wheel. */
-export const WONDER_POOL = ["arc", "singularity", "pyroclasm"];
+/** Normal weapons the Mystery Box can hand out (incl. the cheaper wacky ones). */
+export const BOX_POOL = ["buzzgun", "scattershot", "boomstick", "marksman", "confetti", "spud", "fishslap", "chicken", "beejar"];
+/** The crazy ones — rolled rarely by the box. */
+export const WONDER_POOL = ["arc", "singularity", "pyroclasm", "quacker"];
 
 export interface SpawnOpts {
   speed: number;
@@ -111,6 +167,9 @@ export interface SpawnOpts {
   splashDamage: number;
   color: number;
   scale: number;
+  homing?: number; // 0/1: steer toward enemies
+  bounces?: number; // ricochets remaining
+  knockback?: number; // extra shove force on hit
 }
 
 export interface Bullet {
@@ -122,6 +181,9 @@ export interface Bullet {
   pierce: number;
   splashRadius: number;
   splashDamage: number;
+  homing: number;
+  bounces: number;
+  knockback: number;
   /** Zombie ids already struck (so a piercing round won't re-hit one). */
   hit: Set<number>;
 }
@@ -145,7 +207,8 @@ export class BulletSystem {
       mesh.castShadow = false;
       b = {
         mesh, vel: new THREE.Vector3(), life: 0, damage: 0, alive: false,
-        pierce: 0, splashRadius: 0, splashDamage: 0, hit: new Set<number>(),
+        pierce: 0, splashRadius: 0, splashDamage: 0, homing: 0, bounces: 0, knockback: 0,
+        hit: new Set<number>(),
       };
     }
     const mat = b.mesh.material as THREE.MeshStandardMaterial;
@@ -159,6 +222,9 @@ export class BulletSystem {
     b.pierce = opts.pierce;
     b.splashRadius = opts.splashRadius;
     b.splashDamage = opts.splashDamage;
+    b.homing = opts.homing ?? 0;
+    b.bounces = opts.bounces ?? 0;
+    b.knockback = opts.knockback ?? 0;
     b.hit.clear();
     b.alive = true;
     b.mesh.visible = true;
@@ -268,30 +334,35 @@ export class Weapon {
   }
 
   /** Attempt to fire toward `dir`; spawns bullets and returns true if it shot. */
-  tryFire(origin: THREE.Vector3, dir: THREE.Vector3, bullets: BulletSystem, fireRateMul = 1): boolean {
+  tryFire(origin: THREE.Vector3, dir: THREE.Vector3, bullets: BulletSystem, fire: FireMods = {}): boolean {
     if (this.cooldown > 0 || this.reloading) return false;
     if (this.ammo <= 0) {
       this.reload();
       return false;
     }
     this.ammo--;
-    this.cooldown = 1 / (this.def.fireRate * fireRateMul);
+    this.cooldown = 1 / (this.def.fireRate * (fire.fireRateMul ?? 1));
 
     const d = this.def;
     const opts: SpawnOpts = {
       speed: d.bulletSpeed,
       damage: d.damage,
-      pierce: d.pierce ?? 0,
+      pierce: (d.pierce ?? 0) + (fire.pierceBonus ?? 0),
       splashRadius: d.splashRadius ?? 0,
       splashDamage: d.splashDamage ?? 0,
       color: d.bulletColor ?? COLORS.bullet,
-      scale: d.bulletScale ?? 1,
+      scale: (d.bulletScale ?? 1) * (fire.scaleMul ?? 1),
+      homing: Math.max(d.homing ?? 0, fire.homing ?? 0),
+      bounces: (d.bounces ?? 0) + (fire.bounces ?? 0),
+      knockback: d.knockback ?? 0,
     };
 
+    const pellets = d.pellets + (fire.bonusPellets ?? 0);
     const base = new THREE.Vector3(dir.x, 0, dir.z).normalize();
-    for (let p = 0; p < d.pellets; p++) {
+    for (let p = 0; p < pellets; p++) {
       const a = (Math.random() * 2 - 1) * d.spread;
       const dd = base.clone().applyAxisAngle(_UP, a);
+      if (d.rainbow) opts.color = RAINBOW[Math.floor(Math.random() * RAINBOW.length)];
       bullets.spawn(origin, dd, opts);
     }
     if (this.ammo <= 0) this.reload();

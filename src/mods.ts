@@ -17,6 +17,21 @@ export interface RunMods {
   dropChance: number; // base chance a kill drops loot
   startPointsBonus: number;
   startWeapon?: string; // weapon id to start the run with (meta unlock)
+
+  // ---- behavior upgrades (0 = off) ----
+  bonusPellets: number; // +projectiles per shot (multishot)
+  bulletScaleMul: number; // bigger bullets
+  pierceBonus: number; // +enemies pierced
+  homing: number; // 0/1: bullets curve toward enemies
+  ricochet: number; // bounces to another enemy after a hit
+  explosiveRadius: number; // every bullet splashes on impact
+  detonate: number; // killed zombies explode (radius)
+  chainCount: number; // hits arc lightning to N nearby enemies
+  cryoSlow: number; // 0..1: hits slow zombies by this fraction
+  thorns: number; // damage dealt to zombies that touch you
+  dodge: number; // 0..1 chance to ignore a hit
+  healNova: number; // HP healed every 10th kill
+  adrenaline: number; // 0/1: fire rate ramps as HP drops
 }
 
 export function defaultMods(): RunMods {
@@ -34,6 +49,19 @@ export function defaultMods(): RunMods {
     dropChance: 0.08,
     startPointsBonus: 0,
     startWeapon: undefined,
+    bonusPellets: 0,
+    bulletScaleMul: 1,
+    pierceBonus: 0,
+    homing: 0,
+    ricochet: 0,
+    explosiveRadius: 0,
+    detonate: 0,
+    chainCount: 0,
+    cryoSlow: 0,
+    thorns: 0,
+    dodge: 0,
+    healNova: 0,
+    adrenaline: 0,
   };
 }
 
@@ -57,6 +85,12 @@ const FIELDS: FieldMeta[] = [
   { key: "lifeSteal", label: "Life Steal", fmt: (v) => `${v} HP` },
   { key: "comboWindowBonus", label: "Combo Time", fmt: (v) => `+${v}s` },
   { key: "dropChance", label: "Loot Chance", fmt: pct },
+  { key: "bonusPellets", label: "Extra Shots", fmt: (v) => `+${v}` },
+  { key: "pierceBonus", label: "Pierce", fmt: (v) => `+${v}` },
+  { key: "bulletScaleMul", label: "Bullet Size", fmt: pct },
+  { key: "ricochet", label: "Ricochet", fmt: (v) => `+${v}` },
+  { key: "chainCount", label: "Chain", fmt: (v) => `+${v}` },
+  { key: "dodge", label: "Dodge", fmt: pct },
 ];
 
 export interface ModDelta {

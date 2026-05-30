@@ -13,7 +13,7 @@ import { Arena } from "./arena";
 import { Player } from "./player";
 import { RoundManager } from "./rounds";
 import { Zombie } from "./zombie";
-import { BulletSystem, Weapon, WEAPONS, BOX_POOL, WONDER_POOL, styleForWeaponName } from "./weapons";
+import { BulletSystem, Weapon, WEAPONS, BOX_POOL, WONDER_POOL, styleForWeaponName, FireMods, Bullet } from "./weapons";
 import { Interactables, GameApi } from "./interactables";
 import { Hud } from "./hud";
 import { AssetManager } from "./assets";
@@ -125,9 +125,11 @@ class Game implements GameApi {
   private myId = 1;
   /** When set, GameApi buy/perk actions target this guest instead of the host. */
   private acting: GuestSlot | null = null;
-  // reused scratch for guest-side cosmetic bullet impacts
+  // reused scratch for guest-side cosmetic bullet impacts + homing/ricochet
   private guestZBuf: { x: number; z: number; r: number; color: number }[] = [];
   private hitTmp = new THREE.Vector3();
+  private readonly UP = new THREE.Vector3(0, 1, 0);
+  private healKills = 0; // counts toward Heal Nova upgrade
 
   private tilt: TiltShift;
 
@@ -259,6 +261,7 @@ class Game implements GameApi {
     this.powerups.clear();
     this.levelNum = 0;
     this.levelPicking = false;
+    this.healKills = 0;
     this.runStats = blankRunStats();
     this.combo.windowBonus = this.mods.comboWindowBonus;
     this.hud.setPowerups([]);
@@ -818,7 +821,17 @@ class Game implements GameApi {
     w.update(dt, this.player.reloadMul * this.mods.reloadMul);
     // On touch, holding the aim stick fires (all weapons); cooldown gates rate.
     const wantFire = this.input.touchAim ? true : w.def.auto ? this.input.firing : this.input.clicked();
-    if (wantFire && w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, this.powerups.fireRateMul() * this.mods.fireRateMul)) {
+    // Adrenaline: fire faster the lower your health is.
+    const adr = this.mods.adrenaline ? 1 + (1 - this.player.health / this.player.maxHealth) * 0.6 : 1;
+    const fire: FireMods = {
+      fireRateMul: this.powerups.fireRateMul() * this.mods.fireRateMul * adr,
+      bonusPellets: this.mods.bonusPellets,
+      pierceBonus: this.mods.pierceBonus,
+      scaleMul: this.mods.bulletScaleMul,
+      homing: this.mods.homing,
+      bounces: this.mods.ricochet,
+    };
+    if (wantFire && w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, fire)) {
       this.player.flash();
       this.audio.shoot(w.def.wonder ? 0.85 : 0.4);
       this.netplay?.hostShot(
@@ -839,6 +852,7 @@ class Game implements GameApi {
       this.processGuestInteractions();
     }
 
+    this.steerHomingBullets(dt);
     this.bullets.update(dt);
     const targets = this.netplay ? this.netplay.hostPlayerPositions(this.player) : [this.player.pos];
     this.rounds.update(dt, this.arena, targets);
@@ -1053,26 +1067,104 @@ class Game implements GameApi {
           const critMul = crit ? this.mods.critMul : 1;
           const dmg = b.damage * dmgMul * this.mods.damageMul * critMul;
           this.addPoints(Math.round(SCORE.hit * sMul * (crit ? 2 : 1)));
-          z.knockback(b.mesh.position.x, b.mesh.position.z, crit ? 5 : 3);
+          z.knockback(b.mesh.position.x, b.mesh.position.z, Math.max(crit ? 5 : 3, b.knockback));
+          if (this.mods.cryoSlow > 0) z.applySlow(this.mods.cryoSlow, 2);
           this.audio.hit(crit);
           if (crit) {
             this.runStats.crits++;
             this.floaters.spawn(z.pos, "CRIT", "#ffe14a", 1, true);
           }
           this.damageZombie(z, dmg, sMul, crit);
-          if (b.splashRadius > 0) {
+          // the bullet's own splash, or the Explosive Rounds upgrade
+          const splashR = Math.max(b.splashRadius, this.mods.explosiveRadius);
+          if (splashR > 0) {
             this.puffs.burst(z.pos, 0xffd0a0, 6);
-            this.splash(z.pos, b.splashRadius, b.splashDamage * dmgMul, z.id, sMul);
+            const sd = b.splashRadius > 0 ? b.splashDamage * dmgMul : dmg * 0.5;
+            this.splash(z.pos, splashR, sd, z.id, sMul);
           }
-          // piercing rounds keep flying; everything else stops on first contact
-          if (b.pierce > 0) b.pierce--;
-          else {
+          if (this.mods.chainCount > 0) this.chainLightning(z, dmg * 0.5, sMul);
+          // pierce first, then ricochet, then the round stops
+          if (b.pierce > 0) {
+            b.pierce--;
+          } else if (b.bounces > 0 && this.ricochetBullet(b)) {
+            b.bounces--;
+            break;
+          } else {
             this.bullets.retire(b);
             break;
           }
         }
       }
     }
+  }
+
+  /** Steer homing rounds toward the nearest zombie each frame. */
+  private steerHomingBullets(dt: number) {
+    const turn = 1 - Math.exp(-7 * dt);
+    for (const b of this.bullets.bullets) {
+      if (!b.alive || b.homing <= 0) continue;
+      const t = this.nearestZombie(b.mesh.position.x, b.mesh.position.z, 16, b.hit);
+      if (!t) continue;
+      const speed = Math.hypot(b.vel.x, b.vel.z) || 40;
+      const dx = t.pos.x - b.mesh.position.x;
+      const dz = t.pos.z - b.mesh.position.z;
+      const len = Math.hypot(dx, dz) || 1;
+      b.vel.x += ((dx / len) * speed - b.vel.x) * turn;
+      b.vel.z += ((dz / len) * speed - b.vel.z) * turn;
+      const nl = Math.hypot(b.vel.x, b.vel.z) || 1;
+      b.vel.x = (b.vel.x / nl) * speed;
+      b.vel.z = (b.vel.z / nl) * speed;
+      this.hitTmp.set(b.vel.x, 0, b.vel.z).normalize();
+      b.mesh.quaternion.setFromUnitVectors(this.UP, this.hitTmp);
+    }
+  }
+
+  /** Redirect a ricocheting bullet to the nearest fresh zombie. */
+  private ricochetBullet(b: Bullet): boolean {
+    const t = this.nearestZombie(b.mesh.position.x, b.mesh.position.z, 9, b.hit);
+    if (!t) return false;
+    const speed = Math.hypot(b.vel.x, b.vel.z) || 40;
+    const dx = t.pos.x - b.mesh.position.x;
+    const dz = t.pos.z - b.mesh.position.z;
+    const len = Math.hypot(dx, dz) || 1;
+    b.vel.set((dx / len) * speed, 0, (dz / len) * speed);
+    this.hitTmp.set(b.vel.x, 0, b.vel.z).normalize();
+    b.mesh.quaternion.setFromUnitVectors(this.UP, this.hitTmp);
+    b.life = Math.max(b.life, 0.7);
+    return true;
+  }
+
+  /** Arc bonus damage to a few zombies near `from`. */
+  private chainLightning(from: Zombie, dmg: number, sMul: number) {
+    let hits = 0;
+    for (const z of this.rounds.zombies) {
+      if (hits >= this.mods.chainCount) break;
+      if (!z.alive || z === from) continue;
+      const dx = z.pos.x - from.pos.x;
+      const dz = z.pos.z - from.pos.z;
+      if (dx * dx + dz * dz < 25) {
+        this.puffs.burst(z.pos, 0x9fe8ff, 4);
+        this.damageZombie(z, dmg, sMul);
+        hits++;
+      }
+    }
+  }
+
+  /** Nearest alive zombie to (x,z) within `range`, skipping ids in `skip`. */
+  private nearestZombie(x: number, z: number, range: number, skip?: Set<number>): Zombie | null {
+    let best: Zombie | null = null;
+    let bd = range * range;
+    for (const q of this.rounds.zombies) {
+      if (!q.alive || skip?.has(q.id)) continue;
+      const dx = q.pos.x - x;
+      const dz = q.pos.z - z;
+      const d = dx * dx + dz * dz;
+      if (d < bd) {
+        bd = d;
+        best = q;
+      }
+    }
+    return best;
   }
 
   /** Apply damage to one zombie and handle the score/FX if it dies. */
@@ -1089,6 +1181,17 @@ class Game implements GameApi {
       this.puffs.burst(z.pos, z.puffColor);
       this.audio.kill();
       if (this.mods.lifeSteal > 0) this.player.heal(this.mods.lifeSteal);
+      // Detonate: killed zombies explode, damaging (and chaining through) neighbors.
+      if (this.mods.detonate > 0 && !wasBoss) {
+        this.puffs.burst(z.pos, 0xffa23a, 12);
+        this.splash(z.pos, this.mods.detonate, dmg * 0.6, z.id, scoreMul);
+      }
+      // Heal Nova: a healing pulse every 10th kill.
+      if (this.mods.healNova > 0 && ++this.healKills >= 10) {
+        this.healKills = 0;
+        this.player.heal(this.mods.healNova);
+        this.puffs.burst(this.player.pos, 0x7be08a, 8);
+      }
       // a satisfying micro-freeze on crits / combo kills (local visual only)
       if (crit || mult >= 2 || wasBoss) this.hitStop = Math.min(wasBoss ? 0.12 : 0.07, this.hitStop + 0.045);
       // loot: bosses always drop something juicy; normal kills roll the dice
@@ -1137,8 +1240,18 @@ class Game implements GameApi {
         const dx = z.pos.x - victim.pos.x;
         const dz = z.pos.z - victim.pos.z;
         if (dx * dx + dz * dz < reach * reach) {
-          victim.damage(z.touchDamage);
           z.touchCooldown = ZOMBIE.touchInterval;
+          // Thorns: zombies that touch the host player take damage + get shoved.
+          if (victim === this.player && this.mods.thorns > 0) {
+            z.knockback(victim.pos.x, victim.pos.z, 6);
+            this.damageZombie(z, this.mods.thorns, this.powerups.scoreMul());
+          }
+          // Dodge: the host player has a chance to shrug the hit off entirely.
+          if (victim === this.player && this.mods.dodge > 0 && Math.random() < this.mods.dodge) {
+            this.floaters.spawn(this.player.pos, "DODGE", "#9fe8ff", 1);
+            break;
+          }
+          victim.damage(z.touchDamage);
           if (victim === this.player) {
             this.shake = Math.min(0.5, this.shake + 0.25);
             this.audio.hurt();

@@ -35,6 +35,8 @@ export class Zombie {
   /** Decaying knockback velocity + hit-flash timer for game feel. */
   private knock = new THREE.Vector3();
   private flash = 0;
+  private slowTimer = 0;
+  private slowAmt = 0;
 
   // per-spawn variant state
   touchDamage = ZOMBIE.touchDamage;
@@ -61,6 +63,9 @@ export class Zombie {
     this.dying = false;
     this.deathTimer = 0;
     this.touchCooldown = 0;
+    this.knock.set(0, 0, 0);
+    this.slowTimer = 0;
+    this.slowAmt = 0;
 
     this.typeName = type.name;
     this.typeIndex = Math.max(0, ZOMBIE_TYPES.indexOf(type));
@@ -120,15 +125,28 @@ export class Zombie {
     this.knock.z += (dz / d) * force;
   }
 
+  /** Chill the zombie: move at `(1-amount)` speed for `dur` seconds. */
+  applySlow(amount: number, dur: number) {
+    this.slowAmt = Math.max(this.slowAmt, amount);
+    this.slowTimer = Math.max(this.slowTimer, dur);
+  }
+
   update(dt: number, target: THREE.Vector3, others: Zombie[]) {
     if (!this.alive) return;
     if (this.touchCooldown > 0) this.touchCooldown -= dt;
+
+    let speed = this.speed;
+    if (this.slowTimer > 0) {
+      this.slowTimer -= dt;
+      speed *= 1 - this.slowAmt;
+      if (this.slowTimer <= 0) this.slowAmt = 0;
+    }
 
     _tmp.copy(target).sub(this.pos);
     _tmp.y = 0;
     const dist = _tmp.length();
     if (dist > 0.0001) _tmp.divideScalar(dist);
-    this.vel.copy(_tmp).multiplyScalar(this.speed);
+    this.vel.copy(_tmp).multiplyScalar(speed);
 
     for (const o of others) {
       if (o === this || !o.alive) continue;

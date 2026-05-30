@@ -99,9 +99,12 @@ their level-up picks are host-only.)
 - HUD: round, points, health, weapon + ammo, interaction prompts; start / game-over flow.
 
 ### Weapons & the Mystery Box
-- Each weapon has a **distinct voxel model** the hero visibly holds (`gunModels.ts`)
-  — pistol, SMG, shotgun, cannon, rifle, plus glowing wonder weapons — and its
-  own **tracer color/size** so shots read differently per gun.
+- **14 guns**, each with a **distinct voxel model** the hero visibly holds
+  (`gunModels.ts`) and its own **tracer color/size**. Includes wacky ones:
+  **Confetti Cannon** (rainbow spray), **Fish Slapper** (huge knockback),
+  **Rubber Chicken** (splat bomb), **Bee Swarm Jar** (homing bees),
+  **Spud-o-Matic**, and **The Quacker** (BFG screen-wiper).
+- Behaviors: per-weapon knockback, homing, ricochet bounces, and rainbow tracers.
 - The **Mystery Box** (`interactables.ts`) is a COD-style **treasure chest**: the
   lid springs open, weapon models tumble up and cycle fast→slow, then land on the
   one you win (which rises and glows) before the lid closes.
@@ -128,6 +131,11 @@ their level-up picks are host-only.)
 - **Challenges** (`challenges.ts`) — one-time goals (lifetime kills/crits/bosses,
   reach round 10/15, flawless boss kill) that pay Essence; progress shown on the
   **Challenges** tab. Run stats are tracked live and settled on death.
+- **Behavior upgrades** (`upgrades.ts`, `mods.ts`) — beyond flat stats, level-up
+  cards can grant **multishot, piercing, ricochet, homing, explosive rounds,
+  chain-reaction kills, chain lightning, frostbite (slow), thorns, dodge, heal
+  nova, adrenaline**, and legendary combos (Stormcaller, Swarm Lord) that define
+  a build.
 - **Level-up picker** (`upgrades.ts`, `mods.ts`) — clear a round and choose 1 of 3
   stacking upgrades on an animated card screen: icons, rarity tiers (common / rare /
   shimmering **legendary**), live stat-delta previews (e.g. `Damage 120% → 140%`), a
