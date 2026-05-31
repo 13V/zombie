@@ -473,7 +473,7 @@ export const DECALS = {
 export const PET_STAGES = {
   levels: [1, 8, 18], // stage 0 / 1 / 2 begin at these levels
   names: ["", "Evolved", "Ascended"], // stage label (blank = base, no tag)
-  scalePerStage: 0.16, // +size per stage, on top of the per-level growth
+  scalePerStage: 0.4, // +size per stage — Evolved is visibly bigger, Ascended bigger still
   damagePerStage: 0.22, // +damage per stage — the stat jump that makes it matter
 };
 
