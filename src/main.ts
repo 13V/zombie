@@ -41,7 +41,7 @@ import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
 import { makeItem, rollRarity, rollRarityPity, resetPity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
-import { NetClient, InputMsg, ZombieSnap, warmServer, getServerUrl, setServerUrl } from "./net";
+import { NetClient, InputMsg, ZombieSnap, AffixCode, warmServer, getServerUrl, setServerUrl } from "./net";
 import { TouchControls, isTouchDevice } from "./touchControls";
 import { Wallet } from "./wallet";
 import { getTokenApiUrl, setTokenApiUrl, fetchClaimable } from "./token";
@@ -1794,7 +1794,15 @@ class Game implements GameApi {
       const zs: ZombieSnap[] = [];
       for (const z of this.rounds.zombies) {
         if (!z.alive && !z.dying) continue;
-        zs.push({ id: z.id, x: z.pos.x, z: z.pos.z, ry: z.group.rotation.y, type: z.typeIndex, state: z.dying ? 1 : 0 });
+        // Map the host-side elite affix (zombie.ts) to a tiny wire code so guests
+        // can render the matching aura/tell. 0 = plain. Kept out of the hot path's
+        // way: a cheap switch, no allocation.
+        const affix =
+          z.affix === "blazing" ? AffixCode.Blazing :
+          z.affix === "glacial" ? AffixCode.Glacial :
+          z.affix === "overloading" ? AffixCode.Overloading :
+          AffixCode.None;
+        zs.push({ id: z.id, x: z.pos.x, z: z.pos.z, ry: z.group.rotation.y, type: z.typeIndex, state: z.dying ? 1 : 0, affix });
       }
       this.netplay.hostBroadcast(dt, this.player, this.weapon, zs, this.rounds.round, this.points, this.rounds.phase);
     }

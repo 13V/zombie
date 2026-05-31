@@ -5,10 +5,29 @@ import { COLORS } from "./palette";
 import { Player } from "./player";
 import { Weapon, WEAPONS, BulletSystem } from "./weapons";
 import { AssetManager } from "./assets";
-import { NetClient, NetMsg, InputMsg, SnapMsg, PlayerSnap, ZombieSnap } from "./net";
+import { NetClient, NetMsg, InputMsg, SnapMsg, PlayerSnap, ZombieSnap, AffixCode, AFFIX_CODE_MAX } from "./net";
 
 /** How fast remote transforms chase their networked targets. */
 const LERP = 12;
+
+// ---- shared elite-affix aura visuals (guest side) ----
+// Mirror zombie.ts's per-affix tell colors so a guest's aura reads the same as
+// the host's. Index by AffixCode (1..3); 0 = none has no entry.
+const AFFIX_AURA_COLOR: Record<number, number> = {
+  [AffixCode.Blazing]: 0xff6a1f,
+  [AffixCode.Glacial]: 0x6ad7ff,
+  [AffixCode.Overloading]: 0xc792ea,
+};
+// One flat ring geometry + one material per affix, shared across every guest
+// ZombieView (process-wide singletons, never disposed — pooled views just
+// re-tint/toggle). Matches the host's _auraGeo/_auraMat approach in zombie.ts.
+const _auraGeo = new THREE.RingGeometry(0.55, 0.85, 18);
+_auraGeo.rotateX(-Math.PI / 2);
+const _auraMat: Record<number, THREE.Material> = {
+  [AffixCode.Blazing]: new THREE.MeshBasicMaterial({ color: AFFIX_AURA_COLOR[AffixCode.Blazing], transparent: true, opacity: 0.6, depthWrite: false }),
+  [AffixCode.Glacial]: new THREE.MeshBasicMaterial({ color: AFFIX_AURA_COLOR[AffixCode.Glacial], transparent: true, opacity: 0.6, depthWrite: false }),
+  [AffixCode.Overloading]: new THREE.MeshBasicMaterial({ color: AFFIX_AURA_COLOR[AffixCode.Overloading], transparent: true, opacity: 0.6, depthWrite: false }),
+};
 
 /** A smoothed visual stand-in for a networked player (everyone except yourself). */
 class RemoteFigure {
@@ -58,6 +77,11 @@ class ZombieView {
   private lastType = -1;
   private scaleVal = 1;
   private color = 0x8fcf6f;
+  // Elite affix tell (mirrors host): an aura ring under the zombie + a tinted
+  // body emissive. Lazily created the first time an affix arrives; reused after.
+  private affix = AffixCode.None;
+  private aura?: THREE.Mesh;
+  private auraSpin = 0;
 
   constructor(private scene: THREE.Scene) {
     this.char = new VoxelChar({ body: 0x8fcf6f, head: 0x5f9d4a, eye: 0x141414, zombie: true });
@@ -65,13 +89,20 @@ class ZombieView {
     scene.add(this.group);
   }
   apply(s: ZombieSnap) {
-    if (s.type !== this.lastType) {
+    // Clamp the wire affix code to the known range so a hostile/garbage host
+    // value can't index a missing material or mis-render. Treat anything out of
+    // [0, AFFIX_CODE_MAX] (incl. NaN/undefined) as "none".
+    const affix = Number.isInteger(s.affix) && s.affix! >= 0 && s.affix! <= AFFIX_CODE_MAX ? s.affix! : AffixCode.None;
+    if (s.type !== this.lastType || affix !== this.affix) {
       const t = ZOMBIE_TYPES[s.type] ?? ZOMBIE_TYPES[0];
-      this.char.setColor(t.body, t.head, t.blastRadius !== undefined ? t.body : 0x000000);
+      // Affixed zombies glow their tell color; otherwise keep the variant's look.
+      const emissive = affix !== AffixCode.None ? AFFIX_AURA_COLOR[affix] : (t.blastRadius !== undefined ? t.body : 0x000000);
+      this.char.setColor(t.body, t.head, emissive);
       this.group.scale.setScalar(t.scale);
       this.scaleVal = t.scale;
       this.color = t.body;
       this.lastType = s.type;
+      this.applyAffix(affix);
     }
     this.tx = s.x;
     this.tz = s.z;
@@ -81,11 +112,30 @@ class ZombieView {
       this.char.play(s.state === 1 ? "death" : "walk");
     }
   }
+  /** Show/hide + tint the affix aura ring (shared geo/material, zero alloc on toggle). */
+  private applyAffix(affix: number) {
+    this.affix = affix;
+    if (affix === AffixCode.None) {
+      if (this.aura) this.aura.visible = false;
+      return;
+    }
+    if (!this.aura) {
+      this.aura = new THREE.Mesh(_auraGeo, _auraMat[affix]);
+      this.aura.position.y = 0.05;
+      this.group.add(this.aura);
+    }
+    this.aura.material = _auraMat[affix];
+    this.aura.visible = true;
+  }
   update(dt: number) {
     const k = 1 - Math.exp(-LERP * dt);
     this.group.position.x += (this.tx - this.group.position.x) * k;
     this.group.position.z += (this.tz - this.group.position.z) * k;
     this.group.rotation.y = this.try_;
+    if (this.aura && this.aura.visible) {
+      this.auraSpin += dt * 1.5;
+      this.aura.rotation.y = this.auraSpin;
+    }
     this.char.update(dt);
   }
   // cosmetic-hit info for guest-side bullet impacts (alive zombies only)
