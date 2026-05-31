@@ -10,6 +10,9 @@
  * Browsers block audio until the first user gesture, so `unlock()` is wired to
  * the first click/keypress and resumes the context.
  */
+/** Max semitones the combo ladder climbs (≈ one octave) before plateauing. */
+const COMBO_PITCH_CAP = 12;
+
 export class Audio {
   private ctx?: AudioContext;
   private master?: GainNode; // pre-limiter mix bus (kept public-equivalent for setEnabled)
@@ -30,6 +33,9 @@ export class Audio {
   private lastBoomAt = 0;
   private lastAbilityAt = 0;
   private lastAbilityKind = "";
+  // Rising-pitch combo ladder: each consecutive kill nudges the kill/hit tone up
+  // a semitone (capped) for a dopamine-y ascending streak; reset on combo break.
+  private comboSemis = 0;
   private musicOsc: OscillatorNode[] = [];
   private musicTimer?: number;
   enabled = true;
@@ -117,6 +123,16 @@ export class Audio {
     const data = buf.getChannelData(0);
     for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
     return buf;
+  }
+
+  /** Equal-tempered pitch ratio for `n` semitones (memo-free, cheap). */
+  private semi(n: number): number {
+    return Math.pow(2, n / 12);
+  }
+
+  /** Small random pitch detune (±`cents`) so repeated SFX don't fatigue. */
+  private vary(cents = 40): number {
+    return Math.pow(2, ((Math.random() - 0.5) * 2 * cents) / 1200);
   }
 
   /** A single oscillator voice with an ADSR-ish gain envelope. */
@@ -244,6 +260,15 @@ export class Audio {
     this.sub(120 + tone * 40, 0.06, 0.12);
   }
 
+  /**
+   * Tell the engine the current combo length so the kill/hit ladder pitches up
+   * one semitone per consecutive kill (capped). Pass 0 to break the streak. The
+   * step is read by `hit()`/`kill()`; main.ts calls this at the kill sites.
+   */
+  comboStep(n: number) {
+    this.comboSemis = Math.max(0, Math.min(COMBO_PITCH_CAP, Math.floor(n)));
+  }
+
   /** Confirms a bullet connected — crisp tick. `crit` for headshots. */
   hit(crit = false) {
     if (!this.ok()) return;
@@ -252,11 +277,12 @@ export class Audio {
     if (this.t - this.lastHitAt < 0.02) return;
     this.lastHitAt = this.t;
     const pan = (Math.random() - 0.5) * 0.5;
-    const v = 0.95 + Math.random() * 0.1;
-    this.blip("triangle", (crit ? 1500 : 920) * v, 0.05, crit ? 0.22 : 0.14, { sweepTo: crit ? 720 : 500, pan });
+    // ±variance + the rising combo-semitone ladder so streaks ascend musically.
+    const v = this.vary() * this.semi(this.comboSemis);
+    this.blip("triangle", (crit ? 1500 : 920) * v, 0.05, crit ? 0.22 : 0.14, { sweepTo: (crit ? 720 : 500) * v, pan });
     // tiny noise click sharpens the transient
     this.noise(0.02, crit ? 0.16 : 0.1, "highpass", crit ? 3500 : 2600, 0.7, undefined, { pan });
-    if (crit) this.blip("sine", 2400, 0.04, 0.06, { pan }); // bright ping for headshots
+    if (crit) this.blip("sine", 2400 * this.vary(), 0.04, 0.06, { pan }); // bright ping for headshots
   }
 
   /** Zombie dies. */
@@ -267,9 +293,10 @@ export class Audio {
     if (this.t - this.lastKillAt < 0.04) return;
     this.lastKillAt = this.t;
     const pan = (Math.random() - 0.5) * 0.5;
-    const v = 0.92 + Math.random() * 0.16;
-    this.noise(0.16, 0.24, "lowpass", 600, 1, 120, { pan });
-    this.blip("sawtooth", 160 * v, 0.16, 0.12, { sweepTo: 55, pan });
+    // ±variance plus the rising combo-semitone ladder (set via comboStep()).
+    const v = this.vary(55) * this.semi(this.comboSemis);
+    this.noise(0.16, 0.24, "lowpass", 600 * v, 1, 120 * v, { pan });
+    this.blip("sawtooth", 160 * v, 0.16, 0.12, { sweepTo: 55 * v, pan });
     this.sub(150 * v, 0.14, 0.18); // squishy sub-thump body
   }
 

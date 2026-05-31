@@ -1948,6 +1948,8 @@ class Game implements GameApi {
           this.addPoints(Math.round(SCORE.hit * sMul * (crit ? 2 : 1)));
           z.knockback(b.mesh.position.x, b.mesh.position.z, Math.max(crit ? 5 : 3, b.knockback));
           if (this.mods.cryoSlow > 0) z.applySlow(this.mods.cryoSlow, 2);
+          // keep the rising-pitch ladder in sync on every connect (0 when no chain)
+          this.audio.comboStep(this.combo.active ? this.combo.count : 0);
           this.audio.hit(crit);
           if (crit) {
             this.runStats.crits++;
@@ -2349,6 +2351,8 @@ class Game implements GameApi {
       // crunchy gib sparks flinging off the corpse (streaky, bigger on crit/combo)
       this.sparks.burst(z.pos, crit ? 0xffe14a : z.puffColor, crit || mult >= 3 ? 7 : 4, { speed: 7, spread: 4, streak: true });
       z.flingDeath(crit || mult >= 3 ? 6 : 2);
+      // rising-pitch streak: feed the live combo length so kill/hit tones ascend
+      this.audio.comboStep(this.combo.count);
       this.audio.kill();
       // combo milestone celebration: a big "xN!" pop when the tier climbs
       if (mult > this.lastComboTier && mult >= 2) {
