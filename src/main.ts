@@ -30,6 +30,7 @@ import type { EmoteId } from "./voxelChar";
 import { HouseView, HouseData, PartKind, HOUSE_PARTS, PART_CATS, HOUSE_SWATCHES, TROPHY_TIERS, trophyTierForRound, starterHouse, sanitizeHouse } from "./house";
 import { loadHouse, saveHouse, getHouseMeta, likeHouse, localOwnerId } from "./houses";
 import { aimCell, applyBuild, CELL as BUILD_CELL } from "./build";
+import { petThumbnail } from "./petthumb";
 import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
@@ -488,6 +489,7 @@ class Game implements GameApi {
           rarity,
           rarityColor: RARITY_COLOR[rarity],
           ability: p.ability?.name ?? base.ability?.name,
+          thumb: petThumbnail(p.id), // cached voxel-model preview
           trial,
           roleIcon: role ? ROLE_ICON[role] : undefined,
           roleLabel: role ? ROLE_LABEL[role] : undefined,
@@ -2303,8 +2305,10 @@ class Game implements GameApi {
       const shiny = (this.save.petProgress[id]?._shiny ?? 0) > 0;
       defs.push({ def, lvl: this.save.petLevels[id] ?? 1, shiny });
     }
-    defs.forEach((d, i) => {
-      const pet = new Pet(d.def!, (i / Math.max(1, defs.length)) * Math.PI * 2, d.lvl, d.shiny);
+    defs.forEach((d) => {
+      // orbitAngle starts at 0 for every pet — the even angular spacing comes
+      // from the `slot` (idx/total) in Pet.update, so they fan out, not clump.
+      const pet = new Pet(d.def!, 0, d.lvl, d.shiny);
       this.scene.add(pet.group);
       this.pets.push(pet);
     });

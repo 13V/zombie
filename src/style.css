@@ -220,6 +220,7 @@ body.touch .controls { display: none; }
 .pet-card.locked { opacity: 0.5; cursor: not-allowed; }
 .pet-card.owned { opacity: 0.7; cursor: default; border-color: rgba(120,230,140,0.5); }
 .pet-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--pc); box-shadow: 0 0 8px var(--pc); }
+.pet-preview { width: 48px; height: 48px; image-rendering: auto; align-self: center; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
 .pet-name { font-weight: 800; font-size: 14px; color: var(--pc); }
 .pet-desc { font-size: 11px; opacity: 0.8; }
 .pet-ability { font-size: 10px; font-weight: 800; letter-spacing: 0.02em; color: var(--rc, #ffd24a); opacity: 0.95; margin-top: 1px; }

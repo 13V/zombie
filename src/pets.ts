@@ -942,10 +942,13 @@ export class Pet {
    * Update orbit + animation + fire. Returns a shot when it fires this frame.
    */
   update(dt: number, playerX: number, playerZ: number, idx: number, total: number, target: { x: number; z: number } | null, fireRateMul = 1, engageRange?: number): { ox: number; oz: number; dx: number; dz: number; dist: number } | null {
-    // orbit around the player
-    this.orbitAngle += dt * 1.4;
+    // Orbit around the player. A SHARED phase (orbitAngle, advanced at the same
+    // rate for every pet) spins the whole ring; the evenly-spaced `slot` keeps
+    // each pet at a fixed angular offset so they never bunch up. The ring radius
+    // grows with squad size so 5+ pets fan out instead of overlapping.
+    this.orbitAngle += dt * 1.0;
     const slot = (idx / Math.max(1, total)) * Math.PI * 2;
-    const r = 1.8 * this.orbitScale;
+    const r = (1.9 + Math.max(0, total - 2) * 0.32) * this.orbitScale;
     const ox = playerX + Math.cos(this.orbitAngle + slot) * r;
     const oz = playerZ + Math.sin(this.orbitAngle + slot) * r;
     this.bob += dt * 4;
