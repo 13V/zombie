@@ -1191,11 +1191,13 @@ class Game implements GameApi {
   }
   upgradeCurrentWeapon() {
     const w = this.actorWeapon();
-    if (w.upgraded) {
-      this.toast("Already Pack-a-Punched");
+    if (w.maxUpgraded) {
+      this.toast("Fully Pack-a-Punched (+++)");
       return;
     }
-    if (!this.spend(COSTS.packAPunch)) return;
+    // Cost climbs with each tier: I = base, II = 2x, III = 3x.
+    const cost = COSTS.packAPunch * (w.tier + 1);
+    if (!this.spend(cost)) return;
     w.upgrade();
     if (!this.acting) this.syncWeaponHud();
     this.toast(`${w.def.name}!`);
@@ -1256,9 +1258,16 @@ class Game implements GameApi {
       grantPerk: (p) => self.withActor(actor, () => self.grantPerk(p)),
       hasPerk: (p) => self.withActor(actor, () => self.hasPerk(p)),
       upgradeCurrentWeapon: () => self.withActor(actor, () => self.upgradeCurrentWeapon()),
+      papInfo: () => self.withActor(actor, () => self.papInfo()),
       giveRandomGum: () => self.withActor(actor, () => self.giveRandomGum()),
       toast: (m) => self.withActor(actor, () => self.toast(m)),
     };
+  }
+
+  /** Live Pack-a-Punch state for the acting player's weapon (station prompt). */
+  papInfo(): { cost: number | null; tier: number } {
+    const w = this.actorWeapon();
+    return { cost: w.maxUpgraded ? null : COSTS.packAPunch * (w.tier + 1), tier: w.tier };
   }
 
   /** Host: run any guest interactions queued this tick (buy / perk / Pack-a-Punch). */

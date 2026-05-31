@@ -337,12 +337,28 @@ export class Weapon {
   private cooldown = 0;
   reloading = false;
   reloadTimer = 0;
-  upgraded = false;
+  /** Pack-a-Punch tier: 0 = stock, up to MAX_PAP_TIER. Each tier compounds the
+   *  gun's stats and adds a "+" to the name. */
+  tier = 0;
+  static readonly MAX_PAP_TIER = 3;
+  /** Factory name (without any Pack-a-Punch "+" suffix), so re-upgrades re-tag
+   *  cleanly instead of stacking "+ +". */
+  private baseName: string;
 
   constructor(def: WeaponDef) {
     this.def = def;
     this.ammo = def.magSize;
     this.reserve = def.reserve;
+    this.baseName = def.name;
+  }
+
+  /** True once Pack-a-Punched at least once (back-compat for older call sites). */
+  get upgraded(): boolean {
+    return this.tier > 0;
+  }
+  /** True when no further Pack-a-Punch tiers remain. */
+  get maxUpgraded(): boolean {
+    return this.tier >= Weapon.MAX_PAP_TIER;
   }
 
   get reserveLabel(): string {
@@ -350,24 +366,30 @@ export class Weapon {
   }
 
   /**
-   * Pack-a-Punch: replace this instance's def with a beefed-up clone (we clone
-   * so the shared WEAPONS template is never mutated). Refills on upgrade.
+   * Pack-a-Punch: bump this gun to the next tier (up to MAX_PAP_TIER). Each tier
+   * compounds the stats off the CURRENT def and re-tags the name with the right
+   * number of "+"s (off baseName, so it never stacks "+ +"). We clone the def so
+   * the shared WEAPONS template is never mutated. Refills on upgrade.
    */
   upgrade(): boolean {
-    if (this.upgraded) return false;
+    if (this.maxUpgraded) return false;
+    this.tier++;
     const d = this.def;
+    // First tier brings the biggest jump; later tiers compound a touch gentler.
+    const dmgMul = this.tier === 1 ? 2.4 : 1.7;
     this.def = {
       ...d,
-      name: `${d.name} +`,
-      damage: Math.round(d.damage * 2.4),
-      magSize: Math.ceil(d.magSize * 1.4),
-      reserve: d.reserve === Infinity ? Infinity : Math.ceil(d.reserve * 1.5),
-      reloadTime: d.reloadTime * 0.85,
-      splashDamage: d.splashDamage ? Math.round(d.splashDamage * 2) : d.splashDamage,
+      name: `${this.baseName} ${"+".repeat(this.tier)}`,
+      damage: Math.round(d.damage * dmgMul),
+      magSize: Math.ceil(d.magSize * 1.25),
+      reserve: d.reserve === Infinity ? Infinity : Math.ceil(d.reserve * 1.4),
+      reloadTime: d.reloadTime * 0.9,
+      splashDamage: d.splashDamage ? Math.round(d.splashDamage * 1.8) : d.splashDamage,
+      // packed rounds read brighter + a touch bigger each tier.
+      bulletScale: (d.bulletScale ?? 1) * 1.12,
     };
     this.ammo = this.def.magSize;
     if (this.reserve !== Infinity) this.reserve = this.def.reserve;
-    this.upgraded = true;
     return true;
   }
 

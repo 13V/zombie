@@ -32,6 +32,10 @@ export interface GameApi {
   hasPerk(perk: "tough" | "quick"): boolean;
   /** Pack-a-Punch the currently equipped weapon. */
   upgradeCurrentWeapon(): void;
+  /** Live Pack-a-Punch state for the equipped weapon: the next tier's cost (or
+   *  null if fully upgraded) plus the current tier, so the station prompt reads
+   *  the real escalating price. */
+  papInfo(): { cost: number | null; tier: number };
   /** Dispense a random Gobblegum power-up. */
   giveRandomGum(): void;
   toast(msg: string): void;
@@ -328,7 +332,7 @@ class PackAPunch implements Interactable {
   range = 2.6;
   private ring: THREE.Mesh;
   private t = 0;
-  constructor(public pos: THREE.Vector3, private cost: number) {
+  constructor(public pos: THREE.Vector3) {
     const { x, z } = pos;
     const steelMat = voxelMaterial(VOX.steel);
     const steelDarkMat = voxelMaterial(VOX.steelDark);
@@ -352,7 +356,12 @@ class PackAPunch implements Interactable {
     this.group.add(light);
   }
   prompt(game: GameApi) {
-    return { text: `[E] Pack-a-Punch — ${this.cost}`, affordable: game.points >= this.cost };
+    const info = game.papInfo();
+    if (info.cost === null) {
+      return { text: "Pack-a-Punch — MAXED (+++)", affordable: true };
+    }
+    const tag = ["I", "II", "III"][info.tier] ?? "";
+    return { text: `[E] Pack-a-Punch ${tag} — ${info.cost}`, affordable: game.points >= info.cost };
   }
   interact(game: GameApi) {
     game.upgradeCurrentWeapon();
@@ -543,7 +552,7 @@ export class Interactables {
 
     const wall = new WallBuy(new THREE.Vector3(0, 0, -half + 1.5), "buzzgun", COSTS.wallBuy);
     const wheel = new MysteryChest(new THREE.Vector3(half - 6, 0, half - 6), COSTS.mysteryBox);
-    const pap = new PackAPunch(new THREE.Vector3(-half + 6, 0, half - 6), COSTS.packAPunch);
+    const pap = new PackAPunch(new THREE.Vector3(-half + 6, 0, half - 6));
     const gum = new Bubblegum(new THREE.Vector3(5, 0, 9), COSTS.gobblegum);
     const tough = new PerkPad(
       new THREE.Vector3(-half + 6, 0, -half + 6), "tough", COSTS.perkTough, "Tough (+HP)", COLORS.perkTough,
