@@ -75,7 +75,7 @@ export function petThumbnail(petId: string): string {
   const pet = new Pet(def, 0, 1, false);
   // most pets are ~1u; the big Celestial (Chronos) is taller + has a halo/crown,
   // so shrink it into frame so the whole majestic silhouette shows.
-  if (def.shape === "chronos") pet.group.scale.multiplyScalar(0.62);
+  if (def.shape === "chronos" || def.shape === "oracle") pet.group.scale.multiplyScalar(0.62);
   pet.group.position.set(0, -0.15, 0);
   pet.group.rotation.y = -Math.PI * 0.1; // tiny turn toward the camera (face stays to lens)
   scene.add(pet.group);

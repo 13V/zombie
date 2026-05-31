@@ -139,6 +139,7 @@ export class Hud {
           <div class="reloading" id="hud-reloading"></div>
         </div>
       </div>
+      <div id="overdrive" class="hidden">⏩ 2× OVERDRIVE</div>
       <div id="prompt"></div>
       <div id="toast"></div>
       <div id="island-bar" class="hidden">
@@ -769,6 +770,13 @@ export class Hud {
 
   setRound(n: number) {
     this.roundEl.textContent = String(n);
+  }
+  private _cOverdrive = false;
+  /** Toggle the "2× OVERDRIVE" banner (Chronos time-warp confirmation). */
+  setOverdrive(on: boolean) {
+    if (on === this._cOverdrive) return;
+    this._cOverdrive = on;
+    this.q("#overdrive").classList.toggle("hidden", !on);
   }
   setPoints(p: number) {
     if (p === this._cPoints) return;

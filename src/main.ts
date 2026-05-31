@@ -289,6 +289,9 @@ class Game implements GameApi {
       // Between rounds: surface the Curse dial so the player can up the stakes.
       this.hud.setCurse(this.rounds.curse, this.rounds.curseRewardMul);
       this.hud.setCurseVisible(true);
+      // ✦ The Oracle of Fate (Celestial): auto-grant the BEST available perk
+      // each round, FREE, on top of your normal pick — its signature foresight.
+      this.grantOraclePerk();
       // Solo: offer a level-up pick during the breather (skipped in co-op).
       if (!this.netplay) this.offerLevelUp();
     };
@@ -747,6 +750,32 @@ class Game implements GameApi {
   }
 
   /** Pause the breather and offer 1 of 3 stacking run upgrades. */
+  /** ✦ Oracle of Fate: if owned (and active), auto-apply the single best perk
+   *  available this round — FREE, no pick. "Best" = highest tier, picked from a
+   *  fresh roll so it's still varied. Stacks like any normal upgrade. */
+  private grantOraclePerk() {
+    if (!this.save.pets.includes("oracle") || this.save.benchedPets.includes("oracle")) return;
+    // roll a small candidate pool and take the highest-tier card
+    const rank: Record<string, number> = { legendary: 3, rare: 2, common: 1 };
+    const pool = rollUpgrades(5, this.rounds.round);
+    const best = pool.reduce((a, b) => (rank[b.tier] > rank[a.tier] ? b : a), pool[0]);
+    if (!best) return;
+    best.apply(this.mods);
+    // honor the transform floors + live-state refresh, same as a manual pick
+    if (this.mods.pierceExplode > 0) {
+      this.mods.pierceBonus = Math.max(this.mods.pierceBonus, 1);
+      this.mods.explosiveRadius = Math.max(this.mods.explosiveRadius, 1.4);
+    }
+    if (this.mods.critChain > 0) {
+      this.mods.chainCount = Math.max(this.mods.chainCount, 1);
+      this.mods.critChance = Math.max(this.mods.critChance, 0.15);
+    }
+    this.player.maxHealth = PLAYER.maxHealth + this.mods.maxHealthBonus;
+    this.combo.windowBonus = this.mods.comboWindowBonus;
+    this.hud.toast(`🔮 Oracle: ${best.name}!`);
+    this.audio.powerup();
+  }
+
   private offerLevelUp() {
     this.levelNum++;
     this.levelCards = rollUpgrades(3, this.rounds.round);
@@ -1276,11 +1305,13 @@ class Game implements GameApi {
     // Chronos OVERDRIVE: run the ENTIRE sim at 2x while the time-warp is active.
     // Drained on real (unwarped) time so the buff length is honest. Only affects
     // live gameplay (state "playing"); menus/island tick normally.
+    const warpActive = this.timeWarp > 0 && this.state === "playing";
     if (this.timeWarp > 0) {
       this.timeWarp -= dt; // bleed in real seconds
       if (this.state === "playing") dt *= 2;
       this.zoomPunch = Math.max(this.zoomPunch, 0.25); // subtle lens push while warped
     }
+    this.hud.setOverdrive(warpActive); // on-screen "2× OVERDRIVE" confirmation
 
     this.touch?.setActive(this.state === "playing" || this.state === "paused" || this.state === "island");
     this.player.showAimGuide(this.state === "playing");
@@ -2622,6 +2653,9 @@ class Game implements GameApi {
   private firePetAbility(pet: Pet, petBuff: number) {
     const ab = pet.def.ability;
     if (!ab) return;
+    // The Oracle's "autoperk" isn't a timed cast — it's granted at round end
+    // (grantOraclePerk). Nothing to fire here.
+    if (ab.kind === "autoperk") return;
     const grid = this.rounds.grid;
     const px = pet.group.position.x;
     const pz = pet.group.position.z;

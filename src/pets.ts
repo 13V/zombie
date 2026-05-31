@@ -28,7 +28,8 @@ export type PetShape =
   | "bee" | "drone" | "dragon" | "ghost" | "turret" | "wisp" | "piggy" | "totem"
   | "slime" | "golem" | "mushroom" | "frog" | "crystal" | "star" | "cat"
   | "eye" | "serpent" | "phoenix" | "ufo" | "orb"
-  | "chronos"; // the one Celestial pet — a tiny clockwork-halo time spirit
+  | "chronos" // Celestial — a clockwork-halo time god (timewarp)
+  | "oracle"; // Celestial — an all-seeing eye-of-fate (auto-perk)
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic" | "celestial";
 
@@ -74,8 +75,9 @@ export type AbilityKind =
   | "overcharge" // builds charge stacks → +pet damage (capped), discharges a small nova at max
   | "siphon" // builds stacks → +lifesteal & a trickle heal on cast (drain engine)
   | "resonance" // builds stacks → +crit chance/pierce flavor; small shard burst on cast
-  // ── celestial signature ──
-  | "timewarp"; // OVERDRIVE: the whole game runs at 2x for a few seconds (the Chronomancer)
+  // ── celestial signatures ──
+  | "timewarp" // OVERDRIVE: the whole game runs at 2x for a few seconds (the Chronomancer)
+  | "autoperk"; // ORACLE: auto-grants the best available perk at the end of each round
 
 /** True for the stacking "engine" archetypes. */
 export const ENGINE_KINDS: ReadonlySet<AbilityKind> = new Set<AbilityKind>(["overcharge", "siphon", "resonance"]);
@@ -320,6 +322,8 @@ export const PETS: PetDef[] = [
   // runs the whole game at 2x for a few seconds. Radiant, one-of-a-kind.
   mk({ id: "chronos", name: "Chronos, the Eternal", desc: "Bends time — OVERDRIVE runs the whole game at 2× speed", cost: 0, rarity: "celestial", color: 0x9af7ff, accent: 0xfff6c8,
     damage: 600, interval: 0.32, bulletColor: 0xeaffff, bulletScale: 1.4, pierce: 6, splashRadius: 2.4, splashDamage: 220, homing: 1, shape: "chronos", range: 30 }),
+  mk({ id: "oracle", name: "The Oracle of Fate", desc: "Foresight — auto-grants the BEST perk at the end of every round", cost: 0, rarity: "celestial", color: 0xc89bff, accent: 0xffe89a,
+    damage: 560, interval: 0.34, bulletColor: 0xe6ccff, bulletScale: 1.4, pierce: 5, splashRadius: 2.4, splashDamage: 210, homing: 1, shape: "oracle", range: 30 }),
 ];
 
 /**
@@ -357,8 +361,9 @@ const PET_ABILITIES: Record<string, PetAbility> = {
   cosmic_serpent: { name: "Cosmic Resonance", kind: "resonance", cd: 5, power: 220, perStack: 0.06, maxStacks: 8, count: 14, slow: 0.4 }, // ENGINE
   midas_golem: { name: "Midas Touch", kind: "jackpot", cd: 9, power: 600, count: 24, gold: 5000, radius: 9 }, // payoff
   void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 1200, radius: 6.5 }, // payoff
-  // ── CELESTIAL ── the time-bender; OVERDRIVE = whole game at 2x for `dur`s
-  chronos: { name: "OVERDRIVE", kind: "timewarp", cd: 16, power: 0, dur: 6 },
+  // ── CELESTIAL ──
+  chronos: { name: "OVERDRIVE", kind: "timewarp", cd: 16, power: 0, dur: 6 }, // whole game at 2x for `dur`s
+  oracle: { name: "FORESIGHT", kind: "autoperk", cd: 999, power: 0 }, // passive: best perk each round (handled at intermission, not on a timer)
 };
 for (const p of PETS) {
   const a = PET_ABILITIES[p.id];
@@ -394,7 +399,7 @@ const COMBAT_ROLES: Record<string, CombatRole> = {
   // MYTHIC
   cosmic_serpent: "saboteur", void_sovereign: "bomber",
   // CELESTIAL
-  chronos: "sniper",
+  chronos: "sniper", oracle: "sniper",
 };
 for (const p of PETS) {
   const r = COMBAT_ROLES[p.id];
@@ -631,7 +636,7 @@ export class Pet {
   private applyLevelVisuals() {
     // grows ~6%/level up to ~+60%; emissive ramps so high pets glow hot.
     // Chronos (Celestial) is built bigger so it towers over the roster.
-    const baseSize = this.def.shape === "chronos" ? 0.92 : 0.7;
+    const baseSize = this.def.shape === "chronos" || this.def.shape === "oracle" ? 0.92 : 0.7;
     this.baseScale = baseSize * (1 + Math.min(0.6, (this.level - 1) * 0.06));
     this.group.scale.setScalar(this.baseScale);
     const glowBoost = Math.min(1.6, 0.9 + (this.level - 1) * 0.12);
@@ -992,6 +997,41 @@ export class Pet {
         cheeks(-0.04, 0.3);
         smile(-0.1, 0.3, 0.13);
         this.muzzle = box(0.16, 0.16, 0.16, 0, 0.05, 0.4, glowMaterial(0xffffff, 1.6));
+        break;
+      }
+      case "oracle": {
+        // ✦ The all-seeing Oracle of Fate. A grand mystic eye: a luminous orb
+        // with a deep violet iris + glowing pupil, a radiant halo of "fate"
+        // rays, a floating laurel/crown, and big wings. Reads as ancient + wise
+        // but still cute (blush + tiny catch-lights). acc=gold, body=violet.
+        const goldGlow = glowMaterial(acc, 1.3);
+        const white = glowMaterial(0xffffff, 1.5);
+        this.aura = box(1.15, 1.15, 0.7, 0, 0.05, 0, auraMaterial(col, 0.6)); // wide mystic aura
+        box(0.82, 0.82, 0.5, 0, 0.05, -0.02, auraMaterial(0xeed6ff, 0.4));
+        // sclera (big white eyeball)
+        box(0.72, 0.72, 0.5, 0, 0.05, 0.02, glowMaterial(0xfff4ff, 1.0));
+        box(0.36, 0.36, 0.12, 0, 0.05, 0.28, glowMaterial(col, 1.0)); // violet iris
+        box(0.18, 0.18, 0.08, 0, 0.05, 0.36, dark); // pupil
+        box(0.08, 0.08, 0.05, -0.07, 0.13, 0.4, white); // catch-light
+        box(0.05, 0.05, 0.05, 0.06, -0.04, 0.4, white); // second sparkle
+        box(0.78, 0.12, 0.5, 0, 0.36, 0.02, goldGlow); // gold upper eyelid/brow
+        // ── radiant halo of fate-rays around the eye (8 spokes) ──
+        this.halo = new THREE.Group();
+        this.halo.position.set(0, 0.05, -0.04);
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          box(0.07, 0.2, 0.06, Math.cos(a) * 0.6, Math.sin(a) * 0.6 + 0.05, 0, goldGlow, this.halo);
+        }
+        this.body.add(this.halo);
+        // floating laurel crown
+        box(0.1, 0.1, 0.1, 0, 0.7, 0, white);
+        box(0.07, 0.14, 0.07, -0.16, 0.62, 0, goldGlow);
+        box(0.07, 0.14, 0.07, 0.16, 0.62, 0, goldGlow);
+        // big wings
+        this.wingL = box(0.58, 0.06, 0.48, -0.78, 0.1, -0.12, auraMaterial(0xeed6ff, 0.8));
+        this.wingR = box(0.58, 0.06, 0.48, 0.78, 0.1, -0.12, auraMaterial(0xeed6ff, 0.8));
+        cheeks(-0.22, 0.32, 0.34); // blush low on the orb so it stays cute
+        this.muzzle = box(0.16, 0.16, 0.16, 0, 0.05, 0.42, white);
         break;
       }
       default:
