@@ -13,8 +13,14 @@ import type * as Party from "partykit/server";
  * URL:    wss://tiny-dead.<your-username>.partykit.dev
  */
 
+// Shared protocol constants — keep these in lockstep with server/src/rooms.ts.
 const HOST_ID = 1;
+/** Capacity of a co-op run room (host + up to 3 guests). */
 const MAX_MEMBERS = 4;
+/** Capacity of a social island instance (Roblox-style shared lobby). */
+const ISLAND_CAP = 16;
+/** Fixed code prefix for island instances; numbered instances spill over. */
+const ISLAND_PREFIX = "ISLE";
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous 0/O/1/I
 
 interface Member {
@@ -25,6 +31,10 @@ interface Room {
   code: string;
   members: Map<number, Member>;
   nextId: number;
+  /** Member capacity (co-op runs are small; island instances are larger). */
+  cap: number;
+  /** True for social island instances (no single authoritative host). */
+  isIsland: boolean;
 }
 
 function send(conn: Party.Connection, msg: unknown): void {
@@ -65,6 +75,8 @@ export default class Relay implements Party.Server {
         return this.onHost(sender);
       case "join":
         return this.onJoin(sender, msg);
+      case "island":
+        return this.onIsland(sender);
       case "relay":
         return this.onRelay(sender, msg);
     }
@@ -81,7 +93,7 @@ export default class Relay implements Party.Server {
   private onHost(sender: Party.Connection): void {
     if (this.where.has(sender.id)) return send(sender, { t: "error", msg: "already in a room" });
     const code = this.freshCode();
-    const room: Room = { code, members: new Map(), nextId: HOST_ID + 1 };
+    const room: Room = { code, members: new Map(), nextId: HOST_ID + 1, cap: MAX_MEMBERS, isIsland: false };
     room.members.set(HOST_ID, { id: HOST_ID, conn: sender });
     this.rooms.set(code, room);
     this.where.set(sender.id, { code, id: HOST_ID });
@@ -93,12 +105,50 @@ export default class Relay implements Party.Server {
     const code = String(msg.room ?? "").trim().toUpperCase();
     const room = this.rooms.get(code);
     if (!room) return send(sender, { t: "error", msg: "room not found" });
-    if (room.members.size >= MAX_MEMBERS) return send(sender, { t: "error", msg: "room is full" });
+    if (room.members.size >= room.cap) return send(sender, { t: "error", msg: "room is full" });
 
     const id = room.nextId++;
     room.members.set(id, { id, conn: sender });
     this.where.set(sender.id, { code, id });
     send(sender, { t: "joined", room: code, id, host: false });
+    for (const m of room.members.values()) {
+      if (m.id !== id) send(m.conn, { t: "peer-join", id });
+    }
+  }
+
+  /**
+   * Handle `{ t: "island" }` — join (or auto-open) a shared social island
+   * instance. Mirrors server/src/index.ts onIsland + rooms.ts joinIsland:
+   * instances fill in order, and once one reaches ISLAND_CAP a new numbered
+   * instance opens so strangers always land somewhere with room. The joiner is
+   * told the instance code, its id, and who's already present (peers) so it can
+   * spawn existing peers immediately — not just future joiners.
+   */
+  private onIsland(sender: Party.Connection): void {
+    if (this.where.has(sender.id)) return send(sender, { t: "error", msg: "already in a room" });
+
+    // find an existing island instance with space
+    let room: Room | undefined;
+    for (const r of this.rooms.values()) {
+      if (r.isIsland && r.members.size < r.cap) {
+        room = r;
+        break;
+      }
+    }
+    if (!room) {
+      // none with space: open the next numbered instance
+      let n = 1;
+      while (this.rooms.has(`${ISLAND_PREFIX}${n}`)) n++;
+      const code = `${ISLAND_PREFIX}${n}`;
+      room = { code, members: new Map(), nextId: HOST_ID + 1, cap: ISLAND_CAP, isIsland: true };
+      this.rooms.set(code, room);
+    }
+
+    const id = room.nextId++;
+    room.members.set(id, { id, conn: sender });
+    this.where.set(sender.id, { code: room.code, id });
+    const peers = [...room.members.values()].filter((m) => m.id !== id).map((m) => m.id);
+    send(sender, { t: "island-joined", room: room.code, id, peers });
     for (const m of room.members.values()) {
       if (m.id !== id) send(m.conn, { t: "peer-join", id });
     }
