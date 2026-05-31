@@ -32,6 +32,28 @@ export type PetShape =
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic";
 
 /**
+ * Functional "verb" for a combat pet (distinct from the non-combat `role`).
+ * Each gives a SMALL, capped on-hit/on-kill behavior in updatePets (not just a
+ * damage number) so the roster stops being stat-clones. Pokémon-style roles:
+ *  - tank: larger orbit + draws fire (bigger engage range, soaks)
+ *  - drainer: heals the player a hair on each kill it lands
+ *  - bomber: tiny bonus splash on its bullets
+ *  - sniper: longer range + crit-flag on distant targets
+ *  - harvester: tiny bonus gold on each kill it lands
+ *  - saboteur: applies a brief slow to what it hits
+ */
+export type CombatRole = "tank" | "drainer" | "bomber" | "sniper" | "harvester" | "saboteur";
+
+/** Per-role tuning. SMALL + capped — see ROLE_BEHAVIOR caps in main.ts/config. */
+export const ROLE_LABEL: Record<CombatRole, string> = {
+  tank: "Tank", drainer: "Drainer", bomber: "Bomber",
+  sniper: "Sniper", harvester: "Harvester", saboteur: "Saboteur",
+};
+export const ROLE_ICON: Record<CombatRole, string> = {
+  tank: "🛡", drainer: "❤", bomber: "💥", sniper: "🎯", harvester: "⛁", saboteur: "🕸",
+};
+
+/**
  * Signature special move. Every Epic+ pet has one — a periodic, screen-shaking
  * effect on top of its normal fire. Legendary tiers hit harder/wider and Mythic
  * abilities are deliberately overpowered (near board-clears, fountains of gold).
@@ -104,6 +126,9 @@ export interface PetDef {
   role?: "banker" | "buffer";
   /** banker: gold per second passively. buffer: +damage fraction to other pets. */
   roleValue?: number;
+  /** Functional combat "verb" — drives a small capped on-hit/on-kill behavior in
+   *  updatePets (separate from the non-combat `role`). Combat pets only. */
+  combatRole?: CombatRole;
   /** At `evolveLevel`, the pet transforms into the `evolvesTo` def (bigger,
    *  stronger model + new behavior). The big idle payoff. */
   evolveLevel?: number;
@@ -298,6 +323,46 @@ for (const p of PETS) {
   if (a) p.ability = a;
 }
 
+/**
+ * Combat-role ("verb") map — every COMBAT pet gets one so it plays distinctly,
+ * not just by its damage number. Bankers/buffers are non-combat and stay out.
+ * Roles are inferred from each pet's fantasy: piercing line-fire = sniper,
+ * splash = bomber, homing/eye/ghost = saboteur (debuff), cats/serpents that
+ * lifesteal-flavored = drainer, sturdy golems/turrets = tank, gold-tinged
+ * shooters = harvester. Evolutions inherit their base pet's role below.
+ */
+const COMBAT_ROLES: Record<string, CombatRole> = {
+  // COMMON
+  ladybug: "drainer", pebble: "bomber", beebot: "saboteur", sproutling: "harvester",
+  firefly: "sniper", tadpole: "saboteur", batling: "saboteur", wisp: "sniper",
+  slime_g: "bomber",
+  // UNCOMMON
+  kitling: "drainer", turret: "tank", toadstool: "bomber", crystalite: "sniper",
+  peeper: "saboteur", scout_drone: "sniper", starlet: "harvester", garden_snake: "drainer",
+  emberling: "bomber",
+  // RARE
+  ghost: "saboteur", sapphire_shard: "sniper", dragon: "bomber", shadow_cat: "drainer",
+  stone_golem: "tank", lil_saucer: "saboteur", phoenix_chick: "harvester", nova_star: "bomber",
+  // EPIC
+  specter: "saboteur", thunder_orb: "sniper", inferno_drake: "bomber", heavy_turret: "tank",
+  void_eye: "saboteur", seraph_star: "drainer", crystal_wyrm: "sniper", solar_phoenix: "bomber",
+  // LEGENDARY
+  reaper_lord: "drainer", celestial_dragon: "bomber", omni_cannon: "tank", galaxy_orb: "sniper",
+  eclipse_phoenix: "bomber",
+  // MYTHIC
+  cosmic_serpent: "saboteur", void_sovereign: "bomber",
+};
+for (const p of PETS) {
+  const r = COMBAT_ROLES[p.id];
+  if (r) p.combatRole = r;
+}
+// Hand-authored early evolutions inherit their base pet's combat role.
+for (const evo of PET_EVOLUTIONS) {
+  const baseId = evo.id.replace(/_evo$/, "");
+  const r = COMBAT_ROLES[baseId];
+  if (r && !evo.combatRole) evo.combatRole = r;
+}
+
 // ─────────────────────────── Evolution trials ───────────────────────────
 // The 4 early-game evolvers (already have bespoke evolved forms + evolveLevel)
 // get hand-authored trials. Every Epic+ pet gains a generated evolved form
@@ -460,17 +525,37 @@ export class Pet {
   private abilityTimer = 0; // counts down to the next signature-ability proc
   level: number;
   private baseScale = 0.7;
+  /** Tanks orbit a touch wider (they "draw fire" out front of the squad). */
+  private readonly orbitScale: number;
+  /** Cosmetic shiny/chroma variant (purely visual — sparkle + hue cycle). */
+  readonly shiny: boolean;
+  private shinyMesh?: THREE.Mesh; // extra sparkle node, shiny only
+  private shinyT = 0;
 
-  constructor(readonly def: PetDef, private orbitAngle: number, level = 1) {
+  constructor(readonly def: PetDef, private orbitAngle: number, level = 1, shiny = false) {
     this.level = Math.max(1, level);
     this.cd = Math.random() * def.interval;
     // stagger first cast so a fresh squad doesn't all fire abilities in sync
     if (def.ability) this.abilityTimer = def.ability.cd * (0.4 + Math.random() * 0.6);
     this.bob = Math.random() * Math.PI * 2;
     this.flap = Math.random() * Math.PI * 2;
+    this.orbitScale = def.combatRole === "tank" ? 1.35 : 1;
+    this.shiny = shiny;
     this.group.add(this.body);
     this.build();
+    if (this.shiny) this.buildShiny();
     this.applyLevelVisuals();
+  }
+
+  /** Shiny cosmetic: a bright sparkle crown above the body, hue-cycled in update.
+   *  Reuses SHARED_UNIT_BOX (no new geometry) per the perf-agent's pooling note. */
+  private buildShiny() {
+    const m = new THREE.Mesh(SHARED_UNIT_BOX, glowMaterial(0xffffff, 1.6));
+    m.scale.set(0.12, 0.12, 0.12);
+    m.userData.bw = 0.12; m.userData.bh = 0.12; m.userData.bd = 0.12;
+    m.position.set(0, 0.5, 0);
+    this.body.add(m);
+    this.shinyMesh = m;
   }
 
   /** Pet fires faster + (in main) hits harder as it levels. */
@@ -817,11 +902,11 @@ export class Pet {
   /**
    * Update orbit + animation + fire. Returns a shot when it fires this frame.
    */
-  update(dt: number, playerX: number, playerZ: number, idx: number, total: number, target: { x: number; z: number } | null, fireRateMul = 1): { ox: number; oz: number; dx: number; dz: number } | null {
+  update(dt: number, playerX: number, playerZ: number, idx: number, total: number, target: { x: number; z: number } | null, fireRateMul = 1, engageRange?: number): { ox: number; oz: number; dx: number; dz: number; dist: number } | null {
     // orbit around the player
     this.orbitAngle += dt * 1.4;
     const slot = (idx / Math.max(1, total)) * Math.PI * 2;
-    const r = 1.8;
+    const r = 1.8 * this.orbitScale;
     const ox = playerX + Math.cos(this.orbitAngle + slot) * r;
     const oz = playerZ + Math.sin(this.orbitAngle + slot) * r;
     this.bob += dt * 4;
@@ -851,6 +936,17 @@ export class Pet {
       const f = this.flashLife / 0.12;
       this.setMuzzleScale(0.01 + f * 1.1);
     }
+    // shiny sparkle: hue-cycle + twinkle the crown (cosmetic only).
+    if (this.shinyMesh) {
+      this.shinyT += dt * 2.2;
+      const mat = this.shinyMesh.material as THREE.MeshStandardMaterial;
+      const hue = (this.shinyT * 0.15) % 1;
+      mat.color.setHSL(hue, 0.9, 0.7);
+      mat.emissive.setHSL(hue, 0.9, 0.6);
+      const tw = 0.09 + (Math.sin(this.shinyT * 3) + 1) * 0.05;
+      this.shinyMesh.scale.set(tw, tw, tw);
+      this.shinyMesh.position.y = 0.5 + Math.sin(this.shinyT) * 0.04;
+    }
 
     // face + fire at target
     this.cd -= dt;
@@ -859,12 +955,15 @@ export class Pet {
       const dz = target.z - oz;
       const dist = Math.hypot(dx, dz);
       this.group.rotation.y = Math.atan2(dx, dz);
-      if (dist <= this.def.range && this.cd <= 0) {
+      // engageRange lets callers widen the engage band per-role (tank/sniper) and
+      // via squad synergy; falls back to the def's own range.
+      const reach = engageRange ?? this.def.range;
+      if (dist <= reach && this.cd <= 0) {
         // your Fire Rate upgrades make pets shoot faster too (same as your gun)
         this.cd = this.interval / Math.max(0.1, fireRateMul);
         this.onFire();
         const len = dist || 1;
-        return { ox, oz, dx: dx / len, dz: dz / len };
+        return { ox, oz, dx: dx / len, dz: dz / len, dist };
       }
     }
     return null;
