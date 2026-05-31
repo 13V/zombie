@@ -278,7 +278,7 @@ const PET_ABILITIES: Record<string, PetAbility> = {
   // ── MYTHIC (overpowered on purpose) ──
   cosmic_serpent: { name: "Cosmic Storm", kind: "nova", cd: 7, power: 520, count: 36, radius: 1.6, slow: 0.5 },
   midas_golem: { name: "Midas Touch", kind: "jackpot", cd: 9, power: 600, count: 24, gold: 5000, radius: 9 },
-  void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 4000, radius: 16 },
+  void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 1200, radius: 6.5 },
 };
 for (const p of PETS) {
   const a = PET_ABILITIES[p.id];
