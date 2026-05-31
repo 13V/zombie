@@ -1000,4 +1000,96 @@ export class Hud {
       items +
       `</div>`;
   }
+
+  // ── special-round banner + curse slider (added at end of class) ──
+  private bannerEl?: HTMLElement;
+  private bannerTimer?: number;
+  /**
+   * Loud, centered round banner for special rounds / difficulty tiers. `color`
+   * is any CSS color (used for the glow + underline). Auto-dismisses after a
+   * couple seconds; calling again retriggers the pop.
+   */
+  showRoundBanner(name: string, color: string) {
+    if (!this.bannerEl) {
+      this.bannerEl = document.createElement("div");
+      this.bannerEl.id = "round-banner";
+      this.root.appendChild(this.bannerEl);
+    }
+    const el = this.bannerEl;
+    el.style.cssText =
+      "position:fixed;left:0;right:0;top:22%;text-align:center;z-index:40;pointer-events:none;" +
+      "font-family:inherit;font-weight:900;font-size:min(11vw,84px);letter-spacing:3px;" +
+      `color:${color};text-shadow:0 0 18px ${color},0 3px 0 rgba(0,0,0,0.55);` +
+      "transition:opacity .25s,transform .25s;opacity:0;transform:scale(0.82);";
+    el.textContent = name;
+    // force a reflow so the entrance transition fires on retrigger
+    void el.offsetWidth;
+    el.style.opacity = "1";
+    el.style.transform = "scale(1)";
+    if (this.bannerTimer) clearTimeout(this.bannerTimer);
+    this.bannerTimer = window.setTimeout(() => {
+      el.style.opacity = "0";
+      el.style.transform = "scale(1.12)";
+    }, 1900);
+  }
+
+  private tintEl?: HTMLElement;
+  /** Full-screen mood tint for special rounds (pass null to clear). A soft
+   *  radial vignette in the given CSS color — cheap, no shader work. */
+  setScreenTint(color: string | null) {
+    if (!this.tintEl) {
+      this.tintEl = document.createElement("div");
+      this.tintEl.id = "round-tint";
+      this.tintEl.style.cssText =
+        "position:fixed;inset:0;z-index:5;pointer-events:none;opacity:0;" +
+        "transition:opacity .6s;mix-blend-mode:multiply;";
+      this.root.appendChild(this.tintEl);
+    }
+    if (!color) {
+      this.tintEl.style.opacity = "0";
+      return;
+    }
+    this.tintEl.style.background = `radial-gradient(ellipse at center, transparent 38%, ${color} 140%)`;
+    this.tintEl.style.opacity = "0.55";
+  }
+
+  private curseValEl?: HTMLElement;
+  private curseCb?: (dir: number) => void;
+  /**
+   * Risk→reward Curse slider, shown in the in-game HUD (top area, by the round
+   * pill). `onAdjust(dir)` fires with -1/+1 when the player nudges it between
+   * rounds; the game clamps + reflects the new value via setCurse().
+   */
+  buildCurseSlider(onAdjust: (dir: number) => void) {
+    this.curseCb = onAdjust;
+    let box = document.getElementById("curse-slider");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "curse-slider";
+      box.style.cssText =
+        "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:12;" +
+        "display:none;align-items:center;gap:6px;font-family:inherit;font-weight:700;" +
+        "background:rgba(18,12,20,0.62);border:1px solid #c0452f;border-radius:999px;" +
+        "padding:4px 8px;color:#ffb3a3;font-size:13px;";
+      box.innerHTML =
+        `<button id="curse-dn" style="width:22px;height:22px;border:none;border-radius:50%;` +
+        `cursor:pointer;font:inherit;font-weight:900;background:#3a2228;color:#ffb3a3;">−</button>` +
+        `<span style="opacity:0.85;">☠ Curse</span><span id="curse-val">1.0×</span>` +
+        `<button id="curse-up" style="width:22px;height:22px;border:none;border-radius:50%;` +
+        `cursor:pointer;font:inherit;font-weight:900;background:#5a1f1f;color:#ffd0c0;">+</button>`;
+      this.root.appendChild(box);
+      (box.querySelector("#curse-dn") as HTMLButtonElement).addEventListener("click", () => this.curseCb?.(-1));
+      (box.querySelector("#curse-up") as HTMLButtonElement).addEventListener("click", () => this.curseCb?.(1));
+    }
+    this.curseValEl = box.querySelector("#curse-val") as HTMLElement;
+  }
+  /** Reflect the current curse value + reward multiplier on the slider chip. */
+  setCurse(value: number, rewardMul: number) {
+    if (this.curseValEl) this.curseValEl.textContent = `${value.toFixed(2)}× · +${Math.round((rewardMul - 1) * 100)}%`;
+  }
+  /** Show/hide the curse slider (shown during intermissions / pre-round only). */
+  setCurseVisible(on: boolean) {
+    const box = document.getElementById("curse-slider");
+    if (box) box.style.display = on ? "flex" : "none";
+  }
 }

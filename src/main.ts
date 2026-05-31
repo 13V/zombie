@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, PETS_TUNING, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE } from "./config";
+import { CAMERA, COSTS, ELITE, PETS_TUNING, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE } from "./config";
 import { glowMaterial } from "./palette";
 import { Input } from "./input";
 import { Arena } from "./arena";
@@ -223,6 +223,8 @@ class Game implements GameApi {
   private lastComboTier = 1;
   // Nuke panic button: charge builds from kills; press F to wipe the screen.
   private nukeCharge = 1;
+  // Glacial affix: remaining seconds the player is chilled (slowed) on touch.
+  private chillTimer = 0;
 
   constructor(private assets: AssetManager) {
     const canvas = document.getElementById("scene") as HTMLCanvasElement;
@@ -315,14 +317,28 @@ class Game implements GameApi {
         const tag = this.rounds.isBossRound ? " — BOSS" : this.rounds.isSwarmRound ? " — SWARM!" : "";
         this.hud.toast(`Round ${n}${tag}`);
       }
+      // Special round: loud banner + screen tint + a sting; plain rounds clear it.
+      const sp = this.rounds.specialRound;
+      if (sp) {
+        this.hud.showRoundBanner(sp.name, sp.tint ?? "#ffd24a");
+        this.hud.setScreenTint(sp.tint ?? null);
+        this.audio.roundStart(); // reuse the existing round sting (no new audio API)
+        this.shake = Math.min(0.5, this.shake + 0.25);
+      } else {
+        this.hud.setScreenTint(null);
+      }
       this.audio.roundStart();
       this.audio.setIntensity(n / 20);
+      this.hud.setCurseVisible(false); // lock the dial while the round is live
     };
     this.rounds.onIntermission = () => {
       const cleared = this.rounds.round;
       const bonus = SCORE.roundBonusBase + (cleared - 1) * SCORE.roundBonusPerRound;
       this.addPoints(bonus);
       this.hud.toast(`Round clear  +${bonus}`);
+      // Between rounds: surface the Curse dial so the player can up the stakes.
+      this.hud.setCurse(this.rounds.curse, this.rounds.curseRewardMul);
+      this.hud.setCurseVisible(true);
       // Solo: offer a level-up pick during the breather (skipped in co-op).
       if (!this.netplay) this.offerLevelUp();
     };
@@ -331,6 +347,20 @@ class Game implements GameApi {
       this.hud.toast("A BOSS APPROACHES");
       this.shake = Math.min(0.6, this.shake + 0.4);
     };
+    // Difficulty director: a loud tier banner each time the horde escalates.
+    this.rounds.onDifficultyTier = (name, color) => {
+      this.hud.showRoundBanner(name, color);
+      this.audio.roundStart();
+      this.shake = Math.min(0.4, this.shake + 0.2);
+    };
+
+    // Curse slider: between-rounds risk→reward dial. Adjust clamps in rounds +
+    // reflects the new reward multiplier on the chip.
+    this.hud.buildCurseSlider((dir) => {
+      this.rounds.adjustCurse(dir);
+      this.hud.setCurse(this.rounds.curse, this.rounds.curseRewardMul);
+    });
+    this.hud.setCurse(this.rounds.curse, this.rounds.curseRewardMul);
 
     this.hud.onStart(() => this.startRun());
     this.hud.onRestart(() => this.startRun());
@@ -740,6 +770,8 @@ class Game implements GameApi {
     this.audio.stopMusic();
     this.audio.hurt();
     this.hud.hideBoss();
+    this.hud.setCurseVisible(false);
+    this.hud.setScreenTint(null);
     // Co-op host: let guests know the team wiped (they resume when host replays).
     this.netplay?.hostNotify("Team wiped — waiting for host…");
 
@@ -1680,8 +1712,11 @@ class Game implements GameApi {
   private simulate(dt: number) {
     this.powerups.update(dt);
     this.combo.update(dt);
+    if (this.chillTimer > 0) this.chillTimer -= dt; // glacial affix chill decays
     // Sugar Rush stacks on the Quick perk + upgrades for movement speed.
-    this.player.speedMul = (this.perks.has("quick") ? 1.35 : 1) * this.powerups.speedMul() * this.mods.moveSpeedMul;
+    // A glacial-affix hit folds in a temporary chill (on-hit affix hook).
+    const chill = this.chillTimer > 0 ? 1 - ELITE.glacialSlow : 1;
+    this.player.speedMul = (this.perks.has("quick") ? 1.35 : 1) * this.powerups.speedMul() * this.mods.moveSpeedMul * chill;
 
     const axis = this.input.moveAxis(this._axis);
     // Touch aim stick points the reticle relative to the player (twin-stick).
@@ -1743,6 +1778,7 @@ class Game implements GameApi {
     this.rounds.update(dt, this.arena, targets);
     this.updatePets(dt);
     this.resolveRangedFliers();
+    this.resolveBlazingTrails();
 
     this.resolveBulletHits();
     this.resolveZombieTouch(dt);
@@ -2578,6 +2614,34 @@ class Game implements GameApi {
       }
       // Splitter: spawn its smaller copies at the corpse (anti-cluster pressure).
       if (z.splitInto) this.rounds.splitOn(z);
+      // Elite affix death-burst: glacial shatters into a freeze AoE, overloading
+      // detonates for damage. zombie.ts hands us the descriptor; we apply it here
+      // so it shares the explosion/slow/FX paths.
+      const aoe = z.deathAoe();
+      if (aoe) {
+        this.explosions.burst(z.pos, aoe.radius * 1.1, aoe.color);
+        this.puffs.burst(z.pos, aoe.color, 12);
+        this.audio.boom();
+        const r2 = aoe.radius * aoe.radius;
+        this.rounds.grid.forNear(z.pos.x, z.pos.z, aoe.radius, (o) => {
+          if (!o.alive || o.id === z.id) return;
+          const dx = o.pos.x - z.pos.x;
+          const dz = o.pos.z - z.pos.z;
+          if (dx * dx + dz * dz > r2) return;
+          if (aoe.damage > 0) this.damageZombie(o, aoe.damage, scoreMul);
+          if (aoe.slow > 0) o.applySlow(aoe.slow, ELITE.glacialSlowDur);
+        });
+        // overloading also threatens the player if they're hugging the corpse
+        if (aoe.damage > 0) {
+          const pdx = this.player.pos.x - z.pos.x;
+          const pdz = this.player.pos.z - z.pos.z;
+          if (pdx * pdx + pdz * pdz < r2 && this.player.alive) {
+            this.player.damage(aoe.damage);
+            this.shake = Math.min(0.5, this.shake + 0.3);
+            this.runStats.tookDamage = true;
+          }
+        }
+      }
     }
   }
 
@@ -2610,6 +2674,23 @@ class Game implements GameApi {
         this.player.damage(z.touchDamage);
         this.shake = Math.min(0.4, this.shake + 0.18);
         this.audio.hurt();
+        this.runStats.tookDamage = true;
+      }
+    }
+  }
+
+  /** Blazing affix on-update hook: drop a fire puff under each blazing zombie
+   *  when it flags a trail tick, and burn the player if they're standing on it. */
+  private resolveBlazingTrails() {
+    for (const z of this.rounds.zombies) {
+      if (!z.alive || z.affix !== "blazing" || !z.burnTrailReady) continue;
+      z.burnTrailReady = false;
+      this.puffs.burst(z.pos, 0xff6a1f, 4);
+      const dx = this.player.pos.x - z.pos.x;
+      const dz = this.player.pos.z - z.pos.z;
+      if (dx * dx + dz * dz < 1.6 * 1.6 && this.player.alive) {
+        // ~burnDps over the trail's tick cadence (0.35s) → a steady DoT while on it
+        this.player.damage(ELITE.blazingBurnDps * 0.35);
         this.runStats.tookDamage = true;
       }
     }
@@ -2652,6 +2733,11 @@ class Game implements GameApi {
             this.shake = Math.min(0.5, this.shake + 0.25);
             this.audio.hurt();
             this.runStats.tookDamage = true;
+            // Glacial affix on-hit: chill the player (movement slow) + a frosty puff.
+            if (z.affix === "glacial") {
+              this.chillTimer = Math.max(this.chillTimer, ELITE.glacialSlowDur);
+              this.puffs.burst(this.player.pos, 0x6ad7ff, 6);
+            }
           }
           break;
         }
