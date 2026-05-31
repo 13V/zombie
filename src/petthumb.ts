@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { Pet, findAnyPet } from "./pets";
+import { Pet, findAnyPet, petStage } from "./pets";
+import { PET_STAGES } from "./config";
 
 /**
  * Offscreen pet-model thumbnails for the shop. Renders each pet's actual voxel
@@ -61,21 +62,28 @@ function disposeGroup(obj: THREE.Object3D) {
 
 /**
  * A data-URL PNG of the pet's voxel model, or "" if WebGL is unavailable.
- * Cached per pet id — the render only happens once.
+ * Cached per pet id + evolution stage — the card shows the pet's CURRENT form
+ * (base / Evolved / Ascended), so an evolved pet's thumbnail grows wings &
+ * crown to match what's in the field. Re-rendered once per stage, not per level.
  */
-export function petThumbnail(petId: string): string {
-  const hit = cache.get(petId);
+export function petThumbnail(petId: string, level = 1): string {
+  const stage = petStage(level);
+  const key = `${petId}:${stage}`;
+  const hit = cache.get(key);
   if (hit !== undefined) return hit;
   const def = findAnyPet(petId);
   if (!def || !ensure() || !renderer || !scene || !camera) {
-    cache.set(petId, "");
+    cache.set(key, "");
     return "";
   }
-  // build the model at level 1, no shiny — a clean catalogue shot
-  const pet = new Pet(def, 0, 1, false);
-  // most pets are ~1u; the big Celestial (Chronos) is taller + has a halo/crown,
-  // so shrink it into frame so the whole majestic silhouette shows.
-  if (def.shape === "chronos" || def.shape === "oracle") pet.group.scale.multiplyScalar(0.62);
+  // Build at a representative level for the stage (stable framing per stage).
+  const pet = new Pet(def, 0, PET_STAGES.levels[stage] ?? 1, false);
+  // Evolved kits (wings/crown/aura) are wider + taller, so pull the model into
+  // frame; the big Celestials (Chronos/Oracle) need it even at base.
+  const big = def.shape === "chronos" || def.shape === "oracle";
+  let frame = big ? 0.62 : 0; // 0 = keep the model's own scale
+  if (stage >= 1) frame = big ? (stage >= 2 ? 0.42 : 0.5) : (stage >= 2 ? 0.52 : 0.6);
+  if (frame) pet.group.scale.setScalar(frame);
   pet.group.position.set(0, -0.15, 0);
   pet.group.rotation.y = -Math.PI * 0.1; // tiny turn toward the camera (face stays to lens)
   scene.add(pet.group);
@@ -88,6 +96,6 @@ export function petThumbnail(petId: string): string {
   }
   scene.remove(pet.group);
   disposeGroup(pet.group);
-  cache.set(petId, url);
+  cache.set(key, url);
   return url;
 }

@@ -516,7 +516,7 @@ class Game implements GameApi {
           rarity,
           rarityColor: RARITY_COLOR[rarity],
           ability: p.ability?.name ?? base.ability?.name,
-          thumb: petThumbnail(p.id), // cached voxel-model preview
+          thumb: petThumbnail(p.id, level), // cached voxel-model preview (per evolution stage)
           trial,
           roleIcon: role ? ROLE_ICON[role] : undefined,
           roleLabel: role ? ROLE_LABEL[role] : undefined,

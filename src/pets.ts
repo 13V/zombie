@@ -614,8 +614,12 @@ export class Pet {
   readonly shiny: boolean;
   private shinyMesh?: THREE.Mesh; // extra sparkle node, shiny only
   private shinyT = 0;
-  private stageCrown?: THREE.Group; // evolution-stage flourish (crown of glowing cubes)
-  private _crownStage = -1; // stage the current crown was built for (rebuild on change)
+  private stageCrown?: THREE.Group; // crown ring sub-group (spins above the head)
+  private stageKit?: THREE.Group; // whole evolution-stage model add-on (wings/horns/etc.)
+  private stageWings: THREE.Mesh[] = []; // stage wings (flap in update)
+  private stageShards?: THREE.Group; // orbiting power shards (top stage)
+  private stageAura?: THREE.Mesh; // pulsing aura shell (top stage)
+  private _crownStage = -1; // stage the current kit was built for (rebuild on change)
 
   constructor(readonly def: PetDef, private orbitAngle: number, level = 1, shiny = false) {
     this.level = Math.max(1, level);
@@ -687,33 +691,103 @@ export class Pet {
   }
 
   /**
-   * (Re)build the evolution-stage flourish: a ring of glowing cubes orbiting
-   * above the pet — 3 cubes at stage 1, a fuller golden crown at stage 2. Only
-   * rebuilt when the stage actually changes (cheap). All cubes reuse the shared
-   * unit box per the pooling convention; the group rides in `body` so it scales
-   * with the pet and spins in update().
+   * (Re)build the evolution-stage MODEL kit — the geometry that makes an evolved
+   * pet read as a genuinely different creature, not just a bigger one:
+   *   • Stage 1 "Evolved":  energy wings + a dorsal crest + a floating crown.
+   *   • Stage 2 "Ascended": grander spread wings, a horned crown, orbiting power
+   *     shards, and a pulsing aura shell — all gilded.
+   * Built additively on top of the base voxel body (so every pet inherits it),
+   * parented to `body` so it scales/breathes with the pet, and rebuilt only when
+   * the stage actually changes. All boxes reuse SHARED_UNIT_BOX per the pooling
+   * convention; the wings/shards/aura animate in update().
    */
   private rebuildStageFlourish(stage: number) {
     if (stage === this._crownStage) return;
     this._crownStage = stage;
-    if (this.stageCrown) {
-      this.body.remove(this.stageCrown);
-      this.stageCrown = undefined;
-    }
+    if (this.stageKit) this.body.remove(this.stageKit);
+    this.stageKit = undefined;
+    this.stageCrown = undefined;
+    this.stageShards = undefined;
+    this.stageAura = undefined;
+    this.stageWings = [];
     if (stage <= 0) return;
-    const g = new THREE.Group();
-    const n = stage * 3; // 3 at stage 1, 6 at the top stage
-    const tint = stage >= 2 ? 0xffd24a : 0xfff2c0; // gold crown at the final stage
-    const s = stage >= 2 ? 0.12 : 0.1;
+    const kit = new THREE.Group();
+    // box helper: encode size in scale (no per-voxel geometry alloc), remember
+    // the base size in userData so animations can multiply it.
+    const mk = (w: number, h: number, d: number, mat: THREE.Material) => {
+      const m = new THREE.Mesh(SHARED_UNIT_BOX, mat);
+      m.scale.set(w, h, d);
+      m.userData.bw = w; m.userData.bh = h; m.userData.bd = d;
+      return m;
+    };
+    const base = this.def.accent ?? this.def.color;
+    const gild = 0xffd24a; // gold for the ascended tier
+    const wingCol = stage >= 2 ? 0xffe9a8 : base;
+    const crownCol = stage >= 2 ? gild : 0xfff2c0;
+
+    // ── wings: a layered energy pair swept off the back (the headline change) ──
+    const wspan = stage >= 2 ? 0.62 : 0.42;
+    for (const side of [-1, 1]) {
+      const w = mk(wspan, 0.05, 0.46, auraMaterial(wingCol, 0.75));
+      w.position.set(side * 0.42, 0.14, -0.12);
+      w.userData.side = side;
+      kit.add(w);
+      this.stageWings.push(w);
+      if (stage >= 2) {
+        // a second, smaller blade behind the main wing → a fuller spread
+        const w2 = mk(wspan * 0.7, 0.05, 0.34, auraMaterial(gild, 0.6));
+        w2.position.set(side * 0.5, 0.0, -0.22);
+        w2.userData.side = side;
+        kit.add(w2);
+        this.stageWings.push(w2);
+      }
+    }
+
+    // ── dorsal crest: a row of ascending fins down the spine ──
+    for (let i = 0; i < 3; i++) {
+      const f = mk(0.07, 0.2 - i * 0.04, 0.09, glowMaterial(crownCol, 1.4));
+      f.position.set(0, 0.34 - i * 0.015, -0.06 - i * 0.13);
+      kit.add(f);
+    }
+
+    // ── floating crown ring above the head ──
+    const crown = new THREE.Group();
+    const n = stage * 3; // 3 / 6 cubes
+    const cs = stage >= 2 ? 0.12 : 0.1;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2;
-      const c = new THREE.Mesh(SHARED_UNIT_BOX, glowMaterial(tint, 1.6));
-      c.scale.set(s, s, s);
-      c.position.set(Math.cos(a) * 0.34, 0.54, Math.sin(a) * 0.34);
-      g.add(c);
+      const c = mk(cs, cs, cs, glowMaterial(crownCol, 1.6));
+      c.position.set(Math.cos(a) * 0.34, 0.56, Math.sin(a) * 0.34);
+      crown.add(c);
     }
-    this.body.add(g);
-    this.stageCrown = g;
+    kit.add(crown);
+    this.stageCrown = crown;
+
+    // ── top-stage extras: horns, orbiting shards, aura shell ──
+    if (stage >= 2) {
+      for (const side of [-1, 1]) {
+        const horn = mk(0.07, 0.28, 0.07, glowMaterial(gild, 1.5));
+        horn.position.set(side * 0.17, 0.5, 0.06);
+        horn.rotation.z = side * 0.5;
+        kit.add(horn);
+      }
+      const shards = new THREE.Group();
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2;
+        const sh = mk(0.1, 0.1, 0.1, glowMaterial(gild, 1.7));
+        sh.position.set(Math.cos(a) * 0.62, 0.1, Math.sin(a) * 0.62);
+        shards.add(sh);
+      }
+      kit.add(shards);
+      this.stageShards = shards;
+
+      const aura = mk(0.98, 0.98, 0.98, auraMaterial(wingCol, 0.32));
+      kit.add(aura);
+      this.stageAura = aura;
+    }
+
+    this.body.add(kit);
+    this.stageKit = kit;
   }
 
   private build() {
@@ -1164,10 +1238,25 @@ export class Pet {
       a.scale.set(a.userData.bw * p, a.userData.bh * p, a.userData.bd * p);
       (a.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.4 + (Math.sin(this.bob * 2) + 1) * 0.2;
     }
-    // Evolution-stage crown slowly orbits + bobs above the pet.
+    // ── evolution-stage kit animation ──
     if (this.stageCrown) {
       this.stageCrown.rotation.y += dt * 1.3;
       this.stageCrown.position.y = Math.sin(this.bob * 1.5) * 0.03;
+    }
+    if (this.stageWings.length) {
+      // resting downward sweep + a slower, statelier flap than the base wings
+      const a = Math.sin(this.flap * 0.5) * 0.45 - 0.15;
+      for (const w of this.stageWings) w.rotation.z = (w.userData.side as number) * a;
+    }
+    if (this.stageShards) {
+      this.stageShards.rotation.y += dt * 1.5;
+      this.stageShards.position.y = Math.sin(this.bob * 1.2) * 0.05;
+    }
+    if (this.stageAura) {
+      const p = 1 + Math.sin(this.bob * 1.1) * 0.06;
+      const a = this.stageAura;
+      a.scale.set(a.userData.bw * p, a.userData.bh * p, a.userData.bd * p);
+      (a.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.3 + (Math.sin(this.bob * 2) + 1) * 0.15;
     }
     // Chronos: the two clockwork halo-rings counter-rotate (the time motif).
     if (this.halo) this.halo.rotation.z += dt * 0.6;
