@@ -29,7 +29,7 @@ import { IslandNet, makeBubble } from "./islandnet";
 import { EmoteMenu } from "./emotes";
 import type { EmoteId } from "./voxelChar";
 import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, PART_CATS, HOUSE_SWATCHES, TROPHY_TIERS, trophyTierForRound, starterHouse, sanitizeHouse } from "./house";
-import { loadHouse, saveHouse, getHouseMeta, likeHouse } from "./houses";
+import { loadHouse, saveHouse, getHouseMeta, likeHouse, localOwnerId } from "./houses";
 import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
@@ -1386,9 +1386,12 @@ class Game implements GameApi {
   private isOwnPlot(_plotIndex: number): boolean {
     return true;
   }
-  /** Backend owner key for a plot — namespaced per plot so each saves separately. */
+  /** Backend owner key for a plot — namespaced per plot so each saves separately.
+   *  Keyed on a STABLE per-device id (not the wallet address): connecting a
+   *  wallet must not change the key and orphan / lose a player's houses. See
+   *  localOwnerId() in houses.ts. */
   private plotOwner(plotIndex: number): string {
-    return `${this.wallet.state.address ?? "local"}:p${plotIndex}`;
+    return `${localOwnerId()}:p${plotIndex}`;
   }
 
   /** Enter build mode for a plot: load its layout + show the build bar. */
