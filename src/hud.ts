@@ -547,7 +547,7 @@ export class Hud {
     squad?: PetSquadInfo,
     onStar?: (id: string) => void,
   ) {
-    const order = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
+    const order = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "celestial"];
     const label = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
     const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k` : `${n}`);
     const card = (r: (typeof rows)[number]) => {

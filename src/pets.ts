@@ -27,9 +27,10 @@ SHARED_UNIT_BOX.userData.shared = true;
 export type PetShape =
   | "bee" | "drone" | "dragon" | "ghost" | "turret" | "wisp" | "piggy" | "totem"
   | "slime" | "golem" | "mushroom" | "frog" | "crystal" | "star" | "cat"
-  | "eye" | "serpent" | "phoenix" | "ufo" | "orb";
+  | "eye" | "serpent" | "phoenix" | "ufo" | "orb"
+  | "chronos"; // the one Celestial pet — a tiny clockwork-halo time spirit
 
-export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic";
+export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic" | "celestial";
 
 /**
  * Functional "verb" for a combat pet (distinct from the non-combat `role`).
@@ -72,7 +73,9 @@ export type AbilityKind =
   // ── engine archetypes ──
   | "overcharge" // builds charge stacks → +pet damage (capped), discharges a small nova at max
   | "siphon" // builds stacks → +lifesteal & a trickle heal on cast (drain engine)
-  | "resonance"; // builds stacks → +crit chance/pierce flavor; small shard burst on cast
+  | "resonance" // builds stacks → +crit chance/pierce flavor; small shard burst on cast
+  // ── celestial signature ──
+  | "timewarp"; // OVERDRIVE: the whole game runs at 2x for a few seconds (the Chronomancer)
 
 /** True for the stacking "engine" archetypes. */
 export const ENGINE_KINDS: ReadonlySet<AbilityKind> = new Set<AbilityKind>(["overcharge", "siphon", "resonance"]);
@@ -91,6 +94,8 @@ export interface PetAbility {
   // ── engine archetype fields ──
   perStack?: number; // engine: bonus per stack (damage frac / lifesteal / etc.)
   maxStacks?: number; // engine: hard cap on accumulated stacks
+  // ── timewarp field ──
+  dur?: number; // timewarp: seconds the 2x overdrive lasts
 }
 
 /**
@@ -108,7 +113,7 @@ export interface PetTrial {
   goals: PetTrialGoal[];
 }
 
-export const RARITY_ORDER: Rarity[] = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
+export const RARITY_ORDER: Rarity[] = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "celestial"];
 export const RARITY_COLOR: Record<Rarity, string> = {
   common: "#b8c2cc",
   uncommon: "#6fdc8c",
@@ -116,10 +121,11 @@ export const RARITY_COLOR: Record<Rarity, string> = {
   epic: "#c792ea",
   legendary: "#ffb84a",
   mythic: "#ff5a7a",
+  celestial: "#7af7ff", // radiant cyan-white — the one tier above Mythic
 };
 export const RARITY_LABEL: Record<Rarity, string> = {
   common: "Common", uncommon: "Uncommon", rare: "Rare",
-  epic: "Epic", legendary: "Legendary", mythic: "Mythic",
+  epic: "Epic", legendary: "Legendary", mythic: "Mythic", celestial: "Celestial",
 };
 
 export interface PetDef {
@@ -308,6 +314,12 @@ export const PETS: PetDef[] = [
     shape: "golem", range: 0, role: "banker", roleValue: 20 }),
   mk({ id: "void_sovereign", name: "Void Sovereign", desc: "Reality-ending fireballs", cost: 30000, rarity: "mythic", color: 0x3a1a5a, accent: 0xff3aff,
     damage: 800, interval: 0.5, bulletColor: 0xff3aff, bulletScale: 2.2, pierce: 8, splashRadius: 4.0, splashDamage: 400, homing: 1, shape: "dragon", range: 28 }),
+
+  // ─────────────────────── ✦ CELESTIAL ✦ ───────────────────────
+  // The single pet above Mythic. Its signature bends time itself: OVERDRIVE
+  // runs the whole game at 2x for a few seconds. Radiant, one-of-a-kind.
+  mk({ id: "chronos", name: "Chronos, the Eternal", desc: "Bends time — OVERDRIVE runs the whole game at 2× speed", cost: 100000, rarity: "celestial", color: 0x9af7ff, accent: 0xfff6c8,
+    damage: 600, interval: 0.32, bulletColor: 0xeaffff, bulletScale: 1.4, pierce: 6, splashRadius: 2.4, splashDamage: 220, homing: 1, shape: "chronos", range: 30 }),
 ];
 
 /**
@@ -345,6 +357,8 @@ const PET_ABILITIES: Record<string, PetAbility> = {
   cosmic_serpent: { name: "Cosmic Resonance", kind: "resonance", cd: 5, power: 220, perStack: 0.06, maxStacks: 8, count: 14, slow: 0.4 }, // ENGINE
   midas_golem: { name: "Midas Touch", kind: "jackpot", cd: 9, power: 600, count: 24, gold: 5000, radius: 9 }, // payoff
   void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 1200, radius: 6.5 }, // payoff
+  // ── CELESTIAL ── the time-bender; OVERDRIVE = whole game at 2x for `dur`s
+  chronos: { name: "OVERDRIVE", kind: "timewarp", cd: 16, power: 0, dur: 6 },
 };
 for (const p of PETS) {
   const a = PET_ABILITIES[p.id];
@@ -379,6 +393,8 @@ const COMBAT_ROLES: Record<string, CombatRole> = {
   eclipse_phoenix: "bomber",
   // MYTHIC
   cosmic_serpent: "saboteur", void_sovereign: "bomber",
+  // CELESTIAL
+  chronos: "sniper",
 };
 for (const p of PETS) {
   const r = COMBAT_ROLES[p.id];
@@ -915,6 +931,35 @@ export class Pet {
         smile(-0.08, 0.22, 0.1);
         this.muzzle = box(0.14, 0.14, 0.14, 0, 0, 0.3, glowMaterial(0xffffff, 1.4));
         break;
+      case "chronos": {
+        // The Celestial time-spirit: a radiant orb core haloed by a slow
+        // clockwork gear-ring, a little gold crown, ethereal wings, and the
+        // cutest face in the game. `acc` is gold; body is radiant cyan-white.
+        const goldGlow = glowMaterial(acc, 1.2);
+        this.aura = box(0.78, 0.78, 0.5, 0, 0, 0, auraMaterial(col, 0.55)); // big radiant halo
+        box(0.46, 0.5, 0.46, 0, 0, 0, glowMaterial(col, 1.0)); // glowing core body
+        // clockwork gear-ring (the time motif): 8 gold teeth around the core
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          box(0.1, 0.1, 0.08, Math.cos(a) * 0.5, Math.sin(a) * 0.5, 0, goldGlow);
+        }
+        box(0.66, 0.1, 0.06, 0, 0, 0, goldGlow); // clock hands
+        box(0.1, 0.46, 0.06, 0, 0, 0, goldGlow);
+        // floating crown of three points
+        box(0.07, 0.16, 0.07, 0, 0.48, 0, goldGlow);
+        box(0.07, 0.12, 0.07, -0.13, 0.42, 0, goldGlow);
+        box(0.07, 0.12, 0.07, 0.13, 0.42, 0, goldGlow);
+        box(0.08, 0.08, 0.08, 0, 0.6, 0, glowMaterial(0xffffff, 1.4)); // crown gem
+        // ethereal wings
+        this.wingL = box(0.34, 0.05, 0.4, -0.5, 0.06, -0.06, auraMaterial(0xeaffff, 0.7));
+        this.wingR = box(0.34, 0.05, 0.4, 0.5, 0.06, -0.06, auraMaterial(0xeaffff, 0.7));
+        eye(-0.12, 0.04, 0.25, 0.13); // big sparkly eyes
+        eye(0.12, 0.04, 0.25, 0.13);
+        cheeks(-0.06, 0.26);
+        smile(-0.09, 0.26, 0.12);
+        this.muzzle = box(0.14, 0.14, 0.14, 0, 0.02, 0.34, glowMaterial(0xffffff, 1.5));
+        break;
+      }
       default:
         box(0.5, 0.5, 0.5, 0, 0, 0, body);
     }

@@ -118,6 +118,7 @@ class Game implements GameApi {
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
+  private timeWarp = 0; // seconds remaining of Chronos OVERDRIVE (whole sim at 2x)
   private wallet = new Wallet();
 
   // progression
@@ -395,6 +396,7 @@ class Game implements GameApi {
     this.explosions.clear();
     this.sparks.clear();
     this.hitStop = 0;
+    this.timeWarp = 0; // clear any leftover Chronos overdrive between runs
     this.hud.setCombo(0, 0);
     this.hud.hideBoss();
     this.hud.hideLevelUp();
@@ -1265,6 +1267,15 @@ class Game implements GameApi {
     if (this.hitStop > 0) {
       this.hitStop -= dt;
       dt = 0;
+    }
+
+    // Chronos OVERDRIVE: run the ENTIRE sim at 2x while the time-warp is active.
+    // Drained on real (unwarped) time so the buff length is honest. Only affects
+    // live gameplay (state "playing"); menus/island tick normally.
+    if (this.timeWarp > 0) {
+      this.timeWarp -= dt; // bleed in real seconds
+      if (this.state === "playing") dt *= 2;
+      this.zoomPunch = Math.max(this.zoomPunch, 0.25); // subtle lens push while warped
     }
 
     this.touch?.setActive(this.state === "playing" || this.state === "paused" || this.state === "island");
@@ -2593,8 +2604,9 @@ class Game implements GameApi {
       ab.kind === "overcharge" ? "chain"
       : ab.kind === "resonance" ? "nova"
       : ab.kind === "siphon" ? "smite"
+      : ab.kind === "timewarp" ? "obliterate" // big dramatic boom for OVERDRIVE
       : ab.kind;
-    this.audio.ability(sfxKind, ab.power / 200);
+    this.audio.ability(sfxKind, ab.kind === "timewarp" ? 1.6 : ab.power / 200);
 
     switch (ab.kind) {
       case "nova": {
@@ -2748,6 +2760,19 @@ class Game implements GameApi {
         this.sparks.burst(this._abilTmp, 0xff7aff, 24, { speed: 14, spread: 8, streak: true });
         this.splash(this._abilTmp, r, dmgDirect, -1, sMul);
         this.floaters.spawn(pet.group.position, "ANNIHILATE!", "#ff3aff", 1.7, true);
+        break;
+      }
+      case "timewarp": {
+        // ✦ CELESTIAL ✦ Chronos OVERDRIVE: the whole game runs at 2x for `dur`
+        // seconds. Refreshes (doesn't stack) so it's a sustained burst, not a
+        // permanent doubling. Pure tempo — does no damage itself.
+        this.timeWarp = Math.max(this.timeWarp, ab.dur ?? 6);
+        this.explosions.beam(pet.group.position, 14, 0x9af7ff);
+        this.explosions.shockwave(pet.group.position, 10, 0xeaffff);
+        this.sparks.burst(pet.group.position, 0x9af7ff, 26, { speed: 13, spread: 7, streak: true });
+        this.shake = Math.min(0.7, this.shake + 0.45);
+        this.zoomPunch = 1;
+        this.floaters.spawn(this.player.pos, "OVERDRIVE! 2×", "#9af7ff", 1.9, true);
         break;
       }
       // ── ENGINE archetypes: build a capped stacking resource that empowers the
