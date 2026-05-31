@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { voxelMaterial, glowMaterial, auraMaterial } from "./palette";
+import { PET_STAGES } from "./config";
 
 /**
  * One shared unit (1×1×1) BoxGeometry reused by every voxel `box()` in this
@@ -557,6 +558,21 @@ export function petDamageMul(level: number): number {
 export function petXpForLevel(level: number): number {
   return Math.round(6 * Math.pow(1.16, Math.max(1, level) - 1));
 }
+
+/** Evolution stage (0-based) a pet is at for a given level. */
+export function petStage(level: number): number {
+  let s = 0;
+  for (let i = 0; i < PET_STAGES.levels.length; i++) if (level >= PET_STAGES.levels[i]) s = i;
+  return s;
+}
+/** Damage multiplier from the evolution stage (the per-stage stat jump). */
+export function petStageMul(level: number): number {
+  return 1 + petStage(level) * PET_STAGES.damagePerStage;
+}
+/** Stage label ("", "Evolved", "Ascended") for the HUD. */
+export function petStageName(level: number): string {
+  return PET_STAGES.names[petStage(level)] ?? "";
+}
 /** Fire-rate (interval) multiplier — pets fire faster as they level (caps). */
 export function petIntervalMul(level: number): number {
   return Math.max(0.5, 1 - (level - 1) * 0.04);
@@ -598,6 +614,8 @@ export class Pet {
   readonly shiny: boolean;
   private shinyMesh?: THREE.Mesh; // extra sparkle node, shiny only
   private shinyT = 0;
+  private stageCrown?: THREE.Group; // evolution-stage flourish (crown of glowing cubes)
+  private _crownStage = -1; // stage the current crown was built for (rebuild on change)
 
   constructor(readonly def: PetDef, private orbitAngle: number, level = 1, shiny = false) {
     this.level = Math.max(1, level);
@@ -630,7 +648,11 @@ export class Pet {
     return this.def.interval * petIntervalMul(this.level);
   }
   get damageMul(): number {
-    return petDamageMul(this.level);
+    return petDamageMul(this.level) * petStageMul(this.level);
+  }
+  /** Current evolution stage (0-based) — drives the crown flourish + stat jump. */
+  get stage(): number {
+    return petStage(this.level);
   }
   /** Engine archetype: +perStack * stacks to the pet's fire (1 if not an engine).
    *  Capped implicitly because engineStacks is clamped to ability.maxStacks. */
@@ -649,8 +671,12 @@ export class Pet {
     // grows ~6%/level up to ~+60%; emissive ramps so high pets glow hot.
     // Chronos (Celestial) is built bigger so it towers over the roster.
     const baseSize = this.def.shape === "chronos" || this.def.shape === "oracle" ? 0.92 : 0.7;
-    this.baseScale = baseSize * (1 + Math.min(0.6, (this.level - 1) * 0.06));
+    const stage = petStage(this.level);
+    // Evolution stages add a chunk of size on top of the per-level growth, so a
+    // stage-up reads instantly, and (re)build the glowing crown for the stage.
+    this.baseScale = baseSize * (1 + Math.min(0.6, (this.level - 1) * 0.06)) * (1 + stage * PET_STAGES.scalePerStage);
     this.group.scale.setScalar(this.baseScale);
+    this.rebuildStageFlourish(stage);
     const glowBoost = Math.min(1.6, 0.9 + (this.level - 1) * 0.12);
     this.group.traverse((o) => {
       const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
@@ -658,6 +684,36 @@ export class Pet {
         m.emissiveIntensity = glowBoost;
       }
     });
+  }
+
+  /**
+   * (Re)build the evolution-stage flourish: a ring of glowing cubes orbiting
+   * above the pet — 3 cubes at stage 1, a fuller golden crown at stage 2. Only
+   * rebuilt when the stage actually changes (cheap). All cubes reuse the shared
+   * unit box per the pooling convention; the group rides in `body` so it scales
+   * with the pet and spins in update().
+   */
+  private rebuildStageFlourish(stage: number) {
+    if (stage === this._crownStage) return;
+    this._crownStage = stage;
+    if (this.stageCrown) {
+      this.body.remove(this.stageCrown);
+      this.stageCrown = undefined;
+    }
+    if (stage <= 0) return;
+    const g = new THREE.Group();
+    const n = stage * 3; // 3 at stage 1, 6 at the top stage
+    const tint = stage >= 2 ? 0xffd24a : 0xfff2c0; // gold crown at the final stage
+    const s = stage >= 2 ? 0.12 : 0.1;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const c = new THREE.Mesh(SHARED_UNIT_BOX, glowMaterial(tint, 1.6));
+      c.scale.set(s, s, s);
+      c.position.set(Math.cos(a) * 0.34, 0.54, Math.sin(a) * 0.34);
+      g.add(c);
+    }
+    this.body.add(g);
+    this.stageCrown = g;
   }
 
   private build() {
@@ -1107,6 +1163,11 @@ export class Pet {
       const a = this.aura;
       a.scale.set(a.userData.bw * p, a.userData.bh * p, a.userData.bd * p);
       (a.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.4 + (Math.sin(this.bob * 2) + 1) * 0.2;
+    }
+    // Evolution-stage crown slowly orbits + bobs above the pet.
+    if (this.stageCrown) {
+      this.stageCrown.rotation.y += dt * 1.3;
+      this.stageCrown.position.y = Math.sin(this.bob * 1.5) * 0.03;
     }
     // Chronos: the two clockwork halo-rings counter-rotate (the time motif).
     if (this.halo) this.halo.rotation.z += dt * 0.6;

@@ -34,7 +34,7 @@ import { petThumbnail } from "./petthumb";
 import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
-import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, isTrialComplete, RARITY_COLOR, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
+import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, isTrialComplete, RARITY_COLOR, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData, recordScore } from "./save";
 import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
@@ -509,6 +509,8 @@ class Game implements GameApi {
           owned, level,
           xp: this.save.petProgress[ownId]?._xp ?? 0,
           xpNext: petXpForLevel(level),
+          stage: petStage(level),
+          stageName: petStageName(level),
           upCost,
           affordable: owned ? this.save.gold >= upCost : this.save.gold >= base.cost,
           rarity,
@@ -2525,10 +2527,20 @@ class Game implements GameApi {
       }
       pr._xp = xp;
       if (did) {
+        const prevStage = petStage(this.save.petLevels[id] ?? 1);
         this.save.petLevels[id] = lvl;
         p.setLevel(lvl);
-        this.floaters.spawn(p.group.position, `Lv ${lvl}!`, "#9be86a", 1.1, true);
-        this.puffs.burst(p.group.position, p.def.color, 6);
+        const newStage = petStage(lvl);
+        if (newStage > prevStage) {
+          // crossed an evolution-stage threshold — a louder celebration
+          this.floaters.spawn(p.group.position, `✦ ${petStageName(lvl)}!`, "#ffd24a", 1.5, true);
+          for (let i = 0; i < 3; i++) this.puffs.burst(p.group.position, 0xffd24a, 8);
+          this.toast(`✦ ${p.def.name} evolved — ${petStageName(lvl)}!`);
+          this.shake = Math.min(0.3, this.shake + 0.12);
+        } else {
+          this.floaters.spawn(p.group.position, `Lv ${lvl}!`, "#9be86a", 1.1, true);
+          this.puffs.burst(p.group.position, p.def.color, 6);
+        }
         leveled = true;
       }
     }

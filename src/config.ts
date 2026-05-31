@@ -463,6 +463,20 @@ export const DECALS = {
 // strictly inside the last balance pass's late-game ceiling (squad cap 5,
 // buffCap 2.5, no one-shots). NON-CASHABLE: the collection reward pays soft
 // essence only — never tokens, never the gold↔token bridge.
+/**
+ * Universal evolution STAGES. Every pet climbs a 3-stage ladder as it levels
+ * (by combat XP or gold): the model grows + gains a glowing crown, and its
+ * damage takes a real jump at each stage. `levels[i]` is the level stage `i`
+ * begins at. The handful of hand-authored evolved forms (PET_EVOLUTIONS) slot
+ * in as the FINAL form for their pet — the "hybrid" hero path on top of this.
+ */
+export const PET_STAGES = {
+  levels: [1, 8, 18], // stage 0 / 1 / 2 begin at these levels
+  names: ["", "Evolved", "Ascended"], // stage label (blank = base, no tag)
+  scalePerStage: 0.16, // +size per stage, on top of the per-level growth
+  damagePerStage: 0.22, // +damage per stage — the stat jump that makes it matter
+};
+
 export const PET_DEPTH = {
   /** Per-combatRole behavior knobs (updatePets/firePetAbility). All tiny + flat
    *  so they read as a "verb", never a power spike. */
