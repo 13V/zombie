@@ -28,7 +28,7 @@ import { Island, IslandZone } from "./island";
 import { IslandNet, makeBubble } from "./islandnet";
 import { EmoteMenu } from "./emotes";
 import type { EmoteId } from "./voxelChar";
-import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, starterHouse, sanitizeHouse } from "./house";
+import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, PART_CATS, HOUSE_SWATCHES, starterHouse, sanitizeHouse } from "./house";
 import { loadHouse, saveHouse } from "./houses";
 import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
@@ -124,6 +124,14 @@ class Game implements GameApi {
   private editingPlot = -1; // plot index currently in build mode (-1 = none)
   private editData: HouseData = { parts: [] };
   private editPart: PartKind = "wall";
+  private editCat = "structure"; // active build-bar category tab
+  private editRot: 0 | 1 | 2 | 3 = 0; // current placement yaw
+  private editColor: number | null = null; // null = part's default color
+  private editPaint = false; // paint mode: clicking recolors existing parts
+  private editReadOnly = false; // visiting someone else's plot (no edits)
+  private undoStack: string[] = []; // JSON snapshots of editData (cap 20)
+  private ghost?: THREE.Object3D; // translucent placement preview
+  private ghostMat?: THREE.MeshBasicMaterial;
   private player: Player;
   private bullets: BulletSystem;
   private rounds: RoundManager;

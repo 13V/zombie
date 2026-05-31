@@ -21,23 +21,40 @@ export interface HousePart {
   gy: number;
   gz: number;
   color?: number;
+  /** 4-way yaw, rot*90° (0..3). Optional — absent means 0. */
+  rot?: 0 | 1 | 2 | 3;
 }
 
 export interface HouseData {
   parts: HousePart[];
 }
 
+/** Build-bar categories (tabs). */
+export type PartCat = "structure" | "furniture" | "yard" | "showoff";
+export const PART_CATS: { id: PartCat; label: string }[] = [
+  { id: "structure", label: "Structure" },
+  { id: "furniture", label: "Furniture" },
+  { id: "yard", label: "Yard" },
+  { id: "showoff", label: "Show-off" },
+];
+
+/** Paint swatches offered in build mode (cozy toy palette). */
+export const HOUSE_SWATCHES: number[] = [
+  0xede4d0, 0xb6452f, 0x8a5a32, 0x9fe8ff, 0x5fb04a, 0xffd24a,
+  0xff8fb0, 0x7a6cff, 0xff7a3a, 0x44d0c0, 0xffffff, 0x33363f,
+];
+
 /** Palette of placeable parts shown in the build bar. */
-export const HOUSE_PARTS: { kind: PartKind; label: string; color: number; tall?: boolean }[] = [
-  { kind: "floor", label: "Floor", color: VOX.path ?? 0xc9a96e },
-  { kind: "wall", label: "Wall", color: VOX.houseWall ?? 0xede4d0, tall: true },
-  { kind: "roof", label: "Roof", color: VOX.roofRed ?? 0xb6452f },
-  { kind: "door", label: "Door", color: 0x8a5a32, tall: true },
-  { kind: "window", label: "Window", color: 0x9fe8ff, tall: true },
-  { kind: "fence", label: "Fence", color: 0xb6a273 },
-  { kind: "tree", label: "Tree", color: 0x5fb04a, tall: true },
-  { kind: "lamp", label: "Lamp", color: 0xffd24a, tall: true },
-  { kind: "flower", label: "Flower", color: 0xff8fb0 },
+export const HOUSE_PARTS: { kind: PartKind; label: string; color: number; tall?: boolean; cat: PartCat }[] = [
+  { kind: "floor", label: "Floor", color: VOX.path ?? 0xc9a96e, cat: "structure" },
+  { kind: "wall", label: "Wall", color: VOX.houseWall ?? 0xede4d0, tall: true, cat: "structure" },
+  { kind: "roof", label: "Roof", color: VOX.roofRed ?? 0xb6452f, cat: "structure" },
+  { kind: "door", label: "Door", color: 0x8a5a32, tall: true, cat: "structure" },
+  { kind: "window", label: "Window", color: 0x9fe8ff, tall: true, cat: "structure" },
+  { kind: "fence", label: "Fence", color: 0xb6a273, cat: "structure" },
+  { kind: "tree", label: "Tree", color: 0x5fb04a, tall: true, cat: "yard" },
+  { kind: "lamp", label: "Lamp", color: 0xffd24a, tall: true, cat: "yard" },
+  { kind: "flower", label: "Flower", color: 0xff8fb0, cat: "yard" },
 ];
 
 const CELL = 1.2; // world size of a plot grid cell
@@ -143,6 +160,8 @@ export class HouseView {
         break;
       }
     }
+    // 4-way yaw: rotate the finished mesh in place about its own cell centre.
+    if (p.rot) mesh.rotation.y = (p.rot * Math.PI) / 2;
     this.group.add(mesh);
   }
 
@@ -163,7 +182,14 @@ export function sanitizeHouse(raw: unknown): HouseData {
       const gx = Number(o.gx), gy = Number(o.gy), gz = Number(o.gz);
       if (![gx, gy, gz].every(Number.isFinite)) continue;
       if (Math.abs(gx) > 2 || Math.abs(gz) > 2 || gy < 0 || gy > 4) continue; // clamp to plot
-      parts.push({ kind: o.kind as PartKind, gx, gy, gz, color: typeof o.color === "number" ? o.color : undefined });
+      const rotN = Number(o.rot);
+      const rot = Number.isFinite(rotN) ? ((((rotN % 4) + 4) % 4) as 0 | 1 | 2 | 3) : undefined;
+      parts.push({
+        kind: o.kind as PartKind,
+        gx, gy, gz,
+        color: typeof o.color === "number" ? o.color : undefined,
+        ...(rot ? { rot } : {}),
+      });
     }
   }
   if (parts.length > 400) parts.length = 400; // hard cap so a forged blob can't bloat
