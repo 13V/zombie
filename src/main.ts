@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, ELITE, PETS_TUNING, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE } from "./config";
+import { CAMERA, COSTS, ELITE, PETS_TUNING, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY } from "./config";
 import { glowMaterial } from "./palette";
 import { Input } from "./input";
 import { Arena } from "./arena";
@@ -32,6 +32,7 @@ import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, PART_CATS, HOUS
 import { loadHouse, saveHouse, getHouseMeta, likeHouse, localOwnerId } from "./houses";
 import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
+import { Decals } from "./decals";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
@@ -161,6 +162,7 @@ class Game implements GameApi {
   private drops: Drops;
   private explosions: Explosions;
   private sparks: Sparks;
+  private decals: Decals; // pooled corpse/gib/scorch decals (juice; capped + lowSpec-aware)
   private pets: Pet[] = [];
   private _petTgt = { x: 0, z: 0 };
   private _petDir = new THREE.Vector3();
@@ -297,6 +299,7 @@ class Game implements GameApi {
     this.drops = new Drops(this.scene, this.audio);
     this.explosions = new Explosions(this.scene, lowSpec);
     this.sparks = new Sparks(this.scene, lowSpec);
+    this.decals = new Decals(this.scene, lowSpec); // corpse decals; no-op on lowSpec (cap 0)
     this.hud = new Hud(ui);
 
     // Resume audio on the first user gesture (browser autoplay policy).
@@ -740,6 +743,18 @@ class Game implements GameApi {
     if (!u) return;
     this.levelPicking = true;
     u.apply(this.mods);
+    // ── TRANSFORM picks (ADD): re-assert the pierce+explode / crit+chain floors
+    // in the mod-apply path so the build identity holds even if later cards leave
+    // a field at 0. Capped to the late-game envelope (+1 pierce / modest splash /
+    // +1 chain) — never a runaway stack. Idempotent. ──
+    if (this.mods.pierceExplode > 0) {
+      this.mods.pierceBonus = Math.max(this.mods.pierceBonus, 1);
+      this.mods.explosiveRadius = Math.max(this.mods.explosiveRadius, 1.4);
+    }
+    if (this.mods.critChain > 0) {
+      this.mods.chainCount = Math.max(this.mods.chainCount, 1);
+      this.mods.critChance = Math.max(this.mods.critChance, 0.15);
+    }
     // a few upgrades change live state immediately
     this.player.maxHealth = PLAYER.maxHealth + this.mods.maxHealthBonus;
     this.player.heal(25); // small reward heal on every pick
@@ -1227,6 +1242,7 @@ class Game implements GameApi {
     this.puffs.update(dt);
     this.explosions.update(dt);
     this.sparks.update(dt);
+    this.decals.update(dt); // corpse decals: linger then fade + recycle
     this.floaters.update(dt);
     this.updateCamera(dt);
 
@@ -2073,6 +2089,31 @@ class Game implements GameApi {
     return rate;
   }
 
+  /** ── SYNERGY (idle→active): effective end-of-run essence multiplier.
+   *  Folds the base essenceMul with `essenceFromBankers` (Blood Tithe): each
+   *  owned banker LEVEL past the first lifts essence, MULTIPLICATIVE but
+   *  HARD-CAPPED by SYNERGY.essenceBankerCap so idle never dwarfs active.
+   *
+   *  INTEGRATOR NOTE: the essence payout in gameOver() lives outside this
+   *  batch's allowed edit region, so it still reads `this.mods.essenceMul`
+   *  directly. To wire this synergy, swap that read for
+   *  `this.effectiveEssenceMul()`. Until then this getter is a no-op on the
+   *  payout (the field is parsed + capped here, ready to drop in). */
+  effectiveEssenceMul(): number {
+    if (this.mods.essenceFromBankers <= 0) return this.mods.essenceMul;
+    let bankerLevels = 0;
+    for (const id of this.save.pets) {
+      const def = findAnyPet(id);
+      if (!def || def.role !== "banker") continue;
+      bankerLevels += Math.max(0, (this.save.petLevels[id] ?? 1) - 1);
+    }
+    const synBankerMul = Math.min(
+      SYNERGY.essenceBankerCap,
+      1 + this.mods.essenceFromBankers * bankerLevels * SYNERGY.essencePerBankerLevel,
+    );
+    return this.mods.essenceMul * synBankerMul;
+  }
+
   /** On boot: pay out gold the owned bankers minted while the tab was closed
    *  (half rate, capped), and show the "While You Were Away" screen if it's
    *  worth surfacing. Silent for first-ever saves (lastSeen === 0). */
@@ -2266,7 +2307,13 @@ class Game implements GameApi {
         // banker faucet — same boost the offline accrual gets, so active income
         // always leads offline at any prestige level.
         const pMul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
-        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale) * pMul;
+        // ── SYNERGY (active→idle, read-only ADD): War Bonds — the run's damage
+        // tier lifts banker gold rate. MULTIPLIED alongside pMul (never replaces
+        // it), and HARD-CAPPED by SYNERGY.bankerWeaponCap so it can't run away. ──
+        const synWeaponMul = this.mods.bankerFromWeapon > 0
+          ? Math.min(SYNERGY.bankerWeaponCap, 1 + this.mods.bankerFromWeapon * Math.max(0, this.mods.damageMul - 1) * SYNERGY.bankerPerDamage)
+          : 1;
+        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale) * pMul * synWeaponMul;
         this._petGold += rate * dt;
         if (this._petGold >= 1 && this._bankerRoundGold < PETS_TUNING.bankerGoldPerRoundCap) {
           let g = Math.floor(this._petGold);
@@ -2581,6 +2628,10 @@ class Game implements GameApi {
       this.puffs.burst(z.pos, crit ? 0xffe14a : z.puffColor, burstN);
       // crunchy gib sparks flinging off the corpse (streaky, bigger on crit/combo)
       this.sparks.burst(z.pos, crit ? 0xffe14a : z.puffColor, crit || mult >= 3 ? 7 : 4, { speed: 7, spread: 4, streak: true });
+      // ── CORPSE DECALS (juice, ADD-only): pooled voxel gibs + scorch that linger
+      // then fade. HARD-CAPPED, recycled, and a no-op on lowSpec (cap 0). Gib
+      // count scales up on crit / combo kills. See decals.ts for the pool/cap. ──
+      this.decals.emit(z.pos, crit ? 0xffe14a : z.puffColor, crit ? 1.8 : mult >= 3 ? 1.5 : 1);
       z.flingDeath(crit || mult >= 3 ? 6 : 2);
       // rising-pitch streak: feed the live combo length so kill/hit tones ascend
       this.audio.comboStep(this.combo.count);

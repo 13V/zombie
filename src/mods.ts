@@ -32,6 +32,14 @@ export interface RunMods {
   dodge: number; // 0..1 chance to ignore a hit
   healNova: number; // HP healed every 10th kill
   adrenaline: number; // 0/1: fire rate ramps as HP drops
+
+  // ---- active↔idle cross-coupling (multiplicative, capped — see config SYNERGY) ----
+  bankerFromWeapon: number; // 0..N: scales how much the run's damage tier feeds banker gold rate
+  essenceFromBankers: number; // 0..N: scales how much owned banker levels feed end-of-run essence
+
+  // ---- build-defining "transform" picks (VS-style; flags resolved at pick-time) ----
+  pierceExplode: number; // 0/1: chosen → guarantees a pierce + explosive floor on ALL shots
+  critChain: number; // 0/1: chosen → guarantees a crit + chain floor (crits arc lightning)
 }
 
 export function defaultMods(): RunMods {
@@ -62,6 +70,10 @@ export function defaultMods(): RunMods {
     dodge: 0,
     healNova: 0,
     adrenaline: 0,
+    bankerFromWeapon: 0,
+    essenceFromBankers: 0,
+    pierceExplode: 0,
+    critChain: 0,
   };
 }
 

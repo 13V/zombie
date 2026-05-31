@@ -47,6 +47,12 @@ export const RUN_UPGRADES: RunUpgrade[] = [
   { id: "healnova", name: "Bloom", desc: "Heal +14 HP every 10 kills", icon: "🌸", color: "#ff9ec4", tier: "common", apply: (m) => (m.healNova += 14) },
   { id: "adrenaline", name: "Adrenaline", desc: "Fire faster the lower your HP", icon: "🔥", color: "#ff7a5a", tier: "rare", apply: (m) => (m.adrenaline = 1) },
 
+  // ---- active↔idle cross-coupling: the active and idle economies feed each other ----
+  // Effects are MULTIPLICATIVE but capped in config (SYNERGY) so they never run away.
+  { id: "warbonds", name: "War Bonds", desc: "Your damage tier boosts banker gold rate", icon: "🏦", color: "#ffd24a", tier: "rare", apply: (m) => (m.bankerFromWeapon += 1) },
+  { id: "tithe", name: "Blood Tithe", desc: "Each banker level boosts essence from kills", icon: "💠", color: "#a0e0ff", tier: "rare", apply: (m) => (m.essenceFromBankers += 1) },
+  { id: "syndicate", name: "Syndicate", desc: "Banker↔weapon synergy +1 each way", icon: "🤝", color: "#ffcf7a", tier: "legendary", apply: (m) => { m.bankerFromWeapon += 1; m.essenceFromBankers += 1; } },
+
   // ---- legendary: rare jackpots ----
   { id: "apex", name: "Apex Predator", desc: "+60% dmg, +30% fire rate, +5 lifesteal", icon: "👑", color: "#ffcf3a", tier: "legendary", apply: (m) => { m.damageMul += 0.6; m.fireRateMul += 0.3; m.lifeSteal += 5; } },
   { id: "jackpot", name: "Jackpot", desc: "+20% loot, +1.5× crit dmg, +15% crit", icon: "🎰", color: "#ffd24a", tier: "legendary", apply: (m) => { m.dropChance += 0.2; m.critMul += 1.5; m.critChance += 0.15; } },
@@ -67,6 +73,13 @@ export const RUN_UPGRADES: RunUpgrade[] = [
   { id: "annihilator", name: "Annihilator", desc: "+80% dmg, +40% crit dmg, +1 pierce", icon: "☄️", color: "#ff5a3a", tier: "legendary", apply: (m) => { m.damageMul += 0.8; m.critMul += 0.4; m.pierceBonus += 1; } },
   { id: "tempest", name: "Tempest", desc: "+3 projectiles, +30% fire rate", icon: "🌪️", color: "#9fe8ff", tier: "legendary", apply: (m) => { m.bonusPellets += 3; m.fireRateMul += 0.3; } },
   { id: "vampirelord", name: "Vampire Lord", desc: "+10 lifesteal, +25 heal nova, +40 HP", icon: "🧛", color: "#ff4a6a", tier: "legendary", apply: (m) => { m.lifeSteal += 10; m.healNova += 25; m.maxHealthBonus += 40; } },
+
+  // ---- build-defining "transform" picks: change the run's whole identity ----
+  // The flag marks the build; the bumps below give the effect a guaranteed FLOOR
+  // (re-asserted at pick-time in main.ts applyUpgrade, idempotent). Kept inside
+  // the late-game envelope: +1 pierce / modest splash / +1 chain, not a stack.
+  { id: "tf_apex", name: "Apex Munitions", desc: "TRANSFORM: every shot pierces AND explodes", icon: "💥", color: "#ff7a3a", tier: "legendary", apply: (m) => { m.pierceExplode = 1; m.pierceBonus = Math.max(m.pierceBonus, 1) + 1; m.explosiveRadius = Math.max(m.explosiveRadius, 1.4); } },
+  { id: "tf_tesla", name: "Tesla Conversion", desc: "TRANSFORM: crits arc chain-lightning", icon: "⚡", color: "#9fe8ff", tier: "legendary", apply: (m) => { m.critChain = 1; m.critChance = Math.min(1, m.critChance + 0.15); m.chainCount = Math.max(m.chainCount, 1) + 1; } },
 ];
 
 /**

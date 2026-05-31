@@ -344,3 +344,42 @@ export const PITY = {
   perKillLuck: 0.06, // luck added per dry kill
   maxLuck: 2.5, // cap so pity can't trivialize legendaries
 } as const;
+
+// ── SYNERGY & CORPSES ──
+// Tier-1 content roadmap leftovers: (a) active↔idle cross-coupling so the two
+// economies feed each other (multiplicative but HARD-CAPPED — no runaway), and
+// (b) short-lived corpse/gib/scorch decals (juice). All NON-CASHABLE: synergy
+// only scales the existing soft-gold/essence faucets, decals are pure cosmetic.
+export const SYNERGY = {
+  /** `bankerFromWeapon`: each +100% of the player's run damageMul lifts the live
+   *  banker gold rate by this fraction. Read-only in the updatePets BANKER block,
+   *  MULTIPLIED alongside the prestige multiplier (which it never replaces). */
+  bankerPerDamage: 0.18,
+  /** Hard ceiling on the bankerFromWeapon multiplier so a hyper-damage build
+   *  can't turn bankers into a firehose (stacks on top of the per-round cap). */
+  bankerWeaponCap: 2.0,
+  /** `essenceFromBankers`: each owned banker LEVEL past the first lifts end-of-run
+   *  essence by this fraction. Surfaced via effectiveEssenceMul() for the
+   *  integrator to fold into the essence payout (see main.ts note). */
+  essencePerBankerLevel: 0.05,
+  /** Hard ceiling on the essenceFromBankers multiplier (idle never dwarfs active). */
+  essenceBankerCap: 1.5,
+} as const;
+
+export const DECALS = {
+  /** Hard cap on simultaneously-alive corpse decals (pooled; oldest recycled).
+   *  Mirrors the Puffs/Sparks cap discipline. Mobile uses lowSpecCap. */
+  cap: 90,
+  lowSpecCap: 0, // lowSpec/mobile: skip corpse decals entirely (GPU budget)
+  /** Voxel gib cubes left per kill (scaled UP by crit/combo, clamped to maxPerKill). */
+  gibsPerKill: 3,
+  maxPerKill: 7,
+  /** Seconds a decal lingers before it finishes fading out. */
+  life: 2.6,
+  /** Fraction of `life` spent at full opacity before the fade begins. */
+  holdFrac: 0.45,
+  gibScale: 0.16, // edge length of a gib cube (world units)
+  gibSpread: 0.55, // how far gibs scatter from the corpse
+  scorchScale: 1.1, // diameter of the flat scorch decal under the corpse
+  scorchOpacity: 0.5,
+} as const;
