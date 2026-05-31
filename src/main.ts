@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, ELITE, PETS_TUNING, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE } from "./config";
+import { CAMERA, COSTS, ELITE, PETS_TUNING, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY } from "./config";
 import { glowMaterial } from "./palette";
 import { Input } from "./input";
 import { Arena } from "./arena";
@@ -2065,6 +2065,31 @@ class Game implements GameApi {
     return rate;
   }
 
+  /** ── SYNERGY (idle→active): effective end-of-run essence multiplier.
+   *  Folds the base essenceMul with `essenceFromBankers` (Blood Tithe): each
+   *  owned banker LEVEL past the first lifts essence, MULTIPLICATIVE but
+   *  HARD-CAPPED by SYNERGY.essenceBankerCap so idle never dwarfs active.
+   *
+   *  INTEGRATOR NOTE: the essence payout in gameOver() lives outside this
+   *  batch's allowed edit region, so it still reads `this.mods.essenceMul`
+   *  directly. To wire this synergy, swap that read for
+   *  `this.effectiveEssenceMul()`. Until then this getter is a no-op on the
+   *  payout (the field is parsed + capped here, ready to drop in). */
+  effectiveEssenceMul(): number {
+    if (this.mods.essenceFromBankers <= 0) return this.mods.essenceMul;
+    let bankerLevels = 0;
+    for (const id of this.save.pets) {
+      const def = findAnyPet(id);
+      if (!def || def.role !== "banker") continue;
+      bankerLevels += Math.max(0, (this.save.petLevels[id] ?? 1) - 1);
+    }
+    const synBankerMul = Math.min(
+      SYNERGY.essenceBankerCap,
+      1 + this.mods.essenceFromBankers * bankerLevels * SYNERGY.essencePerBankerLevel,
+    );
+    return this.mods.essenceMul * synBankerMul;
+  }
+
   /** On boot: pay out gold the owned bankers minted while the tab was closed
    *  (half rate, capped), and show the "While You Were Away" screen if it's
    *  worth surfacing. Silent for first-ever saves (lastSeen === 0). */
@@ -2258,7 +2283,13 @@ class Game implements GameApi {
         // banker faucet — same boost the offline accrual gets, so active income
         // always leads offline at any prestige level.
         const pMul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
-        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale) * pMul;
+        // ── SYNERGY (active→idle, read-only ADD): War Bonds — the run's damage
+        // tier lifts banker gold rate. MULTIPLIED alongside pMul (never replaces
+        // it), and HARD-CAPPED by SYNERGY.bankerWeaponCap so it can't run away. ──
+        const synWeaponMul = this.mods.bankerFromWeapon > 0
+          ? Math.min(SYNERGY.bankerWeaponCap, 1 + this.mods.bankerFromWeapon * Math.max(0, this.mods.damageMul - 1) * SYNERGY.bankerPerDamage)
+          : 1;
+        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale) * pMul * synWeaponMul;
         this._petGold += rate * dt;
         if (this._petGold >= 1 && this._bankerRoundGold < PETS_TUNING.bankerGoldPerRoundCap) {
           let g = Math.floor(this._petGold);

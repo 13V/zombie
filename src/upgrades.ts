@@ -47,6 +47,12 @@ export const RUN_UPGRADES: RunUpgrade[] = [
   { id: "healnova", name: "Bloom", desc: "Heal +14 HP every 10 kills", icon: "🌸", color: "#ff9ec4", tier: "common", apply: (m) => (m.healNova += 14) },
   { id: "adrenaline", name: "Adrenaline", desc: "Fire faster the lower your HP", icon: "🔥", color: "#ff7a5a", tier: "rare", apply: (m) => (m.adrenaline = 1) },
 
+  // ---- active↔idle cross-coupling: the active and idle economies feed each other ----
+  // Effects are MULTIPLICATIVE but capped in config (SYNERGY) so they never run away.
+  { id: "warbonds", name: "War Bonds", desc: "Your damage tier boosts banker gold rate", icon: "🏦", color: "#ffd24a", tier: "rare", apply: (m) => (m.bankerFromWeapon += 1) },
+  { id: "tithe", name: "Blood Tithe", desc: "Each banker level boosts essence from kills", icon: "💠", color: "#a0e0ff", tier: "rare", apply: (m) => (m.essenceFromBankers += 1) },
+  { id: "syndicate", name: "Syndicate", desc: "Banker↔weapon synergy +1 each way", icon: "🤝", color: "#ffcf7a", tier: "legendary", apply: (m) => { m.bankerFromWeapon += 1; m.essenceFromBankers += 1; } },
+
   // ---- legendary: rare jackpots ----
   { id: "apex", name: "Apex Predator", desc: "+60% dmg, +30% fire rate, +5 lifesteal", icon: "👑", color: "#ffcf3a", tier: "legendary", apply: (m) => { m.damageMul += 0.6; m.fireRateMul += 0.3; m.lifeSteal += 5; } },
   { id: "jackpot", name: "Jackpot", desc: "+20% loot, +1.5× crit dmg, +15% crit", icon: "🎰", color: "#ffd24a", tier: "legendary", apply: (m) => { m.dropChance += 0.2; m.critMul += 1.5; m.critChance += 0.15; } },
