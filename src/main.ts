@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, PLAYER, SCORE, ZOMBIE } from "./config";
+import { CAMERA, COSTS, PETS_TUNING, PLAYER, SCORE, ZOMBIE } from "./config";
 import { glowMaterial } from "./palette";
 import { Input } from "./input";
 import { Arena } from "./arena";
@@ -148,6 +148,8 @@ class Game implements GameApi {
   private _petTgt = { x: 0, z: 0 };
   private _petDir = new THREE.Vector3();
   private _petGold = 0; // fractional gold accumulator for banker pets
+  private _bankerRoundGold = 0; // gold minted by bankers this round (per-round cap)
+  private _bankerRound = -1; // round the above was last reset for
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
@@ -1943,11 +1945,23 @@ class Game implements GameApi {
   private spawnPets() {
     for (const p of this.pets) this.scene.remove(p.group);
     this.pets = [];
-    this.save.pets.forEach((id, i) => {
+    // Active-squad cap: bankers/buffers (non-combat) always spawn; combat pets are
+    // limited to the first N owned (in save order) so a huge collection can't blanket
+    // the screen. Owning >N is fine — the rest just stay benched, save.pets is untouched.
+    let combat = 0;
+    const defs: { def: ReturnType<typeof findAnyPet>; lvl: number }[] = [];
+    for (const id of this.save.pets) {
       const def = findAnyPet(id);
-      if (!def) return;
-      const lvl = this.save.petLevels[id] ?? 1;
-      const pet = new Pet(def, (i / Math.max(1, this.save.pets.length)) * Math.PI * 2, lvl);
+      if (!def) continue;
+      const isCombat = def.role !== "banker" && def.role !== "buffer";
+      if (isCombat) {
+        if (combat >= PETS_TUNING.activeSquadCap) continue;
+        combat++;
+      }
+      defs.push({ def, lvl: this.save.petLevels[id] ?? 1 });
+    }
+    defs.forEach((d, i) => {
+      const pet = new Pet(d.def!, (i / Math.max(1, defs.length)) * Math.PI * 2, d.lvl);
       this.scene.add(pet.group);
       this.pets.push(pet);
     });
@@ -1959,11 +1973,14 @@ class Game implements GameApi {
     const px = this.player.pos.x;
     const pz = this.player.pos.z;
     const grid = this.rounds.grid;
-    // Power Totem(s): sum their buff so combat pets hit harder (+roleValue x level).
+    // Power Totem(s): sum their buff so combat pets hit harder (+roleValue x level),
+    // then HARD-CLAMP the total to buffCap. Without the clamp, 3 totems at L20 stack
+    // to ~7x and one-shot the late game (see audit). Stacking still helps, but caps.
     let petBuff = 1;
     for (const p of this.pets) {
       if (p.def.role === "buffer") petBuff += (p.def.roleValue ?? 0) * p.level;
     }
+    petBuff = Math.min(petBuff, PETS_TUNING.buffCap);
     // Pets inherit your whole upgrade tree, exactly like your own gun. Fire Rate
     // (incl. Adrenaline) speeds their cadence the same way it speeds yours.
     const adr = this.mods.adrenaline ? 1 + (1 - this.player.health / this.player.maxHealth) * 0.6 : 1;
@@ -1972,12 +1989,21 @@ class Game implements GameApi {
       const pet = this.pets[i];
       // Signature ability (Epic+): periodic special, fires regardless of role.
       if (pet.tickAbility(dt)) this.firePetAbility(pet, petBuff);
-      // Banker (Piggy Bank): earn gold over time — the idle-economy hook.
+      // Banker (Piggy Bank): earn gold over time — the idle-economy hook. Output
+      // is FLATTENED (roleValue * (1 + level*scale), not * level) and CAPPED per
+      // round so it stays meaningful idle income, not a level-20 firehose.
       if (pet.def.role === "banker") {
-        this._petGold += (pet.def.roleValue ?? 0) * pet.level * dt;
-        if (this._petGold >= 1) {
-          const g = Math.floor(this._petGold);
+        if (this.rounds.round !== this._bankerRound) {
+          this._bankerRound = this.rounds.round;
+          this._bankerRoundGold = 0;
+        }
+        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale);
+        this._petGold += rate * dt;
+        if (this._petGold >= 1 && this._bankerRoundGold < PETS_TUNING.bankerGoldPerRoundCap) {
+          let g = Math.floor(this._petGold);
           this._petGold -= g;
+          g = Math.min(g, PETS_TUNING.bankerGoldPerRoundCap - this._bankerRoundGold);
+          this._bankerRoundGold += g;
           this.save.gold += g;
           this.save.goldEarned += g;
         }
@@ -2254,21 +2280,12 @@ class Game implements GameApi {
     });
   }
 
-  /** Nearest alive zombie to (x,z) within `range`, skipping ids in `skip`. */
+  /** Nearest alive zombie to (x,z) within `range`, skipping ids in `skip`.
+   *  Thin wrapper over the spatial grid (O(local) not O(n)). The grid is rebuilt
+   *  in rounds.update (after steerHomingBullets in simulate), so callers here may
+   *  see a 1-frame-stale grid — fine for homing/ricochet/chain targeting. */
   private nearestZombie(x: number, z: number, range: number, skip?: Set<number>): Zombie | null {
-    let best: Zombie | null = null;
-    let bd = range * range;
-    for (const q of this.rounds.zombies) {
-      if (!q.alive || skip?.has(q.id)) continue;
-      const dx = q.pos.x - x;
-      const dz = q.pos.z - z;
-      const d = dx * dx + dz * dz;
-      if (d < bd) {
-        bd = d;
-        best = q;
-      }
-    }
-    return best;
+    return this.rounds.grid.nearest(x, z, range, skip);
   }
 
   /** Apply damage to one zombie and handle the score/FX if it dies. */
@@ -2281,6 +2298,11 @@ class Game implements GameApi {
       const mult = this.combo.onKill();
       const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult);
       this.addPoints(pts);
+      // Per-kill gold drip: COMBAT is the primary gold faucet (bankers are now
+      // capped). Scales with the zombie's worth + scoreMul (Double Points etc).
+      const kg = Math.max(1, Math.round(PETS_TUNING.killGoldBase * z.scoreMul * scoreMul));
+      this.save.gold += kg;
+      this.save.goldEarned += kg;
       this.floaters.spawn(z.pos, this.floatNum(pts), mult > 1 ? "#ffd24a" : "#ffffff", mult > 1 ? 1.2 : 1);
       // beefier, warmer burst on crit / combo kills; ragdoll fling on big hits
       const burstN = crit ? 13 : mult >= 3 ? 11 : 8;
