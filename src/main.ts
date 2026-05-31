@@ -1214,6 +1214,14 @@ class Game implements GameApi {
     this.disconnectIslandPresence();
     for (const v of this.houseViews.values()) v.dispose(this.scene);
     this.houseViews.clear();
+    // free the build-mode ghost preview mesh + material
+    if (this.ghost) {
+      this.scene.remove(this.ghost);
+      (this.ghost as THREE.Mesh).geometry?.dispose();
+      this.ghostMat?.dispose();
+      this.ghost = undefined;
+      this.ghostMat = undefined;
+    }
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.hud.setIslandMode(false);
