@@ -620,6 +620,8 @@ export class Pet {
   private stageShards?: THREE.Group; // orbiting power shards (top stage)
   private stageAura?: THREE.Mesh; // pulsing aura shell (top stage)
   private _crownStage = -1; // stage the current kit was built for (rebuild on change)
+  /** Per-pet (cloned) body materials + their base colour, re-tinted per stage. */
+  private _stageRecolor: { mat: THREE.MeshStandardMaterial; base: number }[] = [];
 
   constructor(readonly def: PetDef, private orbitAngle: number, level = 1, shiny = false) {
     this.level = Math.max(1, level);
@@ -681,6 +683,16 @@ export class Pet {
     this.baseScale = baseSize * (1 + Math.min(0.6, (this.level - 1) * 0.06)) * (1 + stage * PET_STAGES.scalePerStage);
     this.group.scale.setScalar(this.baseScale);
     this.rebuildStageFlourish(stage);
+    // Restyle the whole body per stage: a warm brighten when Evolved, a gild
+    // toward gold when Ascended — so each of the 3 forms reads as a distinct
+    // model, not just the base with bigger wings. Re-tints from the base colour.
+    const tint = stage >= 2 ? { to: 0xffd24a, amt: 0.4 } : stage >= 1 ? { to: 0xfff2c0, amt: 0.24 } : null;
+    for (const r of this._stageRecolor) {
+      const c = new THREE.Color(r.base);
+      if (tint) c.lerp(new THREE.Color(tint.to), tint.amt);
+      r.mat.color.copy(c);
+      r.mat.emissive.copy(c);
+    }
     const glowBoost = Math.min(1.6, 0.9 + (this.level - 1) * 0.12);
     this.group.traverse((o) => {
       const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
@@ -793,10 +805,20 @@ export class Pet {
   private build() {
     const col = this.def.color;
     const acc = this.def.accent ?? darken(col, 0.4);
-    const body = voxelMaterial(col);
-    const accent = voxelMaterial(acc);
-    const glow = glowMaterial(col, 0.9);
+    // Clone the primary body materials so each pet OWNS them — lets evolution
+    // stages recolor (gild) the whole creature without mutating the shared
+    // material cache (which the world/zombies/other pets draw from). The base
+    // colours are remembered so each stage re-tints from the original, not
+    // compounding. Faces (`dark`) stay shared — eyes/smile never recolor.
+    const body = voxelMaterial(col).clone();
+    const accent = voxelMaterial(acc).clone();
+    const glow = glowMaterial(col, 0.9).clone();
     const dark = voxelMaterial(0x141414);
+    this._stageRecolor = [
+      { mat: body, base: col },
+      { mat: accent, base: acc },
+      { mat: glow, base: col },
+    ];
     const box = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, into = this.body) => {
       // Reuse the shared unit box and encode size via mesh.scale (no per-voxel
       // BoxGeometry alloc). Meshes whose scale is later animated (muzzle/aura)
