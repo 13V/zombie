@@ -1371,24 +1371,28 @@ class Game implements GameApi {
   // ---- house building -----------------------------------------------------
   private static readonly CELL = 1.2; // plot grid cell size (matches house.ts)
 
-  /** Plot 0 is the player's own buildable plot; the rest are neighbours. */
-  private isOwnPlot(plotIndex: number): boolean {
-    return plotIndex === 0;
+  // v1: all 8 plots are YOURS to build on, each persisted independently under
+  // your id (build a little neighbourhood). Visiting OTHER players' houses
+  // (enterVisitMode + like) is wired and ready, gated on a real cross-player
+  // plot-claim system with shared identities — a backend follow-up.
+  private isOwnPlot(_plotIndex: number): boolean {
+    return true;
   }
-  /** Backend owner key for a plot (yours = wallet/local; neighbours synthetic). */
+  /** Backend owner key for a plot — namespaced per plot so each saves separately. */
   private plotOwner(plotIndex: number): string {
-    if (this.isOwnPlot(plotIndex)) return this.wallet.state.address ?? "local";
-    return `neighbor-${plotIndex}`;
+    return `${this.wallet.state.address ?? "local"}:p${plotIndex}`;
   }
 
   /** Enter build mode for a plot: load its layout + show the build bar. */
   private async enterBuildMode(plotIndex: number) {
+    if (this.editingPlot >= 0) return; // guard against re-entry during the load await
     const owner = this.plotOwner(plotIndex);
+    this.editingPlot = plotIndex; // claim immediately so a second E press no-ops
     const existing = await loadHouse(plotIndex, owner);
     this.editData = existing ? sanitizeHouse(existing) : starterHouse();
-    this.editingPlot = plotIndex;
     this.editReadOnly = false;
     this.editPart = "wall";
+    this.editCat = "structure"; // reset catalog tab so the active part is visible
     this.editRot = 0;
     this.editColor = null;
     this.editPaint = false;

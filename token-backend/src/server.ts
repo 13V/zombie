@@ -312,7 +312,10 @@ app.post("/house", (req, res) => {
   res.json({ ok: true });
 });
 
-/** Like a house. Open/cosmetic; one POST = +1 like. */
+/** Like a house. Open/cosmetic; one POST = +1 like.
+ *  NOTE (skeleton): no per-caller dedupe/rate-limit — likes (and visits via
+ *  GET ?visit=1) can be inflated by a script. Fine while purely cosmetic; gate
+ *  behind a per-wallet like-set + rate limit before they carry any weight. */
 app.post("/house/like", (req, res) => {
   const { owner, plot } = req.body ?? {};
   if (typeof owner !== "string" || (typeof plot !== "number" && typeof plot !== "string")) {
