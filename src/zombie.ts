@@ -1,11 +1,38 @@
 import * as THREE from "three";
-import { ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
+import { ELITE, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
 import { AssetManager, CharacterRig } from "./assets";
 import { VoxelChar } from "./voxelChar";
 import type { SpatialGrid } from "./grid";
 
 const _tmp = new THREE.Vector3();
 let _nextId = 1;
+
+/**
+ * Elite affix: a behavior + colored visual tell layered onto a late-game
+ * zombie. NOT just bonus HP — each one changes how the zombie threatens you.
+ *  - blazing: leaves a burning trail under itself (DoT to a player on it).
+ *  - glacial: chills the player on contact; shatters into a freeze AoE on death.
+ *  - overloading: carries a shield (absorbed before HP) and bursts AoE on death.
+ */
+export type Affix = "blazing" | "glacial" | "overloading";
+
+/** Per-affix tell color (emissive + aura ring) — picked to read at a glance. */
+const AFFIX_COLOR: Record<Affix, number> = {
+  blazing: 0xff6a1f,
+  glacial: 0x6ad7ff,
+  overloading: 0xc792ea,
+};
+
+// One shared flat ring geometry for the affix aura, reused by every affixed
+// zombie (scaled per-instance). Process-wide singleton — never disposed; pooled
+// zombies just toggle visibility. Three shared materials, one per affix color.
+const _auraGeo = new THREE.RingGeometry(0.55, 0.85, 18);
+_auraGeo.rotateX(-Math.PI / 2);
+const _auraMat: Record<Affix, THREE.Material> = {
+  blazing: new THREE.MeshBasicMaterial({ color: AFFIX_COLOR.blazing, transparent: true, opacity: 0.6, depthWrite: false }),
+  glacial: new THREE.MeshBasicMaterial({ color: AFFIX_COLOR.glacial, transparent: true, opacity: 0.6, depthWrite: false }),
+  overloading: new THREE.MeshBasicMaterial({ color: AFFIX_COLOR.overloading, transparent: true, opacity: 0.6, depthWrite: false }),
+};
 
 /**
  * A cute-menacing undead, driven by a CharacterRig (voxel blocky by default, or
@@ -68,6 +95,18 @@ export class Zombie {
   blastRadius = 0;
   blastDamage = 0;
 
+  // ---- elite affix state ----
+  /** Active affix (null on a plain zombie). Read by main for on-hit/on-death FX. */
+  affix: Affix | null = null;
+  /** Remaining shield (overloading) absorbed before HP; 0 when none. */
+  shield = 0;
+  private maxShield = 0;
+  /** Throttle for blazing trail emission; main reads `burnTrailReady`. */
+  private burnTimer = 0;
+  /** Set on a frame a blazing zombie wants to drop a burn patch; main clears it. */
+  burnTrailReady = false;
+  private aura?: THREE.Mesh;
+
   private char: CharacterRig;
 
   constructor(assets: AssetManager) {
@@ -123,10 +162,69 @@ export class Zombie {
       this.char.setColor(type.body, type.head, this.explodes ? type.body : 0x000000);
     }
 
+    // clear any affix from a previous life (pooled reuse)
+    this.clearAffix();
+
     this.group.rotation.set(0, 0, 0);
     this.char.play("walk");
     this.group.position.copy(this.pos);
     this.group.visible = true;
+  }
+
+  /**
+   * Tag this (already-spawned) zombie with an elite affix: behavior + a colored
+   * tell. Glacial/blazing buff stats slightly; overloading grants a shield. The
+   * aura ring + emissive tint make it readable. Caller (rounds) decides fraction
+   * + cap; this just applies. Returns the affix so callers can count it.
+   */
+  applyAffix(affix: Affix): Affix {
+    this.affix = affix;
+    const color = AFFIX_COLOR[affix];
+    // recolor the body emissive to the affix color (keeps the variant's body hue)
+    if (this.char instanceof VoxelChar) this.char.setColor(this.puffColor, this.puffColor, color);
+    // lazy-build the shared aura ring; toggle on + recolor via shared material
+    if (!this.aura) {
+      this.aura = new THREE.Mesh(_auraGeo, _auraMat[affix]);
+      this.aura.position.y = 0.06;
+      this.group.add(this.aura);
+    }
+    this.aura.material = _auraMat[affix];
+    this.aura.visible = true;
+    if (affix === "overloading") {
+      this.maxShield = this.maxHealth * ELITE.overloadShield;
+      this.shield = this.maxShield;
+    } else if (affix === "blazing") {
+      this.speed *= 1.1; // a touch faster so the trail actually chases you
+    } else if (affix === "glacial") {
+      this.health *= 1.25; // glacial is the "anchor" — slightly tankier
+      this.maxHealth = this.health;
+    }
+    this.scoreMul *= 1.6; // affixed kills are worth more
+    return affix;
+  }
+
+  /** Strip any affix back to a plain zombie (called on pooled respawn). */
+  private clearAffix() {
+    this.affix = null;
+    this.shield = 0;
+    this.maxShield = 0;
+    this.burnTimer = 0;
+    this.burnTrailReady = false;
+    if (this.aura) this.aura.visible = false;
+  }
+
+  /**
+   * Death-burst descriptor for affixed zombies (glacial shatter / overloading
+   * blast), or null. main applies the AoE so it shares the explosion/FX paths.
+   */
+  deathAoe(): { radius: number; damage: number; slow: number; color: number } | null {
+    if (this.affix === "glacial") {
+      return { radius: ELITE.glacialShatterRadius, damage: 0, slow: ELITE.glacialSlow, color: AFFIX_COLOR.glacial };
+    }
+    if (this.affix === "overloading") {
+      return { radius: ELITE.overloadAoeRadius, damage: ELITE.overloadAoeDamage, slow: 0, color: AFFIX_COLOR.overloading };
+    }
+    return null;
   }
 
   /** Turn a freshly-spawned zombie into a round boss: massive HP + size. */
@@ -143,6 +241,17 @@ export class Zombie {
   /** Returns true if it just died from this hit. */
   hit(damage: number): boolean {
     if (!this.alive) return false;
+    // Overloading shield soaks damage before HP (self-contained; main needs no
+    // special-case here — it keeps calling hit() as normal).
+    if (this.shield > 0) {
+      const soaked = Math.min(this.shield, damage);
+      this.shield -= soaked;
+      damage -= soaked;
+      if (damage <= 0) {
+        this.flash = 0.12;
+        return false;
+      }
+    }
     this.health -= damage;
     this.flash = 0.12; // brief white hit-flash
     if (this.health <= 0) {
@@ -192,6 +301,17 @@ export class Zombie {
     } else {
       this.updateGround(dt, target, grid, speed);
     }
+
+    // Blazing: periodically flag a burn patch under itself for main to drop.
+    if (this.affix === "blazing") {
+      this.burnTimer -= dt;
+      if (this.burnTimer <= 0) {
+        this.burnTimer = 0.35;
+        this.burnTrailReady = true;
+      }
+    }
+    // spin the affix aura for a little life
+    if (this.aura && this.aura.visible) this.aura.rotation.y += dt * 1.5;
 
     if (this.flash > 0) {
       this.flash -= dt;
@@ -324,6 +444,7 @@ export class Zombie {
       this.group.visible = false;
       this.group.position.y = 0;
       this.group.rotation.z = 0;
+      if (this.aura) this.aura.visible = false;
     }
   }
 }

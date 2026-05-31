@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { ROUNDS, SPECIAL_ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
-import { Zombie } from "./zombie";
+import { ELITE, ROUNDS, SPECIAL_ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
+import { Affix, Zombie } from "./zombie";
 import { Arena } from "./arena";
 import { AssetManager } from "./assets";
 import { SpatialGrid } from "./grid";
@@ -54,6 +54,11 @@ export class RoundManager {
 
   /** The active round's special flavoring (null on a plain round). */
   private special: SpecialRound | null = null;
+
+  /** Continuous difficulty director coefficient (see item 4: rises with round +
+   *  run time). Used to bias affix frequency. Placeholder until updated in
+   *  update(); a round-only floor keeps it sane before time accrues. */
+  difficultyCoeff = 0;
 
   onRoundStart?: (round: number) => void;
   onIntermission?: (nextRound: number) => void;
@@ -272,7 +277,30 @@ export class RoundManager {
     } else {
       z.spawn(this.edge, this.curHealth, this.curSpeed, this.pickType());
     }
+    this.maybeAffix(z);
     this.toSpawn--;
+  }
+
+  /** Count of currently-alive affixed zombies (cap + HUD use). */
+  get affixedAlive(): number {
+    let n = 0;
+    for (const z of this.zombies) if (z.alive && z.affix) n++;
+    return n;
+  }
+
+  /** Roll an elite affix onto a freshly-spawned zombie, respecting the cap +
+   *  round/difficulty-scaled fraction. Bosses + flying swarmers are skipped. */
+  private maybeAffix(z: Zombie) {
+    if (this.round < ELITE.fromRound || z.isBoss) return;
+    if (this.affixedAlive >= ELITE.maxAlive) return;
+    const frac = Math.min(
+      ELITE.maxFraction,
+      ELITE.baseFraction + (this.round - ELITE.fromRound) * ELITE.fractionPerRound + this.difficultyCoeff * ELITE.coeffBoost,
+    );
+    if (Math.random() >= frac) return;
+    const roll = Math.random();
+    const affix: Affix = roll < 0.34 ? "blazing" : roll < 0.67 ? "glacial" : "overloading";
+    z.applyAffix(affix);
   }
 
   /** Grab an idle pooled zombie (or grow the pool). */
