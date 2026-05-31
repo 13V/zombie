@@ -8,6 +8,8 @@
  * spent in-game. No real value is created or moved by this file.
  */
 
+import { CHEST } from "./config";
+
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
 export interface RarityInfo {
@@ -70,4 +72,18 @@ export function makeItem(rarity?: Rarity): LootItem {
 
 export function rarityColorHex(r: Rarity): string {
   return `#${RARITIES[r].color.toString(16).padStart(6, "0")}`;
+}
+
+/**
+ * Treasure-chest quantity cascade (Vampire-Survivors model): roll for a big
+ * jackpot first, then a medium one, else a single item. `luck` (0+) nudges the
+ * jackpot odds up. Returns the number of items the chest yields (1 / 3 / 5).
+ * Pure rarity/cosmetic outcome — NON-CASHABLE soft economy only.
+ */
+export function rollChestQuantity(luck = 0): number {
+  const five = CHEST.fiveChance + luck * CHEST.luckFiveBonus;
+  const three = CHEST.threeChance + luck * CHEST.luckThreeBonus;
+  if (Math.random() < five) return 5;
+  if (Math.random() < three) return 3;
+  return 1;
 }

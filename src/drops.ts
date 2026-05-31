@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { Audio } from "./audio";
-import { JUICE } from "./config";
+import { JUICE, CHEST } from "./config";
+import { rollChestQuantity } from "./loot";
 
 /** What a pickup does when collected. The Game maps these to real effects. */
 export type DropKind =
@@ -45,6 +46,12 @@ interface Drop {
   life: number;
   bob: number;
   active: boolean;
+  // one-shot "pop" launch (chest fan): horizontal + vertical velocity that
+  // decays so items arc out of the chest and settle. Zero for normal drops.
+  vx: number;
+  vz: number;
+  vy: number;
+  y: number; // current pop height above ground (settles to 0)
 }
 
 const MAX_DROPS = 24;
@@ -97,7 +104,7 @@ export class Drops {
       beam.position.y = JUICE.beamHeight * 0.5;
       beam.visible = false;
       group.add(beam, glow, gem);
-      d = { group, gem, glow, beam, def: TABLE[0], life: 0, bob: 0, active: false };
+      d = { group, gem, glow, beam, def: TABLE[0], life: 0, bob: 0, active: false, vx: 0, vz: 0, vy: 0, y: 0 };
       this.pool.push(d);
     }
     return d;
@@ -113,10 +120,44 @@ export class Drops {
     d.group.position.set(pos.x, 0, pos.z);
     d.life = LIFETIME;
     d.bob = Math.random() * Math.PI * 2;
+    d.vx = d.vz = d.vy = d.y = 0; // normal drops don't pop
     d.active = true;
     d.group.visible = true;
     this.scene.add(d.group);
     this.audio?.pickup(d.def.tier); // rising chime, pitched by rarity tier
+  }
+
+  /**
+   * Treasure chest: rolls a Luck-scaled quantity cascade (loot.ts) and pops that
+   * many good drops out in a fan with an arcing launch + a big chime. The
+   * integrator calls this from boss / treasure kills. NON-CASHABLE feedback.
+   */
+  spawnChest(pos: THREE.Vector3, luck = 0): void {
+    const n = rollChestQuantity(luck);
+    const base = Math.random() * Math.PI * 2; // random fan orientation
+    let spawned = 0;
+    for (let i = 0; i < n; i++) {
+      const d = this.obtain();
+      if (!d) break; // hit the pool cap — stop gracefully
+      d.def = this.rollDef(true); // chests only yield the exciting half
+      this.dress(d);
+      d.group.position.set(pos.x, 0, pos.z);
+      // fan: spread items around a circle, with an outward + upward pop.
+      const ang = base + (n > 1 ? (i / n) * Math.PI * 2 : 0);
+      const speed = CHEST.fanSpread * (0.8 + Math.random() * 0.4);
+      d.vx = Math.cos(ang) * speed;
+      d.vz = Math.sin(ang) * speed;
+      d.vy = CHEST.fanLift * (0.85 + Math.random() * 0.3);
+      d.y = 0;
+      d.life = LIFETIME;
+      d.bob = Math.random() * Math.PI * 2;
+      d.active = true;
+      d.group.visible = true;
+      this.scene.add(d.group);
+      spawned++;
+    }
+    // one celebratory chime, tier scaled by how big the haul was (1/3/5 → 2/3/4)
+    if (spawned > 0) this.audio?.pickup(spawned >= 5 ? 4 : spawned >= 3 ? 3 : 2);
   }
 
   /** Apply the def's color + rarity-tiered glow size / epic+ light beam. */
@@ -143,7 +184,17 @@ export class Drops {
       d.life -= dt;
       d.bob += dt * 3;
       d.gem.rotation.y += dt * 2;
-      d.gem.position.y = 0.7 + Math.sin(d.bob) * 0.12;
+      // chest-fan pop: arc outward + up, settle to the ground with light drag.
+      if (d.vx !== 0 || d.vz !== 0 || d.y > 0) {
+        d.group.position.x += d.vx * dt;
+        d.group.position.z += d.vz * dt;
+        d.vx *= 0.9;
+        d.vz *= 0.9;
+        d.vy -= 12 * dt; // gravity
+        d.y = Math.max(0, d.y + d.vy * dt);
+        if (d.y <= 0) d.vx = d.vz = d.vy = 0; // landed — stop the pop
+      }
+      d.gem.position.y = 0.7 + d.y + Math.sin(d.bob) * 0.12;
       d.glow.position.y = d.gem.position.y;
       // blink out in the final 3s so it's clear it's about to vanish
       if (d.life < 3) d.group.visible = Math.sin(d.life * 12) > -0.3;
