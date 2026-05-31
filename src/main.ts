@@ -128,6 +128,7 @@ class Game implements GameApi {
   private editRot: 0 | 1 | 2 | 3 = 0; // current placement yaw
   private editColor: number | null = null; // null = part's default color
   private editPaint = false; // paint mode: clicking recolors existing parts
+  private editPetId = ""; // pet to attach to the next placed "perch"
   private editReadOnly = false; // visiting someone else's plot (no edits)
   private undoStack: string[] = []; // JSON snapshots of editData (cap 20)
   private ghost?: THREE.Object3D; // translucent placement preview

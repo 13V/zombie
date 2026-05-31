@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { voxelMaterial, toyMaterial, glowMaterial, VOX } from "./palette";
+import { Pet, findAnyPet } from "./pets";
 
 /**
  * Player housing on the island. A house is a small, server-persisted layout of
@@ -18,7 +19,7 @@ export type PartKind =
   // yard
   | "lamppost" | "bush" | "path"
   // show-off
-  | "banner" | "statue";
+  | "banner" | "statue" | "perch";
 
 export interface HousePart {
   kind: PartKind;
@@ -29,6 +30,8 @@ export interface HousePart {
   color?: number;
   /** 4-way yaw, rot*90° (0..3). Optional — absent means 0. */
   rot?: 0 | 1 | 2 | 3;
+  /** For a "perch": which owned pet to display (pet def id). */
+  petId?: string;
 }
 
 export interface HouseData {
@@ -73,6 +76,7 @@ export const HOUSE_PARTS: { kind: PartKind; label: string; color: number; tall?:
   // show-off
   { kind: "banner", label: "Banner", color: 0xd14b6a, tall: true, cat: "showoff" },
   { kind: "statue", label: "Statue", color: 0xcfd3da, tall: true, cat: "showoff" },
+  { kind: "perch", label: "Pet Perch", color: 0xc7a86b, cat: "showoff" },
 ];
 
 const CELL = 1.2; // world size of a plot grid cell
@@ -259,6 +263,26 @@ export class HouseView {
         mesh = g;
         break;
       }
+      case "perch": {
+        const g = new THREE.Group();
+        // a little plinth…
+        const base = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.7, 0.3, CELL * 0.7), voxelMaterial(color));
+        base.position.y = 0.15;
+        const top = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.55, 0.12, CELL * 0.55), voxelMaterial(0xffffff));
+        top.position.y = 0.36;
+        g.add(base, top);
+        // …showing the owned pet's actual voxel model (reuse pets.ts Pet).
+        const def = p.petId ? findAnyPet(p.petId) : undefined;
+        if (def) {
+          const pet = new Pet(def, 0, 1);
+          pet.group.scale.setScalar(0.7);
+          pet.group.position.y = 0.42;
+          g.add(pet.group);
+        }
+        g.position.set(x, yBase, z);
+        mesh = g;
+        break;
+      }
       case "flower":
       default: {
         const g = new THREE.Group();
@@ -296,11 +320,15 @@ export function sanitizeHouse(raw: unknown): HouseData {
       if (Math.abs(gx) > 2 || Math.abs(gz) > 2 || gy < 0 || gy > 4) continue; // clamp to plot
       const rotN = Number(o.rot);
       const rot = Number.isFinite(rotN) ? ((((rotN % 4) + 4) % 4) as 0 | 1 | 2 | 3) : undefined;
+      // petId only meaningful on a perch + must name a real pet def
+      const petId =
+        o.kind === "perch" && typeof o.petId === "string" && findAnyPet(o.petId) ? o.petId : undefined;
       parts.push({
         kind: o.kind as PartKind,
         gx, gy, gz,
         color: typeof o.color === "number" ? o.color : undefined,
         ...(rot ? { rot } : {}),
+        ...(petId ? { petId } : {}),
       });
     }
   }
