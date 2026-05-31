@@ -9,7 +9,8 @@ import { voxelMaterial, glowMaterial } from "./palette";
 export type GunStyle =
   | "pistol" | "smg" | "shotgun" | "cannon" | "rifle"
   | "arc" | "singularity" | "pyroclasm"
-  | "confetti" | "potato" | "fish" | "chicken" | "beejar" | "bfg";
+  | "confetti" | "potato" | "fish" | "chicken" | "beejar" | "bfg"
+  | "rail" | "boomerang" | "tesla";
 
 interface Part {
   s: [number, number, number]; // scale (box size)
@@ -114,6 +115,31 @@ const STYLES: Record<GunStyle, Part[]> = {
     { s: [0.07, 0.26, 0.32], p: [-0.22, 0.02, 0.32], c: 0x4ec98f, glow: true }, // fins
     { s: [0.07, 0.26, 0.32], p: [0.22, 0.02, 0.32], c: 0x4ec98f, glow: true },
     { s: [0.13, 0.22, 0.13], p: [0, -0.17, 0.06], c: 0x1f2a22 },
+  ],
+
+  // ---- new wonder/variety guns ----
+  rail: [
+    { s: [0.12, 0.14, 0.96], p: [0, 0.02, 0.54], c: 0x2a2e34 }, // long slim barrel
+    { s: [0.2, 0.2, 0.28], p: [0, 0, 0.22], c: 0x33373d }, // receiver block
+    { s: [0.05, 0.05, 0.9], p: [-0.11, 0.05, 0.54], c: 0x7fe6ff, glow: true }, // charge rail
+    { s: [0.05, 0.05, 0.9], p: [0.11, 0.05, 0.54], c: 0x7fe6ff, glow: true }, // charge rail
+    { s: [0.07, 0.07, 0.1], p: [0, 0.05, 1.0], c: 0xeafcff, glow: true }, // muzzle node
+    { s: [0.11, 0.2, 0.12], p: [0, -0.15, 0.08], c: 0x20242a },
+  ],
+  boomerang: [
+    { s: [0.16, 0.18, 0.4], p: [0, 0, 0.22], c: 0x3a2e1e }, // launcher body
+    { s: [0.34, 0.06, 0.1], p: [0, 0.06, 0.5], c: 0xd9a23a }, // angled blade arm
+    { s: [0.1, 0.06, 0.34], p: [0.14, 0.06, 0.56], c: 0xd9a23a }, // angled blade arm
+    { s: [0.08, 0.08, 0.08], p: [0, 0.06, 0.52], c: 0xfff0b0, glow: true }, // hub spark
+    { s: [0.11, 0.2, 0.12], p: [0, -0.15, 0.06], c: 0x2a2018 },
+  ],
+  tesla: [
+    { s: [0.2, 0.22, 0.42], p: [0, 0, 0.24], c: 0x2a2a3a }, // coil housing
+    { s: [0.16, 0.16, 0.16], p: [0, 0.16, 0.46], c: 0x6ad7ff, glow: true }, // top sphere
+    { s: [0.06, 0.2, 0.06], p: [0, 0.06, 0.46], c: 0x9aa6c0 }, // shaft
+    { s: [0.05, 0.05, 0.22], p: [-0.09, 0.04, 0.5], c: 0xbfeaff, glow: true }, // arc prong
+    { s: [0.05, 0.05, 0.22], p: [0.09, 0.04, 0.5], c: 0xbfeaff, glow: true }, // arc prong
+    { s: [0.11, 0.2, 0.12], p: [0, -0.15, 0.06], c: 0x202030 },
   ],
 };
 

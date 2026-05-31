@@ -145,6 +145,36 @@ export const WEAPONS: Record<string, WeaponDef> = {
     pierce: 99, splashRadius: 5.5, splashDamage: 300, knockback: 22,
     bulletColor: 0x8fcf6f, bulletScale: 3.0, wonder: true,
   },
+
+  // ---- variety weapons (reuse existing bullet behaviors: pierce/bounce/homing/
+  // splash — no new bullet engine). Tuned to sit inside the existing envelope. ----
+  // Railspike: a precision line-piercer. One fast, dead-accurate slug that punches
+  // through a whole column of zombies. Marksman-class single-target with crowd
+  // reach via pierce, paid for with a small mag + slow fire.
+  railspike: {
+    id: "railspike", name: "Railspike", style: "rail", damage: 150, fireRate: 1.2,
+    magSize: 6, reserve: 48, pellets: 1, spread: 0.0,
+    bulletSpeed: 120, auto: false, reloadTime: 1.9,
+    pierce: 8, bulletColor: 0x7fe6ff, bulletScale: 1.1, wonder: true,
+  },
+  // Boomeranger: a returning-blade thrower. The projectile ricochets between
+  // nearby enemies (bounces) so a single throw clears a knot, and shoves on hit.
+  // Mid damage, slow-ish, generous reserve — a satisfying crowd tool, not a DPS king.
+  boomeranger: {
+    id: "boomeranger", name: "Boomeranger", style: "boomerang", damage: 58, fireRate: 1.8,
+    magSize: 8, reserve: 72, pellets: 1, spread: 0.03,
+    bulletSpeed: 46, auto: false, reloadTime: 1.7,
+    bounces: 4, knockback: 6, bulletColor: 0xd9a23a, bulletScale: 1.1,
+  },
+  // Tesla Coil: a chain-lightning auto. Light, fast bolts that home onto enemies
+  // and arc to a couple more on contact — low per-hit damage that adds up against
+  // packs. The chain (homing + bounces) is the identity; mag/reserve keep it honest.
+  teslacoil: {
+    id: "teslacoil", name: "Tesla Coil", style: "tesla", damage: 18, fireRate: 8,
+    magSize: 36, reserve: 240, pellets: 1, spread: 0.04,
+    bulletSpeed: 70, auto: true, reloadTime: 1.8,
+    homing: 1, bounces: 2, bulletColor: 0x6ad7ff, bulletScale: 0.7,
+  },
 };
 
 /** Look up a weapon's gun style by display name (handles the "X +" PaP variant). */
@@ -163,9 +193,9 @@ export function spreadForWeaponName(name: string): { spread: number; pellets: nu
 }
 
 /** Normal weapons the Mystery Box can hand out (incl. the cheaper wacky ones). */
-export const BOX_POOL = ["buzzgun", "scattershot", "boomstick", "marksman", "confetti", "spud", "fishslap", "chicken", "beejar"];
+export const BOX_POOL = ["buzzgun", "scattershot", "boomstick", "marksman", "confetti", "spud", "fishslap", "chicken", "beejar", "boomeranger", "teslacoil"];
 /** The crazy ones — rolled rarely by the box. */
-export const WONDER_POOL = ["arc", "singularity", "pyroclasm", "quacker"];
+export const WONDER_POOL = ["arc", "singularity", "pyroclasm", "quacker", "railspike"];
 
 export interface SpawnOpts {
   speed: number;
