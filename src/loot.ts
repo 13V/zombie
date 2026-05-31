@@ -8,7 +8,7 @@
  * spent in-game. No real value is created or moved by this file.
  */
 
-import { CHEST } from "./config";
+import { CHEST, PITY } from "./config";
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
 
@@ -58,6 +58,47 @@ export function rollRarity(luck = 0): Rarity {
     x -= w;
   }
   return "common";
+}
+
+/** Rarity tier index 0..4 (common→legendary), matching RARITIES iteration order. */
+const RARITY_ORDER: Rarity[] = ["common", "uncommon", "rare", "epic", "legendary"];
+export function rarityTier(r: Rarity): number {
+  return RARITY_ORDER.indexOf(r);
+}
+
+// ── Pity / bad-luck protection ───────────────────────────────────────────────
+// Tracks how many loot rolls have passed without a rare+ and feeds a growing
+// `luck` into rollRarity so a long dry streak gently improves the odds, resetting
+// when a rare+ finally lands. This is PURELY a feel/cosmetic lever on the closed
+// soft-currency loot table. DO NOT tie pity to the future token bridge or any
+// cashable balance (see this file's header note) — it must never mint value.
+let _dryStreak = 0;
+
+/** Current pity luck bonus from the active dry streak (clamped). */
+export function pityLuck(): number {
+  return Math.min(PITY.maxLuck, _dryStreak * PITY.perKillLuck);
+}
+
+/** Update the dry streak after a roll resolves: reset on rare+, else grow. */
+export function notePityResult(r: Rarity): void {
+  if (rarityTier(r) >= PITY.rareThreshold) _dryStreak = 0;
+  else _dryStreak++;
+}
+
+/**
+ * Roll a rarity with bad-luck protection folded in: applies the current pity
+ * luck on top of any caller-supplied `luck`, then updates the streak. Use this
+ * for ordinary kill drops so dry spells self-correct. NON-CASHABLE.
+ */
+export function rollRarityPity(luck = 0): Rarity {
+  const r = rollRarity(luck + pityLuck());
+  notePityResult(r);
+  return r;
+}
+
+/** Reset pity (e.g. on a new run). */
+export function resetPity(): void {
+  _dryStreak = 0;
 }
 
 /** Create a fresh loot item of a given (or rolled) rarity. */

@@ -38,7 +38,7 @@ import { loadSave, writeSave, SaveData } from "./save";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
-import { makeItem, rollRarity, rarityColorHex, RARITIES, LootItem } from "./loot";
+import { makeItem, rollRarity, rollRarityPity, resetPity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, warmServer, getServerUrl, setServerUrl } from "./net";
 import { TouchControls, isTouchDevice } from "./touchControls";
@@ -386,6 +386,7 @@ class Game implements GameApi {
     this.hud.setPowerups([]);
     this.shake = 0;
     this.combo.reset();
+    resetPity(); // fresh bad-luck-protection streak each run (non-cashable)
     this.floaters.clear();
     this.drops.clear();
     this.explosions.clear();
@@ -2383,7 +2384,8 @@ class Game implements GameApi {
       if (wasBoss) {
         this.grantLoot(makeItem(rollRarity(2))); // boss → biased toward rare+
       } else if (Math.random() < 0.03 + this.mods.dropChance * 0.25) {
-        this.grantLoot(makeItem());
+        // pity-aware rarity: dry rare-less streaks self-correct (non-cashable)
+        this.grantLoot(makeItem(rollRarityPity()));
       }
       if (wasBoss) {
         this.hud.hideBoss();
