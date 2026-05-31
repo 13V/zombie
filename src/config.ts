@@ -383,3 +383,92 @@ export const DECALS = {
   scorchScale: 1.1, // diameter of the flat scorch decal under the corpse
   scorchOpacity: 0.5,
 } as const;
+
+// ── PET DEPTH ──
+// Depth layer on top of the existing PETS_TUNING envelope: per-role combat
+// "verbs", same-role/combo squad synergies, dupe→star ascension, and the
+// shiny/collection cosmetic chase. EVERYTHING here is SMALL + capped and lives
+// strictly inside the last balance pass's late-game ceiling (squad cap 5,
+// buffCap 2.5, no one-shots). NON-CASHABLE: the collection reward pays soft
+// essence only — never tokens, never the gold↔token bridge.
+export const PET_DEPTH = {
+  /** Per-combatRole behavior knobs (updatePets/firePetAbility). All tiny + flat
+   *  so they read as a "verb", never a power spike. */
+  roles: {
+    tank: {
+      orbitRange: 4, // +engage range (units) — soaks/draws fire a bit wider
+      aggroPull: 1.0, // pets target zombies near the tank first (handled implicitly via range)
+    },
+    drainer: {
+      healPerKill: 0.6, // HP restored to the player per kill this pet lands
+      healCapPerRound: 120, // hard cap on drainer heal per round (anti-immortal)
+    },
+    bomber: {
+      bonusSplashRadius: 0.8, // added to the bullet's splashRadius
+      bonusSplashFrac: 0.35, // splash damage = bullet damage * this (if it had none)
+    },
+    sniper: {
+      bonusRange: 4, // +engage range
+      critRange: 14, // beyond this distance, the shot is flagged a crit
+      critMul: 1.5, // crit damage multiplier on distant shots (modest)
+    },
+    harvester: {
+      goldPerKill: 1, // flat bonus gold per kill this pet lands
+      goldCapPerRound: 400, // cap on harvester bonus gold per round
+    },
+    saboteur: {
+      slow: 0.25, // brief slow fraction applied to what it hits/kills near
+      slowDur: 1.2, // seconds
+    },
+  },
+
+  /** Squad synergies: when the ACTIVE squad has 2+ of a combatRole (or a defined
+   *  combo) grant a small squad-wide bonus. The TOTAL synergy multiplier is
+   *  hard-clamped by `synergyDamageCap` so stacking comps can't break the
+   *  buffCap envelope. */
+  synergy: {
+    /** Per-pair (2+) same-role bonuses. */
+    twoSnipers: { range: 3 }, // 2+ snipers → +range for all combat pets
+    twoBombers: { splashFrac: 0.2 }, // 2+ bombers → +splash on all combat pets
+    twoTanks: { damageMul: 0.08 }, // 2+ tanks → small squad damage (held line)
+    twoDrainers: { lifesteal: 0.4 }, // 2+ drainers → extra heal/kill squad-wide
+    twoHarvesters: { gold: 1 }, // 2+ harvesters → +gold/kill squad-wide
+    twoSaboteurs: { slow: 0.1 }, // 2+ saboteurs → deeper slow
+    /** Named combos (one of each). */
+    tankDrainer: { lifesteal: 0.5 }, // tank + drainer → +lifesteal (front-line vamp)
+    sniperSaboteur: { critMul: 0.15 }, // sniper + saboteur → +crit on slowed targets
+    bomberHarvester: { gold: 1 }, // bomber + harvester → gold from splash kills
+    /** Hard cap on the cumulative synergy DAMAGE multiplier (stays under buffCap). */
+    synergyDamageCap: 1.25,
+    /** Hard cap on cumulative synergy lifesteal (HP/kill) so it never trivializes. */
+    synergyLifestealCap: 2.0,
+  },
+
+  /** Dupe → star ascension. Buying a pet you already own converts the purchase
+   *  into a star (stored in petProgress[id]._stars). Stars unlock skill bumps,
+   *  NOT raw stat creep — capped at `maxStars`. */
+  stars: {
+    maxStars: 5,
+    /** Damage bonus per star (flat, small): +`dmgPerStar` each star, capped. */
+    dmgPerStar: 0.04, // +4%/star → +20% at 5★ (well within envelope)
+    /** Star thresholds that unlock an extra role kicker (see updatePets). */
+    roleKickAt: 3, // 3★+ : the pet's role behavior gets a small bump
+    eliteKickAt: 5, // 5★ : a second, capped kicker
+    /** Cost to convert a dupe into a star = base pet cost * this. */
+    convertCostMul: 1.0,
+  },
+
+  /** Shiny/chroma cosmetic chase + collection-completion reward. PURELY visual
+   *  + soft-currency; never affects power or pays tokens. */
+  cosmetic: {
+    shinyOdds: 0.02, // 2% chance a freshly-bought pet rolls shiny (petProgress._shiny=1)
+    /** Collection-completion milestones: own N distinct pets → soft essence. */
+    milestones: [
+      { own: 10, essence: 5 },
+      { own: 20, essence: 12 },
+      { own: 30, essence: 25 },
+      { own: 40, essence: 50 },
+      { own: 50, essence: 100 },
+    ] as { own: number; essence: number }[],
+  },
+} as const;

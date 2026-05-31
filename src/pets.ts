@@ -32,13 +32,54 @@ export type PetShape =
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic";
 
 /**
+ * Functional "verb" for a combat pet (distinct from the non-combat `role`).
+ * Each gives a SMALL, capped on-hit/on-kill behavior in updatePets (not just a
+ * damage number) so the roster stops being stat-clones. Pokémon-style roles:
+ *  - tank: larger orbit + draws fire (bigger engage range, soaks)
+ *  - drainer: heals the player a hair on each kill it lands
+ *  - bomber: tiny bonus splash on its bullets
+ *  - sniper: longer range + crit-flag on distant targets
+ *  - harvester: tiny bonus gold on each kill it lands
+ *  - saboteur: applies a brief slow to what it hits
+ */
+export type CombatRole = "tank" | "drainer" | "bomber" | "sniper" | "harvester" | "saboteur";
+
+/** Per-role tuning. SMALL + capped — see ROLE_BEHAVIOR caps in main.ts/config. */
+export const ROLE_LABEL: Record<CombatRole, string> = {
+  tank: "Tank", drainer: "Drainer", bomber: "Bomber",
+  sniper: "Sniper", harvester: "Harvester", saboteur: "Saboteur",
+};
+export const ROLE_ICON: Record<CombatRole, string> = {
+  tank: "🛡", drainer: "❤", bomber: "💥", sniper: "🎯", harvester: "⛁", saboteur: "🕸",
+};
+
+/**
  * Signature special move. Every Epic+ pet has one — a periodic, screen-shaking
  * effect on top of its normal fire. Legendary tiers hit harder/wider and Mythic
  * abilities are deliberately overpowered (near board-clears, fountains of gold).
  */
+/**
+ * Ability archetype. Slay-the-Spire-style split:
+ *  - PAYOFF kinds (nova/volley/chain/meteor/smite/execute/jackpot/obliterate)
+ *    are immediate bursts — the classic "spend everything now" moment.
+ *  - ENGINE kinds build a STACKING resource each cast that empowers the pet's
+ *    own fire (or the squad), so they feel like a slow-burn snowball rather than
+ *    a bigger number. Engines stay inside the late-game power envelope via a hard
+ *    stack cap + a small per-stack bonus.
+ */
+export type AbilityKind =
+  | "nova" | "volley" | "chain" | "meteor" | "smite" | "execute" | "jackpot" | "obliterate"
+  // ── engine archetypes ──
+  | "overcharge" // builds charge stacks → +pet damage (capped), discharges a small nova at max
+  | "siphon" // builds stacks → +lifesteal & a trickle heal on cast (drain engine)
+  | "resonance"; // builds stacks → +crit chance/pierce flavor; small shard burst on cast
+
+/** True for the stacking "engine" archetypes. */
+export const ENGINE_KINDS: ReadonlySet<AbilityKind> = new Set<AbilityKind>(["overcharge", "siphon", "resonance"]);
+
 export interface PetAbility {
   name: string;
-  kind: "nova" | "volley" | "chain" | "meteor" | "smite" | "execute" | "jackpot" | "obliterate";
+  kind: AbilityKind;
   cd: number; // seconds between activations
   power: number; // base damage (further scaled by pet level + totem buff)
   count?: number; // projectiles / chain jumps / meteor strikes
@@ -47,6 +88,9 @@ export interface PetAbility {
   heal?: number; // HP restored to the player on proc
   gold?: number; // bonus gold minted on proc (jackpot)
   frac?: number; // execute: instakill zombies under this HP fraction
+  // ── engine archetype fields ──
+  perStack?: number; // engine: bonus per stack (damage frac / lifesteal / etc.)
+  maxStacks?: number; // engine: hard cap on accumulated stacks
 }
 
 /**
@@ -104,6 +148,9 @@ export interface PetDef {
   role?: "banker" | "buffer";
   /** banker: gold per second passively. buffer: +damage fraction to other pets. */
   roleValue?: number;
+  /** Functional combat "verb" — drives a small capped on-hit/on-kill behavior in
+   *  updatePets (separate from the non-combat `role`). Combat pets only. */
+  combatRole?: CombatRole;
   /** At `evolveLevel`, the pet transforms into the `evolvesTo` def (bigger,
    *  stronger model + new behavior). The big idle payoff. */
   evolveLevel?: number;
@@ -268,34 +315,80 @@ export const PETS: PetDef[] = [
  * roster entries stay readable. Power ramps hard by tier — Mythic moves are
  * meant to feel broken (that's the point of grinding to them).
  */
+// Engine/payoff split (Slay-the-Spire-style): ~40% of Epic+ abilities are ENGINE
+// archetypes (overcharge/siphon/resonance) that build a capped stacking resource
+// to empower the pet's fire — distinct FEEL, not bigger numbers. Engine `power`
+// is intentionally LOWER (the value is in the snowball, not the cast) so total
+// output stays inside the last balance pass's late-game envelope. The rest stay
+// PAYOFF bursts. 8 of 20 Epic+ = 40% engine.
 const PET_ABILITIES: Record<string, PetAbility> = {
   // ── EPIC ──
-  specter: { name: "Soul Nova", kind: "nova", cd: 8, power: 120, count: 10, radius: 1.6 },
-  thunder_orb: { name: "Chain Lightning", kind: "chain", cd: 6, power: 110, count: 8 },
-  inferno_drake: { name: "Meteor Storm", kind: "meteor", cd: 8, power: 220, count: 5, radius: 2.6 },
-  prism_totem: { name: "Prism Nova", kind: "nova", cd: 7, power: 90, count: 12 },
-  heavy_turret: { name: "Barrage", kind: "volley", cd: 7, power: 130, count: 14 },
-  void_eye: { name: "Void Gaze", kind: "smite", cd: 8, power: 260, radius: 4, slow: 0.5 },
-  golden_piggy: { name: "Jackpot", kind: "jackpot", cd: 9, power: 60, count: 8, gold: 250 },
-  seraph_star: { name: "Starfall", kind: "nova", cd: 8, power: 120, count: 12, heal: 8 },
-  crystal_wyrm: { name: "Shard Burst", kind: "nova", cd: 7, power: 140, count: 14 },
-  solar_phoenix: { name: "Flare Nova", kind: "nova", cd: 7, power: 150, count: 12, radius: 1.8 },
+  specter: { name: "Soul Nova", kind: "nova", cd: 8, power: 120, count: 10, radius: 1.6 }, // payoff
+  thunder_orb: { name: "Overcharge", kind: "overcharge", cd: 4, power: 60, perStack: 0.05, maxStacks: 6, radius: 1.4 }, // ENGINE
+  inferno_drake: { name: "Meteor Storm", kind: "meteor", cd: 8, power: 220, count: 5, radius: 2.6 }, // payoff
+  prism_totem: { name: "Prism Resonance", kind: "resonance", cd: 5, power: 70, perStack: 0.06, maxStacks: 5, count: 8 }, // ENGINE
+  heavy_turret: { name: "Barrage", kind: "volley", cd: 7, power: 130, count: 14 }, // payoff
+  void_eye: { name: "Void Siphon", kind: "siphon", cd: 5, power: 90, perStack: 0.05, maxStacks: 5, radius: 3, slow: 0.4 }, // ENGINE
+  golden_piggy: { name: "Jackpot", kind: "jackpot", cd: 9, power: 60, count: 8, gold: 250 }, // payoff
+  seraph_star: { name: "Starfall", kind: "nova", cd: 8, power: 120, count: 12, heal: 8 }, // payoff
+  crystal_wyrm: { name: "Resonant Shards", kind: "resonance", cd: 5, power: 90, perStack: 0.06, maxStacks: 6, count: 10 }, // ENGINE
+  solar_phoenix: { name: "Flare Nova", kind: "nova", cd: 7, power: 150, count: 12, radius: 1.8 }, // payoff
   // ── LEGENDARY ──
-  reaper_lord: { name: "Reap", kind: "execute", cd: 8, power: 240, radius: 6, frac: 0.35 },
-  celestial_dragon: { name: "Starfire Rain", kind: "meteor", cd: 8, power: 380, count: 9, radius: 3 },
-  divine_totem: { name: "Judgment", kind: "smite", cd: 9, power: 360, radius: 7, heal: 15 },
-  omni_cannon: { name: "Mega Barrage", kind: "volley", cd: 8, power: 320, count: 26 },
-  galaxy_orb: { name: "Supernova", kind: "nova", cd: 7, power: 240, count: 24, radius: 1.6 },
-  fortune_dragon: { name: "Gold Rush", kind: "jackpot", cd: 9, power: 200, count: 16, gold: 1200 },
-  eclipse_phoenix: { name: "Eclipse", kind: "smite", cd: 9, power: 420, radius: 8, slow: 0.4 },
-  // ── MYTHIC (overpowered on purpose) ──
-  cosmic_serpent: { name: "Cosmic Storm", kind: "nova", cd: 7, power: 520, count: 36, radius: 1.6, slow: 0.5 },
-  midas_golem: { name: "Midas Touch", kind: "jackpot", cd: 9, power: 600, count: 24, gold: 5000, radius: 9 },
-  void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 1200, radius: 6.5 },
+  reaper_lord: { name: "Soul Siphon", kind: "siphon", cd: 5, power: 160, perStack: 0.06, maxStacks: 6, radius: 4 }, // ENGINE
+  celestial_dragon: { name: "Starfire Rain", kind: "meteor", cd: 8, power: 380, count: 9, radius: 3 }, // payoff
+  divine_totem: { name: "Judgment", kind: "smite", cd: 9, power: 360, radius: 7, heal: 15 }, // payoff
+  omni_cannon: { name: "Mega Barrage", kind: "volley", cd: 8, power: 320, count: 26 }, // payoff
+  galaxy_orb: { name: "Stellar Overcharge", kind: "overcharge", cd: 4, power: 130, perStack: 0.05, maxStacks: 7, radius: 1.6 }, // ENGINE
+  fortune_dragon: { name: "Gold Rush", kind: "jackpot", cd: 9, power: 200, count: 16, gold: 1200 }, // payoff
+  eclipse_phoenix: { name: "Eclipse", kind: "smite", cd: 9, power: 420, radius: 8, slow: 0.4 }, // payoff
+  // ── MYTHIC ──
+  cosmic_serpent: { name: "Cosmic Resonance", kind: "resonance", cd: 5, power: 220, perStack: 0.06, maxStacks: 8, count: 14, slow: 0.4 }, // ENGINE
+  midas_golem: { name: "Midas Touch", kind: "jackpot", cd: 9, power: 600, count: 24, gold: 5000, radius: 9 }, // payoff
+  void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 1200, radius: 6.5 }, // payoff
 };
 for (const p of PETS) {
   const a = PET_ABILITIES[p.id];
   if (a) p.ability = a;
+}
+
+/**
+ * Combat-role ("verb") map — every COMBAT pet gets one so it plays distinctly,
+ * not just by its damage number. Bankers/buffers are non-combat and stay out.
+ * Roles are inferred from each pet's fantasy: piercing line-fire = sniper,
+ * splash = bomber, homing/eye/ghost = saboteur (debuff), cats/serpents that
+ * lifesteal-flavored = drainer, sturdy golems/turrets = tank, gold-tinged
+ * shooters = harvester. Evolutions inherit their base pet's role below.
+ */
+const COMBAT_ROLES: Record<string, CombatRole> = {
+  // COMMON
+  ladybug: "drainer", pebble: "bomber", beebot: "saboteur", sproutling: "harvester",
+  firefly: "sniper", tadpole: "saboteur", batling: "saboteur", wisp: "sniper",
+  slime_g: "bomber",
+  // UNCOMMON
+  kitling: "drainer", turret: "tank", toadstool: "bomber", crystalite: "sniper",
+  peeper: "saboteur", scout_drone: "sniper", starlet: "harvester", garden_snake: "drainer",
+  emberling: "bomber",
+  // RARE
+  ghost: "saboteur", sapphire_shard: "sniper", dragon: "bomber", shadow_cat: "drainer",
+  stone_golem: "tank", lil_saucer: "saboteur", phoenix_chick: "harvester", nova_star: "bomber",
+  // EPIC
+  specter: "saboteur", thunder_orb: "sniper", inferno_drake: "bomber", heavy_turret: "tank",
+  void_eye: "saboteur", seraph_star: "drainer", crystal_wyrm: "sniper", solar_phoenix: "bomber",
+  // LEGENDARY
+  reaper_lord: "drainer", celestial_dragon: "bomber", omni_cannon: "tank", galaxy_orb: "sniper",
+  eclipse_phoenix: "bomber",
+  // MYTHIC
+  cosmic_serpent: "saboteur", void_sovereign: "bomber",
+};
+for (const p of PETS) {
+  const r = COMBAT_ROLES[p.id];
+  if (r) p.combatRole = r;
+}
+// Hand-authored early evolutions inherit their base pet's combat role.
+for (const evo of PET_EVOLUTIONS) {
+  const baseId = evo.id.replace(/_evo$/, "");
+  const r = COMBAT_ROLES[baseId];
+  if (r && !evo.combatRole) evo.combatRole = r;
 }
 
 // ─────────────────────────── Evolution trials ───────────────────────────
@@ -460,17 +553,41 @@ export class Pet {
   private abilityTimer = 0; // counts down to the next signature-ability proc
   level: number;
   private baseScale = 0.7;
+  /** Engine-ability stacks (overcharge/siphon/resonance). Grow on each cast,
+   *  capped by ability.maxStacks; empower the pet's normal fire. Decays slowly
+   *  so the snowball is real but not permanent. */
+  engineStacks = 0;
+  /** Tanks orbit a touch wider (they "draw fire" out front of the squad). */
+  private readonly orbitScale: number;
+  /** Cosmetic shiny/chroma variant (purely visual — sparkle + hue cycle). */
+  readonly shiny: boolean;
+  private shinyMesh?: THREE.Mesh; // extra sparkle node, shiny only
+  private shinyT = 0;
 
-  constructor(readonly def: PetDef, private orbitAngle: number, level = 1) {
+  constructor(readonly def: PetDef, private orbitAngle: number, level = 1, shiny = false) {
     this.level = Math.max(1, level);
     this.cd = Math.random() * def.interval;
     // stagger first cast so a fresh squad doesn't all fire abilities in sync
     if (def.ability) this.abilityTimer = def.ability.cd * (0.4 + Math.random() * 0.6);
     this.bob = Math.random() * Math.PI * 2;
     this.flap = Math.random() * Math.PI * 2;
+    this.orbitScale = def.combatRole === "tank" ? 1.35 : 1;
+    this.shiny = shiny;
     this.group.add(this.body);
     this.build();
+    if (this.shiny) this.buildShiny();
     this.applyLevelVisuals();
+  }
+
+  /** Shiny cosmetic: a bright sparkle crown above the body, hue-cycled in update.
+   *  Reuses SHARED_UNIT_BOX (no new geometry) per the perf-agent's pooling note. */
+  private buildShiny() {
+    const m = new THREE.Mesh(SHARED_UNIT_BOX, glowMaterial(0xffffff, 1.6));
+    m.scale.set(0.12, 0.12, 0.12);
+    m.userData.bw = 0.12; m.userData.bh = 0.12; m.userData.bd = 0.12;
+    m.position.set(0, 0.5, 0);
+    this.body.add(m);
+    this.shinyMesh = m;
   }
 
   /** Pet fires faster + (in main) hits harder as it levels. */
@@ -479,6 +596,13 @@ export class Pet {
   }
   get damageMul(): number {
     return petDamageMul(this.level);
+  }
+  /** Engine archetype: +perStack * stacks to the pet's fire (1 if not an engine).
+   *  Capped implicitly because engineStacks is clamped to ability.maxStacks. */
+  get engineMul(): number {
+    const ab = this.def.ability;
+    if (!ab || !ENGINE_KINDS.has(ab.kind) || !ab.perStack) return 1;
+    return 1 + this.engineStacks * ab.perStack;
   }
 
   /** Visible growth: pet gets bigger + glows brighter with level. */
@@ -817,15 +941,17 @@ export class Pet {
   /**
    * Update orbit + animation + fire. Returns a shot when it fires this frame.
    */
-  update(dt: number, playerX: number, playerZ: number, idx: number, total: number, target: { x: number; z: number } | null, fireRateMul = 1): { ox: number; oz: number; dx: number; dz: number } | null {
+  update(dt: number, playerX: number, playerZ: number, idx: number, total: number, target: { x: number; z: number } | null, fireRateMul = 1, engageRange?: number): { ox: number; oz: number; dx: number; dz: number; dist: number } | null {
     // orbit around the player
     this.orbitAngle += dt * 1.4;
     const slot = (idx / Math.max(1, total)) * Math.PI * 2;
-    const r = 1.8;
+    const r = 1.8 * this.orbitScale;
     const ox = playerX + Math.cos(this.orbitAngle + slot) * r;
     const oz = playerZ + Math.sin(this.orbitAngle + slot) * r;
     this.bob += dt * 4;
     this.group.position.set(ox, 1.4 + Math.sin(this.bob) * 0.12, oz);
+    // engine stacks bleed off slowly so the snowball must be maintained by casting.
+    if (this.engineStacks > 0) this.engineStacks = Math.max(0, this.engineStacks - dt * 0.25);
 
     // ---- idle animation ----
     this.flap += dt * (this.wingL ? 26 : 8); // bees/dragons flap fast
@@ -851,6 +977,17 @@ export class Pet {
       const f = this.flashLife / 0.12;
       this.setMuzzleScale(0.01 + f * 1.1);
     }
+    // shiny sparkle: hue-cycle + twinkle the crown (cosmetic only).
+    if (this.shinyMesh) {
+      this.shinyT += dt * 2.2;
+      const mat = this.shinyMesh.material as THREE.MeshStandardMaterial;
+      const hue = (this.shinyT * 0.15) % 1;
+      mat.color.setHSL(hue, 0.9, 0.7);
+      mat.emissive.setHSL(hue, 0.9, 0.6);
+      const tw = 0.09 + (Math.sin(this.shinyT * 3) + 1) * 0.05;
+      this.shinyMesh.scale.set(tw, tw, tw);
+      this.shinyMesh.position.y = 0.5 + Math.sin(this.shinyT) * 0.04;
+    }
 
     // face + fire at target
     this.cd -= dt;
@@ -859,12 +996,15 @@ export class Pet {
       const dz = target.z - oz;
       const dist = Math.hypot(dx, dz);
       this.group.rotation.y = Math.atan2(dx, dz);
-      if (dist <= this.def.range && this.cd <= 0) {
+      // engageRange lets callers widen the engage band per-role (tank/sniper) and
+      // via squad synergy; falls back to the def's own range.
+      const reach = engageRange ?? this.def.range;
+      if (dist <= reach && this.cd <= 0) {
         // your Fire Rate upgrades make pets shoot faster too (same as your gun)
         this.cd = this.interval / Math.max(0.1, fireRateMul);
         this.onFire();
         const len = dist || 1;
-        return { ox, oz, dx: dx / len, dz: dz / len };
+        return { ox, oz, dx: dx / len, dz: dz / len, dist };
       }
     }
     return null;

@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, ELITE, PETS_TUNING, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY } from "./config";
+import { CAMERA, COSTS, ELITE, PETS_TUNING, PET_DEPTH, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY } from "./config";
 import { glowMaterial } from "./palette";
 import { Input } from "./input";
 import { Arena } from "./arena";
@@ -33,7 +33,7 @@ import { loadHouse, saveHouse, getHouseMeta, likeHouse, localOwnerId } from "./h
 import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
-import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
+import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
 import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
@@ -174,6 +174,14 @@ class Game implements GameApi {
   private _runGoldStart = 0; // goldEarned at this run's start (for the "earn gold" daily)
   private _bankerRoundGold = 0; // gold minted by bankers this round (per-round cap)
   private _bankerRound = -1; // round the above was last reset for
+  // ── PET DEPTH: role/synergy per-round accumulators (drainer heal + harvester
+  // gold are capped per round; reset when the round changes). _petKillMark tracks
+  // the squad kill delta each pet-frame so on-kill role bonuses stay tied to real
+  // kills without touching the shared bullet/damageZombie path. ──
+  private _petKillMark = 0; // runStats.kills at the last updatePets frame
+  private _drainerRoundHeal = 0; // HP healed by drainers this round (cap)
+  private _harvesterRoundGold = 0; // bonus gold from harvesters this round (cap)
+  private _petDepthRound = -1; // round the two accumulators above were reset for
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
@@ -439,6 +447,11 @@ class Game implements GameApi {
     this.nukeCharge = 1;
     this.runStats = blankRunStats();
     this._runCasts = {};
+    // PET DEPTH: reset on-kill role accumulators so a new run starts clean.
+    this._petKillMark = 0;
+    this._drainerRoundHeal = 0;
+    this._harvesterRoundGold = 0;
+    this._petDepthRound = -1;
     this.combo.windowBonus = this.mods.comboWindowBonus;
     this.hud.setPowerups([]);
     this.shake = 0;
@@ -502,6 +515,7 @@ class Game implements GameApi {
     );
 
     // Pets: buy companions with gold (the gold sink + late-game chaos).
+    const activeIds = new Set(this.pets.map((pp) => pp.def.id));
     this.hud.renderPets(
       this.save.gold,
       PETS.map((base) => {
@@ -526,6 +540,13 @@ class Game implements GameApi {
             }),
           ];
         }
+        // ── PET DEPTH: role / star-ascension / shiny display + dupe-convert hook ──
+        const role = p.combatRole;
+        const stars = this.petStars(ownId);
+        const maxStars = PET_DEPTH.stars.maxStars;
+        const shiny = (this.save.petProgress[ownId]?._shiny ?? 0) > 0;
+        const starCost = Math.round(base.cost * PET_DEPTH.stars.convertCostMul);
+        const canStar = owned && stars < maxStars; // re-buying mints a star (dupe)
         return {
           id: ownId, name: p.name, desc: p.desc, cost: base.cost,
           color: `#${p.color.toString(16).padStart(6, "0")}`,
@@ -536,10 +557,31 @@ class Game implements GameApi {
           rarityColor: RARITY_COLOR[rarity],
           ability: p.ability?.name ?? base.ability?.name,
           trial,
+          roleIcon: role ? ROLE_ICON[role] : undefined,
+          roleLabel: role ? ROLE_LABEL[role] : undefined,
+          stars, maxStars, shiny,
+          canStar, starCost: canStar ? starCost : undefined,
+          active: activeIds.has(ownId),
         };
       }),
       (id) => this.buyOrLevelPet(id),
+      this.petCollectionInfo(),
+      (id) => this.convertDupeToStar(id),
     );
+  }
+
+  /** Distinct owned pet count (counts an evolved pet as its slot). */
+  private petCollectedCount(): number {
+    return this.save.pets.length;
+  }
+
+  /** Squad-role tally + synergy bonuses + collection progress for the Pets tab. */
+  private petCollectionInfo() {
+    const sq = this.petSquadInfo();
+    const collected = this.petCollectedCount();
+    const total = PETS.length;
+    const next = PET_DEPTH.cosmetic.milestones.find((m) => collected < m.own);
+    return { roles: sq.roles, bonuses: sq.bonuses, collected, total, nextMilestone: next };
   }
 
   /** Buy a companion pet with gold; it joins you on the next run (and this one). */
@@ -555,6 +597,16 @@ class Game implements GameApi {
       this.save.gold -= def.cost;
       this.save.pets.push(id);
       this.save.petLevels[id] = 1;
+      // Cosmetic shiny/chroma chase: low-odds roll on first acquisition. Stored as
+      // petProgress[id]._shiny (reserved numeric key). PURELY visual (tint/sparkle
+      // in pets.ts Pet.build/update) — never affects power, never cashable.
+      if (Math.random() < PET_DEPTH.cosmetic.shinyOdds) {
+        (this.save.petProgress[id] ??= {})._shiny = 1;
+        this.hud.toast(`✨ SHINY ${def.name}! ✨`);
+      }
+      // Collection-completion milestone: a one-time soft-essence reward when a new
+      // distinct pet crosses a threshold count. NON-CASHABLE (essence only).
+      this.grantCollectionMilestones();
     } else {
       const level = this.save.petLevels[id] ?? 1;
       const cost = petLevelCost(baseForCost, level);
@@ -570,6 +622,52 @@ class Game implements GameApi {
     writeSave(this.save);
     this.audio.powerup();
     if (!owned) this.spawnPets();
+    this.renderShop();
+  }
+
+  /** Pay any newly-crossed collection-completion milestone in SOFT essence.
+   *  The highest `own` threshold already rewarded is persisted under a reserved
+   *  pseudo-pet-id `petProgress["_collection"].paid` (save.ts sanitizes it as a
+   *  numeric counter — no save.ts edit needed). NON-CASHABLE: essence only. */
+  private grantCollectionMilestones() {
+    const collected = this.petCollectedCount();
+    const meta = (this.save.petProgress["_collection"] ??= {});
+    const paid = meta.paid ?? 0;
+    let totalEssence = 0;
+    let highest = paid;
+    for (const m of PET_DEPTH.cosmetic.milestones) {
+      if (collected >= m.own && m.own > paid) {
+        totalEssence += m.essence;
+        highest = Math.max(highest, m.own);
+      }
+    }
+    if (totalEssence > 0) {
+      meta.paid = highest;
+      this.save.essence += totalEssence;
+      this.hud.toast(`✦ Collection ${collected}/${PETS.length} — +${totalEssence} essence!`);
+    }
+  }
+
+  /** Dupe → STAR ascension. Buying a copy of a pet you already own converts the
+   *  gold into a star (petProgress[id]._stars, capped at PET_DEPTH.stars.maxStars).
+   *  Stars give a small flat damage bump (dmgPerStar) AND, at thresholds, a role-
+   *  behavior kicker (see updatePets roleKickAt/eliteKickAt) — skills, not raw
+   *  stat creep. NON-CASHABLE: cost is gold only; nothing pays out tokens. */
+  private convertDupeToStar(id: string) {
+    if (!this.save.pets.includes(id)) { this.audio.deny(); return; }
+    const stars = this.petStars(id);
+    if (stars >= PET_DEPTH.stars.maxStars) { this.audio.deny(); return; }
+    // Cost keys off the base pet's price (evolved forms have cost 0).
+    const base = PETS.find((p) => p.evolvesTo === id) ?? findAnyPet(id);
+    const cost = Math.round((base?.cost ?? 0) * PET_DEPTH.stars.convertCostMul);
+    if (this.save.gold < cost) { this.audio.deny(); return; }
+    this.save.gold -= cost;
+    const pr = (this.save.petProgress[id] ??= {});
+    pr._stars = stars + 1;
+    writeSave(this.save);
+    this.audio.levelUp();
+    const liveName = findAnyPet(id)?.name ?? "Pet";
+    this.hud.toast(`★ ${liveName} ascended to ${pr._stars}★!`);
     this.renderShop();
   }
 
@@ -612,10 +710,19 @@ class Game implements GameApi {
     const idx = this.save.pets.indexOf(id);
     if (idx < 0) return;
     const lvl = this.save.petLevels[id] ?? 1;
+    // Carry the cosmetic/ascension reserved keys across evolution so stars + shiny
+    // survive the form swap (trial counters are reset — the evo no longer evolves).
+    const stars = this.save.petProgress[id]?._stars ?? 0;
+    const shiny = this.save.petProgress[id]?._shiny ?? 0;
     this.save.pets[idx] = def.evolvesTo;
     this.save.petLevels[def.evolvesTo] = lvl;
     delete this.save.petLevels[id];
     delete this.save.petProgress[id];
+    if (stars > 0 || shiny > 0) {
+      const pr = (this.save.petProgress[def.evolvesTo] ??= {});
+      if (stars > 0) pr._stars = stars;
+      if (shiny > 0) pr._shiny = shiny;
+    }
     this.audio.levelUp();
     this.hud.toast("✦ Evolved into " + (findAnyPet(def.evolvesTo)?.name ?? "?") + "!");
   }
@@ -799,7 +906,8 @@ class Game implements GameApi {
     // Every run pays out Essence and may set a new personal best. The prestige
     // multiplier (1 + prestige*k) boosts the payout — that's the ascension reward.
     const pMul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
-    const earned = Math.round(essenceFor(this.rounds.round, this.points, this.mods.essenceMul) * pMul);
+    // effectiveEssenceMul folds in the Blood Tithe (essenceFromBankers) synergy.
+    const earned = Math.round(essenceFor(this.rounds.round, this.points, this.effectiveEssenceMul()) * pMul);
     this.save.essence += earned;
     const newBest = this.rounds.round > this.save.bestRound || (this.rounds.round === this.save.bestRound && this.points > this.save.bestScore);
     if (newBest) {
@@ -2255,7 +2363,7 @@ class Game implements GameApi {
     // limited to the first N owned (in save order) so a huge collection can't blanket
     // the screen. Owning >N is fine — the rest just stay benched, save.pets is untouched.
     let combat = 0;
-    const defs: { def: ReturnType<typeof findAnyPet>; lvl: number }[] = [];
+    const defs: { def: ReturnType<typeof findAnyPet>; lvl: number; shiny: boolean }[] = [];
     for (const id of this.save.pets) {
       const def = findAnyPet(id);
       if (!def) continue;
@@ -2264,18 +2372,138 @@ class Game implements GameApi {
         if (combat >= PETS_TUNING.activeSquadCap) continue;
         combat++;
       }
-      defs.push({ def, lvl: this.save.petLevels[id] ?? 1 });
+      // Cosmetic shiny flag (petProgress[id]._shiny) — purely visual, see config.
+      const shiny = (this.save.petProgress[id]?._shiny ?? 0) > 0;
+      defs.push({ def, lvl: this.save.petLevels[id] ?? 1, shiny });
     }
     defs.forEach((d, i) => {
-      const pet = new Pet(d.def!, (i / Math.max(1, defs.length)) * Math.PI * 2, d.lvl);
+      const pet = new Pet(d.def!, (i / Math.max(1, defs.length)) * Math.PI * 2, d.lvl, d.shiny);
       this.scene.add(pet.group);
       this.pets.push(pet);
     });
+    // Squad changed → recompute synergy lazily next frame.
+    this._petSynergyKey = "";
+  }
+
+  /** Stars a pet has earned via dupe-ascension (petProgress[id]._stars). */
+  private petStars(id: string): number {
+    const s = this.save.petProgress[id]?._stars ?? 0;
+    return Math.max(0, Math.min(PET_DEPTH.stars.maxStars, Math.floor(s)));
+  }
+
+  /** Squad-wide synergy bonuses from the ACTIVE combat squad's combatRole mix.
+   *  Recomputed only when the squad roster changes (cheap; called each frame).
+   *  Every term is hard-clamped so a stacked comp can't break the buffCap envelope. */
+  private _petSynergy = {
+    range: 0, splashFrac: 0, damageMul: 1, lifesteal: 0, gold: 0, slow: 0, critMul: 1,
+    pairs: [] as string[],
+  };
+  private _petSynergyKey = "";
+  private computePetSynergy() {
+    // Cheap roster fingerprint so we only recompute when the squad changes.
+    const key = this.pets.map((p) => p.def.id).join("|");
+    if (key === this._petSynergyKey) return;
+    this._petSynergyKey = key;
+    const counts: Partial<Record<CombatRole, number>> = {};
+    for (const p of this.pets) {
+      const r = p.def.combatRole;
+      if (!r) continue;
+      counts[r] = (counts[r] ?? 0) + 1;
+    }
+    const S = PET_DEPTH.synergy;
+    const s = this._petSynergy;
+    s.range = 0; s.splashFrac = 0; s.damageMul = 1; s.lifesteal = 0; s.gold = 0; s.slow = 0; s.critMul = 1;
+    const pairs: string[] = [];
+    const has = (r: CombatRole) => (counts[r] ?? 0) >= 1;
+    const two = (r: CombatRole) => (counts[r] ?? 0) >= 2;
+    // Same-role (2+) bonuses.
+    if (two("sniper")) { s.range += S.twoSnipers.range; pairs.push("2× Sniper +range"); }
+    if (two("bomber")) { s.splashFrac += S.twoBombers.splashFrac; pairs.push("2× Bomber +splash"); }
+    if (two("tank")) { s.damageMul += S.twoTanks.damageMul; pairs.push("2× Tank +dmg"); }
+    if (two("drainer")) { s.lifesteal += S.twoDrainers.lifesteal; pairs.push("2× Drainer +heal"); }
+    if (two("harvester")) { s.gold += S.twoHarvesters.gold; pairs.push("2× Harvester +gold"); }
+    if (two("saboteur")) { s.slow += S.twoSaboteurs.slow; pairs.push("2× Saboteur +slow"); }
+    // Named combos (one of each).
+    if (has("tank") && has("drainer")) { s.lifesteal += S.tankDrainer.lifesteal; pairs.push("Tank+Drainer lifesteal"); }
+    if (has("sniper") && has("saboteur")) { s.critMul += S.sniperSaboteur.critMul; pairs.push("Sniper+Saboteur crit"); }
+    if (has("bomber") && has("harvester")) { s.gold += S.bomberHarvester.gold; pairs.push("Bomber+Harvester gold"); }
+    // Hard caps (stay under the buffCap power envelope).
+    s.damageMul = Math.min(s.damageMul, S.synergyDamageCap);
+    s.lifesteal = Math.min(s.lifesteal, S.synergyLifestealCap);
+    s.pairs = pairs;
+  }
+
+  /** Snapshot of the active squad's synergy for the HUD pets tab. */
+  petSquadInfo(): { roles: { role: CombatRole; icon: string; label: string; count: number }[]; bonuses: string[] } {
+    this.computePetSynergy();
+    const counts = new Map<CombatRole, number>();
+    for (const p of this.pets) {
+      const r = p.def.combatRole;
+      if (!r) continue;
+      counts.set(r, (counts.get(r) ?? 0) + 1);
+    }
+    const roles = [...counts.entries()].map(([role, count]) => ({
+      role, icon: ROLE_ICON[role], label: ROLE_LABEL[role], count,
+    }));
+    return { roles, bonuses: this._petSynergy.pairs };
   }
 
   /** Tick companion pets: orbit the player, auto-target, fire real bullets. */
   private updatePets(dt: number) {
     if (!this.pets.length) return;
+    this.computePetSynergy();
+    const syn = this._petSynergy;
+    // Per-round drainer/harvester accumulators (capped). Reset on round change.
+    if (this.rounds.round !== this._petDepthRound) {
+      this._petDepthRound = this.rounds.round;
+      this._drainerRoundHeal = 0;
+      this._harvesterRoundGold = 0;
+    }
+    // On-kill role economy (drainer heal + harvester gold): pet bullets resolve
+    // through the shared resolveBulletHits path (no per-bullet owner hook we may
+    // touch), so we attribute the squad's kill DELTA this frame to the drainer /
+    // harvester share of the combat squad — proportional to investment, capped.
+    const killsNow = this.runStats.kills;
+    const killsThisFrame = Math.max(0, killsNow - this._petKillMark);
+    this._petKillMark = killsNow;
+    if (killsThisFrame > 0) {
+      let combat = 0, drainers = 0, harvesters = 0;
+      // 3★+ drainers/harvesters add a small per-pet star kicker to their faucet.
+      let drainerStarKick = 0, harvesterStarKick = 0;
+      for (const p of this.pets) {
+        if (p.def.role === "banker" || p.def.role === "buffer") continue;
+        combat++;
+        const st = this.petStars(p.def.id);
+        const kick = st >= PET_DEPTH.stars.roleKickAt ? 1 : 0;
+        if (p.def.combatRole === "drainer") { drainers++; drainerStarKick += kick; }
+        if (p.def.combatRole === "harvester") { harvesters++; harvesterStarKick += kick; }
+      }
+      if (combat > 0) {
+        const R = PET_DEPTH.roles;
+        if (drainers > 0 && this._drainerRoundHeal < R.drainer.healCapPerRound) {
+          // share = drainer fraction; + squad lifesteal synergy bump + star kicker.
+          const share = drainers / combat;
+          const starFrac = drainerStarKick / drainers; // 0..1 of drainers at 3★+
+          let heal = (R.drainer.healPerKill * (1 + starFrac * 0.5) + syn.lifesteal) * killsThisFrame * share;
+          heal = Math.min(heal, R.drainer.healCapPerRound - this._drainerRoundHeal);
+          if (heal > 0.01) {
+            this._drainerRoundHeal += heal;
+            this.player.heal(heal);
+          }
+        }
+        if (harvesters > 0 && this._harvesterRoundGold < R.harvester.goldCapPerRound) {
+          const share = harvesters / combat;
+          const starFrac = harvesterStarKick / harvesters;
+          let g = Math.round((R.harvester.goldPerKill * (1 + starFrac * 0.5) + syn.gold) * killsThisFrame * share);
+          g = Math.min(g, R.harvester.goldCapPerRound - this._harvesterRoundGold);
+          if (g > 0) {
+            this._harvesterRoundGold += g;
+            this.save.gold += g;
+            this.save.goldEarned += g;
+          }
+        }
+      }
+    }
     const px = this.player.pos.x;
     const pz = this.player.pos.z;
     const grid = this.rounds.grid;
@@ -2326,23 +2554,62 @@ class Game implements GameApi {
         pet.update(dt, px, pz, i, this.pets.length, null); // orbit/animate only
         continue;
       }
-      // nearest zombie to the pet, within its range
-      const near = grid.nearest(pet.group.position.x, pet.group.position.z, pet.def.range);
+      const d = pet.def;
+      const role = d.combatRole;
+      const stars = this.petStars(d.id);
+      const R = PET_DEPTH.roles;
+      // ── role: engage RANGE verbs (tank soaks wider, sniper reaches far) +
+      // squad-range synergy. All additive, tiny. ──
+      let range = d.range;
+      if (role === "tank") range += R.tank.orbitRange + (stars >= PET_DEPTH.stars.roleKickAt ? 2 : 0);
+      if (role === "sniper") range += R.sniper.bonusRange + (stars >= PET_DEPTH.stars.eliteKickAt ? 2 : 0);
+      range += syn.range;
+      // nearest zombie to the pet, within its (role-adjusted) range
+      const near = grid.nearest(pet.group.position.x, pet.group.position.z, range);
       let tgt: { x: number; z: number } | null = null;
       if (near) {
         this._petTgt.x = near.pos.x;
         this._petTgt.z = near.pos.z;
         tgt = this._petTgt;
       }
-      const shot = pet.update(dt, px, pz, i, this.pets.length, tgt, petFireRate);
+      // ── role: saboteur applies a brief, capped slow to its current target each
+      // frame it's engaged (the "debuff" verb — no damage spike). ──
+      if (role === "saboteur" && near && near.alive) {
+        const slow = R.saboteur.slow + syn.slow + (stars >= PET_DEPTH.stars.roleKickAt ? 0.05 : 0);
+        near.applySlow(Math.min(0.6, slow), R.saboteur.slowDur);
+      }
+      const shot = pet.update(dt, px, pz, i, this.pets.length, tgt, petFireRate, range);
       if (shot) {
-        const d = pet.def;
         // Base damage only — damageMul / crit / cryo / explosive / chain are
         // applied for ALL bullets in resolveBulletHits (the shared player path),
         // so pets scale with Damage 1:1 with you (no double-dip). Here we attach
         // the spawn-time mods your gun gets: pierce, bullet size, ricochet,
         // homing, and Multishot (extra fanned pellets).
-        const baseDamage = d.damage * pet.damageMul * petBuff;
+        // ── role + star + synergy spawn-time tweaks (all SMALL, no one-shots) ──
+        // engineMul: pets with an "engine" signature ability snowball their normal
+        // fire as they build stacks (capped by the ability's maxStacks).
+        let dmgMul = pet.damageMul * petBuff * syn.damageMul * pet.engineMul;
+        dmgMul *= 1 + stars * PET_DEPTH.stars.dmgPerStar; // dupe→star: flat, capped
+        // sniper: crit-on-distant — a modest multiplier when the target is far.
+        // 3★+ snipers crit from a shorter distance (skill bump, not raw damage).
+        const dist = shot.dist;
+        const critRange = R.sniper.critRange - (stars >= PET_DEPTH.stars.roleKickAt ? 3 : 0);
+        if (role === "sniper" && dist >= critRange) {
+          dmgMul *= R.sniper.critMul * syn.critMul;
+        }
+        let splashRadius = d.splashRadius;
+        let splashDamage = d.splashDamage;
+        // bomber: small splash on every bullet (adds, or seeds it if the pet had none).
+        if (role === "bomber") {
+          splashRadius += R.bomber.bonusSplashRadius + (stars >= PET_DEPTH.stars.roleKickAt ? 0.4 : 0);
+          if (splashDamage <= 0) splashDamage = d.damage * R.bomber.bonusSplashFrac;
+        }
+        // squad bomber synergy: extra splash for the whole squad.
+        if (syn.splashFrac > 0) {
+          if (splashRadius <= 0) splashRadius = 1.0;
+          splashDamage += d.damage * syn.splashFrac;
+        }
+        const baseDamage = d.damage * dmgMul;
         const pellets = 1 + Math.max(0, this.mods.bonusPellets);
         for (let s = 0; s < pellets; s++) {
           if (s === 0) {
@@ -2356,7 +2623,7 @@ class Game implements GameApi {
           this.hitTmp.set(shot.ox, 1.0, shot.oz);
           this.bullets.spawn(this.hitTmp, this._petDir, {
             speed: 56, damage: baseDamage, pierce: d.pierce + this.mods.pierceBonus,
-            splashRadius: d.splashRadius, splashDamage: d.splashDamage, color: d.bulletColor,
+            splashRadius, splashDamage, color: d.bulletColor,
             scale: d.bulletScale * this.mods.bulletScaleMul, homing: Math.max(d.homing, this.mods.homing),
             bounces: this.mods.ricochet,
           });
@@ -2388,8 +2655,15 @@ class Game implements GameApi {
     const near = grid.nearest(px, pz, 64);
     // count this cast toward the pet's evolution trial (per-pet, free to attribute)
     this._runCasts[pet.def.id] = (this._runCasts[pet.def.id] ?? 0) + 1;
-    // distinct, power-scaled cast sound per ability kind
-    this.audio.ability(ab.kind, ab.power / 200);
+    // distinct, power-scaled cast sound per ability kind. Engine archetypes reuse
+    // an existing payoff sound (audio.ts is owned elsewhere — no new SFX added):
+    // overcharge→chain, resonance→nova, siphon→smite.
+    const sfxKind =
+      ab.kind === "overcharge" ? "chain"
+      : ab.kind === "resonance" ? "nova"
+      : ab.kind === "siphon" ? "smite"
+      : ab.kind;
+    this.audio.ability(sfxKind, ab.power / 200);
 
     switch (ab.kind) {
       case "nova": {
@@ -2543,6 +2817,78 @@ class Game implements GameApi {
         this.sparks.burst(this._abilTmp, 0xff7aff, 24, { speed: 14, spread: 8, streak: true });
         this.splash(this._abilTmp, r, dmgDirect, -1, sMul);
         this.floaters.spawn(pet.group.position, "ANNIHILATE!", "#ff3aff", 1.7, true);
+        break;
+      }
+      // ── ENGINE archetypes: build a capped stacking resource that empowers the
+      // pet's NORMAL fire (engineMul), plus a small immediate effect on cast so the
+      // build-up feels active. The snowball — not a bigger burst — is the payoff. ──
+      case "overcharge": {
+        // gain a charge stack (capped); discharge a small nova when at max.
+        const max = ab.maxStacks ?? 6;
+        pet.engineStacks = Math.min(max, pet.engineStacks + 1);
+        const atMax = pet.engineStacks >= max;
+        this._abilTmp.set(px, 1.0, pz);
+        this.explosions.flash(this._abilTmp, 1.6 + pet.engineStacks * 0.2, 0x9fe8ff);
+        this.sparks.burst(this._abilTmp, 0xcdefff, 6 + (pet.engineStacks | 0), { speed: 9, spread: 3, streak: true });
+        this.floaters.spawn(pet.group.position, `⚡${pet.engineStacks | 0}`, "#9fe8ff", 1.1, atMax);
+        if (atMax) {
+          // discharge: a modest ring of bolts (power is small — value was the snowball).
+          const n = ab.count ?? 8;
+          const rr = ab.radius ?? 1.4;
+          for (let k = 0; k < n; k++) {
+            const a = (k / n) * Math.PI * 2;
+            this._abilTmp.set(px, 1.0, pz);
+            this._petDir.set(Math.cos(a), 0, Math.sin(a));
+            this.bullets.spawn(this._abilTmp, this._petDir, {
+              speed: 54, damage: dmg, pierce: 2, splashRadius: rr, splashDamage: dmg * 0.4, color: col, scale: pet.def.bulletScale, homing: 0,
+            });
+          }
+          pet.engineStacks = Math.max(0, pet.engineStacks - 2); // partial vent, keep snowball going
+        }
+        break;
+      }
+      case "siphon": {
+        // build siphon stacks (capped) + a small heal trickle on cast (drain engine).
+        const max = ab.maxStacks ?? 5;
+        pet.engineStacks = Math.min(max, pet.engineStacks + 1);
+        const r = ab.radius ?? 3;
+        this._abilTmp.set(px, 0.7, pz);
+        this.explosions.flash(this._abilTmp, r, 0x9a5ad6);
+        this.sparks.burst(this._abilTmp, 0xc0a0ff, 8, { speed: 7, spread: 4, streak: true });
+        this.floaters.spawn(pet.group.position, `🩸${pet.engineStacks | 0}`, "#c0a0ff", 1.1, false);
+        // small nearby drain + heal scaled by stacks (capped via engine cap below).
+        let drained = 0;
+        grid.forNear(px, pz, r, (z) => {
+          if (!z.alive) return;
+          this.damageZombie(z, dmgDirect * 0.5, sMul);
+          if (ab.slow) z.applySlow(ab.slow, 1.5);
+          drained++;
+        });
+        if (drained > 0) {
+          const heal = Math.min(8, 1.5 + pet.engineStacks * 1.2);
+          this.player.heal(heal);
+          this.sparks.burst(this.player.pos, 0x7be08a, 5, { speed: 5, spread: 4, streak: true });
+        }
+        break;
+      }
+      case "resonance": {
+        // build resonance stacks (capped) → empowers fire; cast sprays a few shards.
+        const max = ab.maxStacks ?? 5;
+        pet.engineStacks = Math.min(max, pet.engineStacks + 1);
+        const n = (ab.count ?? 8);
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2 + pet.engineStacks * 0.3;
+          this._abilTmp.set(px, 1.0, pz);
+          this._petDir.set(Math.cos(a), 0, Math.sin(a));
+          this.bullets.spawn(this._abilTmp, this._petDir, {
+            speed: 52, damage: dmg, pierce: 2 + (pet.engineStacks | 0), splashRadius: 0, splashDamage: 0, color: col, scale: pet.def.bulletScale * 0.9, homing: 0,
+          });
+        }
+        this._abilTmp.set(px, 0.6, pz);
+        this.explosions.flash(this._abilTmp, 1.8, col);
+        this.explosions.shockwave(this._abilTmp, 3 + pet.engineStacks * 0.4, col);
+        this.floaters.spawn(pet.group.position, `✦${pet.engineStacks | 0}`, "#9fe8ff", 1.1, false);
+        if (ab.slow) for (const z of this.rounds.zombies) if (z.alive) z.applySlow(ab.slow, 1.5);
         break;
       }
     }
