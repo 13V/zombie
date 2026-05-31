@@ -49,9 +49,9 @@ export const RUN_UPGRADES: RunUpgrade[] = [
 
   // ---- active↔idle cross-coupling: the active and idle economies feed each other ----
   // Effects are MULTIPLICATIVE but capped in config (SYNERGY) so they never run away.
-  { id: "warbonds", name: "War Bonds", desc: "Your damage tier boosts banker gold rate", icon: "🏦", color: "#ffd24a", tier: "rare", apply: (m) => (m.bankerFromWeapon += 1) },
-  { id: "tithe", name: "Blood Tithe", desc: "Each banker level boosts essence from kills", icon: "💠", color: "#a0e0ff", tier: "rare", apply: (m) => (m.essenceFromBankers += 1) },
-  { id: "syndicate", name: "Syndicate", desc: "Banker↔weapon synergy +1 each way", icon: "🤝", color: "#ffcf7a", tier: "legendary", apply: (m) => { m.bankerFromWeapon += 1; m.essenceFromBankers += 1; } },
+  { id: "warbonds", name: "War Bonds", desc: "Banker pets earn more gold the higher your Damage is", icon: "🏦", color: "#ffd24a", tier: "rare", apply: (m) => (m.bankerFromWeapon += 1) },
+  { id: "tithe", name: "Blood Tithe", desc: "More banker pets = more Essence earned per run", icon: "💠", color: "#a0e0ff", tier: "rare", apply: (m) => (m.essenceFromBankers += 1) },
+  { id: "syndicate", name: "Syndicate", desc: "Both: bankers earn more from Damage, and more Essence per run", icon: "🤝", color: "#ffcf7a", tier: "legendary", apply: (m) => { m.bankerFromWeapon += 1; m.essenceFromBankers += 1; } },
 
   // ---- legendary: rare jackpots ----
   { id: "apex", name: "Apex Predator", desc: "+60% dmg, +30% fire rate, +5 lifesteal", icon: "👑", color: "#ffcf3a", tier: "legendary", apply: (m) => { m.damageMul += 0.6; m.fireRateMul += 0.3; m.lifeSteal += 5; } },
