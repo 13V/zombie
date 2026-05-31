@@ -980,3 +980,69 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
   cursor: pointer;
 }
 .qc-btn:active { transform: scale(0.95); }
+
+
+/* ---- housing build UI (tabs / colours / tools / pickers / rating) ---- */
+#build-bar { flex-direction: column; align-items: center; }
+.build-tabs, .build-chips, .build-colors, .build-tools {
+  display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 94vw;
+}
+.build-tab {
+  background: rgba(12,14,20,0.9); border: 2px solid #4a5066; color: #cdd3e2;
+  border-radius: 9px 9px 0 0; padding: 6px 14px; font-weight: 800; cursor: pointer;
+}
+.build-tab.active { background: rgba(40,46,64,0.95); border-color: #fff; color: #fff; }
+.build-color {
+  width: 26px; height: 26px; border-radius: 7px; border: 2px solid rgba(255,255,255,0.35);
+  cursor: pointer; font-size: 9px; color: #fff; font-weight: 700; background: transparent;
+}
+.build-color.active { outline: 3px solid #fff; }
+.build-tool {
+  background: rgba(20,22,30,0.82); border: 2px solid #6b7390; color: #fff;
+  border-radius: 10px; padding: 7px 11px; font-weight: 700; cursor: pointer;
+}
+.build-tool.active { border-color: #ffd24a; box-shadow: 0 0 10px #ffd24a; }
+.build-tool.done { border-color: #3a8e5a; }
+#pet-picker {
+  position: absolute; left: 50%; bottom: 230px; transform: translateX(-50%);
+  background: rgba(12,14,20,0.92); border: 2px solid #4a5066; border-radius: 12px;
+  padding: 8px 10px; z-index: 31; max-width: 90vw;
+}
+.pet-picker-title { color: #cdd3e2; font-weight: 800; font-size: 12px; margin-bottom: 6px; text-align: center; }
+.pet-picker-row { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.pet-pick {
+  background: rgba(20,22,30,0.85); border: 2px solid var(--chip, #888); color: #fff;
+  border-radius: 9px; padding: 6px 10px; font-weight: 700; cursor: pointer;
+}
+.pet-pick.active { outline: 3px solid #fff; box-shadow: 0 0 10px var(--chip); }
+#plot-meta {
+  position: absolute; left: 50%; top: 64px; transform: translateX(-50%);
+  background: rgba(12,14,20,0.9); border: 2px solid #d14b6a; color: #fff;
+  border-radius: 999px; padding: 6px 14px; font-weight: 800; font-size: 13px; z-index: 31;
+}
+#house-rating {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.45); z-index: 60;
+}
+.hr-card {
+  background: rgba(16,18,26,0.97); border: 2px solid #4a5066; border-radius: 16px;
+  padding: 18px 22px; width: min(360px, 90vw); text-align: center; color: #fff;
+}
+.hr-title { font-weight: 800; letter-spacing: 0.5px; color: #cdd3e2; margin-bottom: 6px; }
+.hr-grade { font-size: 56px; font-weight: 900; line-height: 1; margin: 4px 0; }
+.hr-S { color: #ffd24a; text-shadow: 0 0 18px #ffd24a; }
+.hr-A { color: #7fe3ff; text-shadow: 0 0 14px #7fe3ff; }
+.hr-B { color: #8fe6a0; }
+.hr-C { color: #c7ccd6; }
+.hr-D { color: #b08a8a; }
+.hr-score { font-weight: 700; margin-bottom: 10px; color: #e8ecf5; }
+.hr-lines { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; text-align: left; }
+.hr-line {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; font-size: 13px;
+  border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 3px;
+}
+.hr-line small { grid-column: 1 / -1; color: #9aa0ac; font-size: 11px; }
+.hr-close {
+  background: #3a8e5a; border: none; color: #fff; font-weight: 800;
+  border-radius: 10px; padding: 9px 22px; cursor: pointer;
+}

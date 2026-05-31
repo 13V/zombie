@@ -29,7 +29,8 @@ import { IslandNet, makeBubble } from "./islandnet";
 import { EmoteMenu } from "./emotes";
 import type { EmoteId } from "./voxelChar";
 import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, PART_CATS, HOUSE_SWATCHES, TROPHY_TIERS, trophyTierForRound, starterHouse, sanitizeHouse } from "./house";
-import { loadHouse, saveHouse } from "./houses";
+import { loadHouse, saveHouse, getHouseMeta, likeHouse } from "./houses";
+import { rateHouse } from "./houserating";
 import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
@@ -1169,9 +1170,8 @@ class Game implements GameApi {
 
   /** Render any saved houses onto their plots when entering the hub. */
   private async loadIslandHouses() {
-    const owner = this.wallet.state.address ?? "local";
     for (const plot of this.island.plots) {
-      const data = await loadHouse(plot.index, owner);
+      const data = await loadHouse(plot.index, this.plotOwner(plot.index));
       if (!data) continue;
       let view = this.houseViews.get(plot.index);
       if (!view) {
@@ -1266,10 +1266,21 @@ class Game implements GameApi {
       this.hud.setIslandPopulation(pop);
     }
 
-    // ---- build mode: clicks place/remove parts; E exits + saves ----
+    // ---- build mode: ghost preview + click to place/paint/remove ----
     if (this.editingPlot >= 0) {
-      this.hud.showPrompt("Click to place · [E] to finish & save", true);
-      if (this.input.clicked()) this.placeAtGround(this.input.aimPoint);
+      this.hud.showPrompt(
+        this.editReadOnly ? "Visiting — [L] like · [E] to leave" : "Click to build · R rotate · [E] to finish & save",
+        true,
+      );
+      this.updateGhost();
+      if (!this.editReadOnly) {
+        if (this.input.pressed("KeyR")) this.rotateBuild();
+        // Ctrl+Z / Cmd+Z undo (the on-screen button also calls undoBuild)
+        if (this.input.pressed("KeyZ") && (this.input.down("ControlLeft") || this.input.down("MetaLeft"))) this.undoBuild();
+        if (this.input.clicked()) this.placeAtGround(this.input.aimPoint);
+      } else if (this.input.pressed("KeyL")) {
+        this.likeCurrentHouse();
+      }
       if (this.input.pressed("KeyE")) this.exitBuildMode();
       return;
     }
@@ -1301,9 +1312,13 @@ class Game implements GameApi {
       case "shop":
         this.hud.openShop();
         break;
-      case "plot":
-        this.enterBuildMode(zone.plotIndex ?? 0);
+      case "plot": {
+        const idx = zone.plotIndex ?? 0;
+        // Your own plot is editable; the rest are neighbours you visit read-only.
+        if (this.isOwnPlot(idx)) this.enterBuildMode(idx);
+        else this.enterVisitMode(idx);
         break;
+      }
       case "play":
         this.startRun();
         break;
@@ -1355,14 +1370,30 @@ class Game implements GameApi {
   }
 
   // ---- house building -----------------------------------------------------
+  private static readonly CELL = 1.2; // plot grid cell size (matches house.ts)
+
+  /** Plot 0 is the player's own buildable plot; the rest are neighbours. */
+  private isOwnPlot(plotIndex: number): boolean {
+    return plotIndex === 0;
+  }
+  /** Backend owner key for a plot (yours = wallet/local; neighbours synthetic). */
+  private plotOwner(plotIndex: number): string {
+    if (this.isOwnPlot(plotIndex)) return this.wallet.state.address ?? "local";
+    return `neighbor-${plotIndex}`;
+  }
 
   /** Enter build mode for a plot: load its layout + show the build bar. */
   private async enterBuildMode(plotIndex: number) {
-    const owner = this.wallet.state.address ?? "local";
+    const owner = this.plotOwner(plotIndex);
     const existing = await loadHouse(plotIndex, owner);
     this.editData = existing ? sanitizeHouse(existing) : starterHouse();
     this.editingPlot = plotIndex;
+    this.editReadOnly = false;
     this.editPart = "wall";
+    this.editRot = 0;
+    this.editColor = null;
+    this.editPaint = false;
+    this.undoStack = [];
     let view = this.houseViews.get(plotIndex);
     if (!view) {
       const plot = this.island.plots.find((p) => p.index === plotIndex)!;
@@ -1370,42 +1401,213 @@ class Game implements GameApi {
       this.houseViews.set(plotIndex, view);
     }
     view.render(this.editData);
-    this.hud.showBuildBar(HOUSE_PARTS, this.editPart, (k) => (this.editPart = k));
-    this.hud.toast(`Building Plot ${plotIndex + 1} — click cells to place, again to remove`);
+    this.refreshBuildBar();
+    this.hud.toast(`Building Plot ${plotIndex + 1} — R rotate · Ctrl+Z undo · E to finish`);
   }
 
-  /** Place/remove a part at the plot cell under the click, then re-render+save. */
-  private placeAtGround(world: THREE.Vector3) {
-    if (this.editingPlot < 0) return;
+  /** (Re)build the build bar from current tool state — call after any toggle. */
+  private refreshBuildBar() {
+    const tTier = trophyTierForRound(this.save.bestRound);
+    this.hud.showBuildBar({
+      cats: PART_CATS.map((c) => ({ id: c.id, label: c.label })),
+      // the trophy chip advertises the tier the player has unlocked
+      parts: HOUSE_PARTS.map((p) =>
+        p.kind === "trophy"
+          ? { kind: p.kind, label: `${TROPHY_TIERS[tTier].label} Trophy`, color: TROPHY_TIERS[tTier].color, cat: p.cat }
+          : { kind: p.kind, label: p.label, color: p.color, cat: p.cat },
+      ),
+      swatches: HOUSE_SWATCHES,
+      activeCat: this.editCat,
+      activePart: this.editPart,
+      activeColor: this.editColor,
+      paint: this.editPaint,
+      onPickCat: (id) => { this.editCat = id; this.refreshBuildBar(); },
+      onPickPart: (k) => {
+        this.editPart = k as PartKind;
+        this.editPaint = false; // selecting a part leaves paint mode
+        if (k === "perch") this.pickPerchPet();
+        else this.hud.hidePetPicker();
+        this.refreshBuildBar();
+      },
+      onPickColor: (c) => { this.editColor = c; this.refreshBuildBar(); },
+      onRotate: () => this.rotateBuild(),
+      onTogglePaint: () => { this.editPaint = !this.editPaint; this.refreshBuildBar(); },
+      onUndo: () => this.undoBuild(),
+      onDone: () => this.exitBuildMode(),
+    });
+  }
+
+  /** Cycle the placement yaw 0->1->2->3->0. */
+  private rotateBuild() {
+    this.editRot = ((this.editRot + 1) % 4) as 0 | 1 | 2 | 3;
+    this.audio.ui();
+    this.updateGhost();
+  }
+
+  /** Push a JSON snapshot before a mutating edit (cap 20). */
+  private pushUndo() {
+    this.undoStack.push(JSON.stringify(this.editData));
+    if (this.undoStack.length > 20) this.undoStack.shift();
+  }
+  /** Restore the most recent snapshot. */
+  private undoBuild() {
+    const snap = this.undoStack.pop();
+    if (!snap) { this.audio.deny(); return; }
+    try { this.editData = sanitizeHouse(JSON.parse(snap)); } catch { return; }
+    this.houseViews.get(this.editingPlot)?.render(this.editData);
+    this.audio.ui();
+  }
+
+  /** Show a picker of owned pets to attach to the next placed perch. */
+  private pickPerchPet() {
+    const owned = this.save.pets
+      .map((id) => findAnyPet(id))
+      .filter((d): d is PetDef => !!d)
+      .map((d) => ({ id: d.id, name: d.name, color: `#${d.color.toString(16).padStart(6, "0")}` }));
+    if (!owned.length) {
+      this.hud.toast("Buy a pet first to display it!");
+      this.editPetId = "";
+      this.hud.hidePetPicker();
+      return;
+    }
+    if (!this.editPetId || !owned.some((o) => o.id === this.editPetId)) this.editPetId = owned[0].id;
+    this.hud.showPetPicker(owned, this.editPetId, (id) => { this.editPetId = id; });
+  }
+
+  /** Project the aim point to a plot-local grid cell, or null if off the pad. */
+  private aimCell(world: THREE.Vector3): { gx: number; gz: number } | null {
     const plot = this.island.plots.find((p) => p.index === this.editingPlot);
-    if (!plot) return;
-    const CELL = 1.2;
-    const gx = Math.round((world.x - plot.pos.x) / CELL);
-    const gz = Math.round((world.z - plot.pos.z) / CELL);
-    if (Math.abs(gx) > 2 || Math.abs(gz) > 2) return; // outside the 6x6 plot
-    // stack: place on top of whatever's already in this column for build-up parts
-    const tall = HOUSE_PARTS.find((d) => d.kind === this.editPart)?.tall;
-    const col = this.editData.parts.filter((p) => p.gx === gx && p.gz === gz);
-    // toggle: clicking an existing identical top part removes it
-    const top = col.reduce<HousePart | null>((hi, p) => (!hi || p.gy > hi.gy ? p : hi), null);
+    if (!plot) return null;
+    const gx = Math.round((world.x - plot.pos.x) / Game.CELL);
+    const gz = Math.round((world.z - plot.pos.z) / Game.CELL);
+    if (Math.abs(gx) > 2 || Math.abs(gz) > 2) return null; // outside the plot pad
+    return { gx, gz };
+  }
+
+  /** Place/paint/remove a part at the plot cell under the click. */
+  private placeAtGround(world: THREE.Vector3) {
+    if (this.editingPlot < 0 || this.editReadOnly) return;
+    const cell = this.aimCell(world);
+    if (!cell) return;
+    const { gx, gz } = cell;
+    const atCell = this.editData.parts.filter((p) => p.gx === gx && p.gz === gz);
+
+    // Paint mode: recolour the topmost part at this cell instead of placing.
+    if (this.editPaint) {
+      const target = atCell[atCell.length - 1];
+      if (!target) { this.audio.deny(); return; }
+      this.pushUndo();
+      if (this.editColor === null) delete target.color;
+      else target.color = this.editColor;
+      this.houseViews.get(this.editingPlot)?.render(this.editData);
+      this.audio.ui();
+      return;
+    }
+
+    const tall = !!HOUSE_PARTS.find((d) => d.kind === this.editPart)?.tall;
+    // toggle: clicking the existing identical top part removes it
+    const top = atCell.reduce<HousePart | null>((hi, p) => (!hi || p.gy > hi.gy ? p : hi), null);
+    this.pushUndo();
     if (top && top.kind === this.editPart) {
       this.editData.parts = this.editData.parts.filter((p) => p !== top);
     } else {
+      if (this.editData.parts.length >= 400) { this.undoStack.pop(); this.audio.deny(); return; }
       const gy = tall ? (top ? top.gy + 1 : 1) : 0;
-      const def = HOUSE_PARTS.find((d) => d.kind === this.editPart);
-      this.editData.parts.push({ kind: this.editPart, gx, gy, gz, color: def?.color });
+      const part: HousePart = { kind: this.editPart, gx, gy, gz };
+      if (this.editColor !== null) part.color = this.editColor;
+      if (this.editRot) part.rot = this.editRot;
+      if (this.editPart === "perch" && this.editPetId) part.petId = this.editPetId;
+      if (this.editPart === "trophy") part.tier = trophyTierForRound(this.save.bestRound);
+      this.editData.parts.push(part);
     }
     this.houseViews.get(this.editingPlot)?.render(this.editData);
   }
 
-  /** Save the edited house + exit build mode. */
+  /** Translucent preview at the aim cell — green = valid, red = off-plot,
+   *  amber = paint. */
+  private updateGhost() {
+    if (this.editingPlot < 0 || this.editReadOnly) { this.hideGhost(); return; }
+    const plot = this.island.plots.find((p) => p.index === this.editingPlot);
+    if (!plot) { this.hideGhost(); return; }
+    if (!this.ghost) {
+      this.ghostMat = new THREE.MeshBasicMaterial({ color: 0x55ff66, transparent: true, opacity: 0.4, depthWrite: false });
+      this.ghost = new THREE.Mesh(new THREE.BoxGeometry(Game.CELL, Game.CELL, Game.CELL), this.ghostMat);
+      this.scene.add(this.ghost);
+    }
+    const cell = this.aimCell(this.input.aimPoint);
+    if (cell) {
+      this.ghostMat!.color.set(this.editPaint ? 0xffd24a : 0x55ff66);
+      this.ghost.position.set(plot.pos.x + cell.gx * Game.CELL, plot.pos.y + Game.CELL / 2 + 0.2, plot.pos.z + cell.gz * Game.CELL);
+    } else {
+      this.ghostMat!.color.set(0xff5555);
+      this.ghost.position.set(this.input.aimPoint.x, Game.CELL / 2 + 0.2, this.input.aimPoint.z);
+    }
+    this.ghost.rotation.y = (this.editRot * Math.PI) / 2;
+    this.ghost.visible = true;
+  }
+  private hideGhost() {
+    if (this.ghost) this.ghost.visible = false;
+  }
+
+  /** Visit a neighbour's plot read-only: load it + show its social counters. */
+  private async enterVisitMode(plotIndex: number) {
+    const owner = this.plotOwner(plotIndex);
+    this.editingPlot = plotIndex;
+    this.editReadOnly = true;
+    this.editData = { parts: [] };
+    this.undoStack = [];
+    const data = await loadHouse(plotIndex, owner, true); // counts a visit
+    this.editData = data ?? { parts: [] };
+    let view = this.houseViews.get(plotIndex);
+    if (!view) {
+      const plot = this.island.plots.find((p) => p.index === plotIndex)!;
+      view = new HouseView(this.scene, plot.pos);
+      this.houseViews.set(plotIndex, view);
+    }
+    view.render(this.editData);
+    this.hud.hidePetPicker();
+    const meta = await getHouseMeta(plotIndex, owner);
+    this.hud.showPlotMeta(meta.likes, meta.visits);
+    this.hud.toast(`Visiting Plot ${plotIndex + 1} — [L] to like, [E] to leave`);
+  }
+
+  /** Like the neighbour's house you're currently visiting. */
+  private async likeCurrentHouse() {
+    if (this.editingPlot < 0 || !this.editReadOnly) return;
+    const owner = this.plotOwner(this.editingPlot);
+    const likes = await likeHouse(this.editingPlot, owner);
+    if (likes === null) { this.hud.toast("Likes need the backend online"); return; }
+    this.audio.powerup();
+    const meta = await getHouseMeta(this.editingPlot, owner);
+    this.hud.showPlotMeta(likes, meta.visits);
+    this.hud.toast("❤ Liked!");
+  }
+
+  /** Save the edited house, show the report card, and exit build mode. */
   private exitBuildMode() {
     if (this.editingPlot < 0) return;
-    const owner = this.wallet.state.address ?? "local";
-    void saveHouse(this.editingPlot, owner, this.editData);
-    this.hud.toast(`Plot ${this.editingPlot + 1} saved!`);
+    const wasEditing = !this.editReadOnly;
+    let clean: HouseData | null = null;
+    if (wasEditing) {
+      const owner = this.plotOwner(this.editingPlot);
+      clean = sanitizeHouse(this.editData);
+      void saveHouse(this.editingPlot, owner, clean);
+      this.houseViews.get(this.editingPlot)?.render(clean);
+      this.hud.toast(`Plot ${this.editingPlot + 1} saved!`);
+    }
     this.editingPlot = -1;
+    this.editReadOnly = false;
+    this.undoStack = [];
+    this.hideGhost();
     this.hud.hideBuildBar();
+    this.hud.hidePetPicker();
+    this.hud.hidePlotMeta();
+    this.hud.hidePrompt();
+    // "Tiny Home Academy" report card for your own (non-empty) house.
+    if (wasEditing && clean && clean.parts.length) {
+      this.audio.powerup();
+      this.hud.showHouseRating(rateHouse(clean), () => {});
+    }
   }
 
   private simulate(dt: number) {

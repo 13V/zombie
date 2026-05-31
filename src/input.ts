@@ -83,6 +83,11 @@ export class Input {
     return this.pressedThisFrame.has(code);
   }
 
+  /** True while `code` is currently held (for chords like Ctrl+Z). */
+  down(code: string): boolean {
+    return this.held.has(code);
+  }
+
   /** Inject a one-frame "key press" (used by on-screen touch buttons). */
   injectPress(code: string) {
     this.pressedThisFrame.add(code);

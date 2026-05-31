@@ -3,12 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Tiny Dead — a cozy toy-diorama take on round-based zombie survival.",
+  "description": "Tiny Dead \u2014 a cozy toy-diorama take on round-based zombie survival.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:rating": "node --test --experimental-strip-types test/houserating.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

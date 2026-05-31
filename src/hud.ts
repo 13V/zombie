@@ -252,30 +252,148 @@ export class Hud {
   openShop() {
     this.startOverlay.classList.remove("hidden");
   }
-  /** Build-mode palette bar: one swatch per part; `onPick` sets the active part. */
-  showBuildBar(
-    parts: { kind: string; label: string; color: number }[],
-    active: string,
-    onPick: (kind: any) => void,
-  ) {
+  /** Full build UI: category tabs + part chips + colour swatches + a tool row
+   *  (rotate / paint / undo / done). Everything is an on-screen button so it
+   *  works on touch as well as keyboard. */
+  showBuildBar(opts: {
+    cats: { id: string; label: string }[];
+    parts: { kind: string; label: string; color: number; cat: string }[];
+    swatches: number[];
+    activeCat: string;
+    activePart: string;
+    activeColor: number | null;
+    paint: boolean;
+    onPickCat: (id: string) => void;
+    onPickPart: (kind: string) => void;
+    onPickColor: (color: number | null) => void;
+    onRotate: () => void;
+    onTogglePaint: () => void;
+    onUndo: () => void;
+    onDone: () => void;
+  }) {
+    const hex = (c: number) => `#${c.toString(16).padStart(6, "0")}`;
     const bar = this.q("#build-bar");
     bar.classList.remove("hidden");
-    bar.innerHTML = parts
+    const tabs = opts.cats
+      .map((c) => `<button class="build-tab ${c.id === opts.activeCat ? "active" : ""}" data-cat="${c.id}">${c.label}</button>`)
+      .join("");
+    const chips = opts.parts
+      .filter((p) => p.cat === opts.activeCat)
       .map(
-        (p) => `<button class="build-swatch ${p.kind === active ? "active" : ""}" data-kind="${p.kind}">
-          <span class="sw" style="background:#${p.color.toString(16).padStart(6, "0")}"></span>${p.label}
-        </button>`,
+        (p) => `<button class="build-swatch ${p.kind === opts.activePart ? "active" : ""}" data-kind="${p.kind}"><span class="sw" style="background:${hex(p.color)}"></span>${p.label}</button>`,
       )
       .join("");
-    bar.querySelectorAll<HTMLButtonElement>(".build-swatch").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        bar.querySelectorAll(".build-swatch").forEach((b) => b.classList.toggle("active", b === btn));
-        onPick(btn.dataset.kind);
-      });
-    });
+    const swatches =
+      `<button class="build-color ${opts.activeColor === null ? "active" : ""}" data-color="auto" title="default colour">auto</button>` +
+      opts.swatches
+        .map((c) => `<button class="build-color ${c === opts.activeColor ? "active" : ""}" data-color="${c}" style="background:${hex(c)}"></button>`)
+        .join("");
+    const tools =
+      `<button class="build-tool" data-tool="rotate">\u27f3 Rotate (R)</button>` +
+      `<button class="build-tool ${opts.paint ? "active" : ""}" data-tool="paint">Paint</button>` +
+      `<button class="build-tool" data-tool="undo">Undo</button>` +
+      `<button class="build-tool done" data-tool="done">Done</button>`;
+    bar.innerHTML =
+      `<div class="build-tabs">${tabs}</div>` +
+      `<div class="build-chips">${chips}</div>` +
+      `<div class="build-colors">${swatches}</div>` +
+      `<div class="build-tools">${tools}</div>`;
+    bar.querySelectorAll<HTMLButtonElement>(".build-tab").forEach((b) =>
+      b.addEventListener("click", () => opts.onPickCat(b.dataset.cat!)),
+    );
+    bar.querySelectorAll<HTMLButtonElement>(".build-swatch").forEach((b) =>
+      b.addEventListener("click", () => { if (b.dataset.kind) opts.onPickPart(b.dataset.kind); }),
+    );
+    bar.querySelectorAll<HTMLButtonElement>(".build-color").forEach((b) =>
+      b.addEventListener("click", () => opts.onPickColor(b.dataset.color === "auto" ? null : Number(b.dataset.color))),
+    );
+    bar.querySelectorAll<HTMLButtonElement>(".build-tool").forEach((b) =>
+      b.addEventListener("click", () => {
+        const t = b.dataset.tool;
+        if (t === "rotate") opts.onRotate();
+        else if (t === "paint") opts.onTogglePaint();
+        else if (t === "undo") opts.onUndo();
+        else if (t === "done") opts.onDone();
+      }),
+    );
   }
   hideBuildBar() {
     this.q("#build-bar").classList.add("hidden");
+  }
+
+  /** Pet picker for the "Pet Perch" part. */
+  showPetPicker(pets: { id: string; name: string; color: string }[], active: string, onPick: (id: string) => void) {
+    let box = document.getElementById("pet-picker");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "pet-picker";
+      this.root.appendChild(box);
+    }
+    box.style.display = "block";
+    box.innerHTML =
+      `<div class="pet-picker-title">Display pet</div>` +
+      `<div class="pet-picker-row">` +
+      pets
+        .map((p) => `<button class="pet-pick ${p.id === active ? "active" : ""}" data-id="${p.id}" style="--chip:${p.color}">${p.name}</button>`)
+        .join("") +
+      `</div>`;
+    box.querySelectorAll<HTMLButtonElement>(".pet-pick").forEach((b) =>
+      b.addEventListener("click", () => {
+        box!.querySelectorAll(".pet-pick").forEach((o) => o.classList.toggle("active", o === b));
+        if (b.dataset.id) onPick(b.dataset.id);
+      }),
+    );
+  }
+  hidePetPicker() {
+    const box = document.getElementById("pet-picker");
+    if (box) box.style.display = "none";
+  }
+
+  /** "Tiny Home Academy" results card shown when leaving build mode. */
+  showHouseRating(
+    r: { score: number; grade: string; breakdown: { label: string; score: number; max: number; note: string }[] },
+    onClose: () => void,
+  ) {
+    let ov = document.getElementById("house-rating");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "house-rating";
+      this.root.appendChild(ov);
+    }
+    const lines = r.breakdown
+      .map((b) => `<div class="hr-line"><span>${b.label}</span><b>${b.score}/${b.max}</b><small>${b.note}</small></div>`)
+      .join("");
+    ov.style.display = "flex";
+    ov.innerHTML =
+      `<div class="hr-card"><div class="hr-title">Tiny Home Academy</div>` +
+      `<div class="hr-grade hr-${r.grade}">${r.grade}</div>` +
+      `<div class="hr-score">${r.score} / 100</div>` +
+      `<div class="hr-lines">${lines}</div>` +
+      `<button class="hr-close">Nice!</button></div>`;
+    (ov.querySelector(".hr-close") as HTMLButtonElement).addEventListener("click", () => {
+      this.hideHouseRating();
+      onClose();
+    });
+  }
+  hideHouseRating() {
+    const ov = document.getElementById("house-rating");
+    if (ov) ov.style.display = "none";
+  }
+
+  /** "Likes/visits" chip shown while visiting a neighbour's plot. */
+  showPlotMeta(likes: number, visits: number) {
+    let el = document.getElementById("plot-meta");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "plot-meta";
+      this.root.appendChild(el);
+    }
+    el.style.display = "block";
+    el.textContent = `\u2764 ${likes} \u00b7 ${visits} ${visits === 1 ? "visit" : "visits"} \u00b7 [L] like`;
+  }
+  hidePlotMeta() {
+    const el = document.getElementById("plot-meta");
+    if (el) el.style.display = "none";
   }
 
   /** Render the persistent best-run line on the menu. */

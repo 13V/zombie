@@ -54,6 +54,8 @@ interface State {
   nextListingId: number;
   /** Player housing keyed by "owner:plotIndex" → house layout JSON. */
   houses: Record<string, unknown>;
+  /** Social counters keyed by "owner:plotIndex" → likes/visits. */
+  houseSocial?: Record<string, { likes: number; visits: number }>;
 }
 
 function load(): State {
@@ -65,9 +67,10 @@ function load(): State {
       market: s.market ?? [],
       nextListingId: s.nextListingId ?? 1,
       houses: s.houses ?? {},
+      houseSocial: s.houseSocial ?? {},
     };
   } catch {
-    return { accounts: {}, treasury: 0, market: [], nextListingId: 1, houses: {} };
+    return { accounts: {}, treasury: 0, market: [], nextListingId: 1, houses: {}, houseSocial: {} };
   }
 }
 function save(s: State) {
@@ -244,12 +247,54 @@ app.post("/box/open", (req, res) => {
 });
 
 // --- housing (island plots) ---
+const HOUSE_PART_KINDS = new Set([
+  "wall", "floor", "roof", "door", "window", "fence", "tree", "lamp", "flower",
+  "bed", "table", "chair", "rug", "lamppost", "bush", "path",
+  "banner", "statue", "perch", "trophy",
+]);
+
+/** Validate + clamp a house blob server-side (open/cosmetic, but bounded). */
+function sanitizeHousePayload(house: unknown): { parts: Record<string, unknown>[] } | null {
+  const parts = (house as { parts?: unknown })?.parts;
+  if (!Array.isArray(parts)) return null;
+  const out: Record<string, unknown>[] = [];
+  for (const p of parts) {
+    if (out.length >= 400) break;
+    if (!p || typeof p !== "object") continue;
+    const o = p as Record<string, unknown>;
+    if (typeof o.kind !== "string" || !HOUSE_PART_KINDS.has(o.kind)) continue;
+    const gx = Number(o.gx), gy = Number(o.gy), gz = Number(o.gz);
+    if (![gx, gy, gz].every(Number.isFinite)) continue;
+    if (Math.abs(gx) > 2 || Math.abs(gz) > 2 || gy < 0 || gy > 4) continue;
+    const part: Record<string, unknown> = { kind: o.kind, gx, gy, gz };
+    if (typeof o.color === "number") part.color = o.color;
+    const rot = Number(o.rot);
+    if (Number.isFinite(rot) && rot !== 0) part.rot = (((rot % 4) + 4) % 4);
+    if (o.kind === "perch" && typeof o.petId === "string" && o.petId.length <= 40) part.petId = o.petId;
+    const tier = Number(o.tier);
+    if (o.kind === "trophy" && Number.isFinite(tier)) part.tier = Math.min(3, Math.max(0, Math.floor(tier)));
+    out.push(part);
+  }
+  return { parts: out };
+}
+
+const houseSocialFor = (s: State, key: string) =>
+  ((s.houseSocial ??= {})[key] ??= { likes: 0, visits: 0 });
+
 app.get("/house", (req, res) => {
   const owner = String(req.query.owner ?? "");
   const plot = String(req.query.plot ?? "");
   if (!owner || plot === "") return res.status(400).json({ error: "owner + plot required" });
   const s = load();
-  res.json({ house: s.houses[`${owner}:${plot}`] ?? null });
+  const key = `${owner}:${plot}`;
+  const house = s.houses[key] ?? null;
+  const social = houseSocialFor(s, key);
+  // A GET with ?visit=1 counts as a visit (only when there's a house to see).
+  if (house && req.query.visit === "1") {
+    social.visits += 1;
+    save(s);
+  }
+  res.json({ house, likes: social.likes, visits: social.visits });
 });
 
 /** Save a plot's house layout. Open by design (it's cosmetic, no value); add
@@ -259,14 +304,27 @@ app.post("/house", (req, res) => {
   if (typeof owner !== "string" || (typeof plot !== "number" && typeof plot !== "string")) {
     return res.status(400).json({ error: "owner + plot required" });
   }
-  const parts = (house as { parts?: unknown })?.parts;
-  if (!Array.isArray(parts) || parts.length > 400) {
-    return res.status(400).json({ error: "invalid house (parts array, max 400)" });
-  }
+  const clean = sanitizeHousePayload(house);
+  if (!clean) return res.status(400).json({ error: "invalid house (parts array, max 400)" });
   const s = load();
-  s.houses[`${owner}:${plot}`] = house;
+  s.houses[`${owner}:${plot}`] = clean;
   save(s);
   res.json({ ok: true });
+});
+
+/** Like a house. Open/cosmetic; one POST = +1 like. */
+app.post("/house/like", (req, res) => {
+  const { owner, plot } = req.body ?? {};
+  if (typeof owner !== "string" || (typeof plot !== "number" && typeof plot !== "string")) {
+    return res.status(400).json({ error: "owner + plot required" });
+  }
+  const s = load();
+  const key = `${owner}:${plot}`;
+  if (!s.houses[key]) return res.status(404).json({ error: "no house" });
+  const social = houseSocialFor(s, key);
+  social.likes += 1;
+  save(s);
+  res.json({ ok: true, likes: social.likes });
 });
 
 /** Withdraw in-game balance to the wallet. Client proves ownership; server
