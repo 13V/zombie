@@ -851,4 +851,51 @@ export class Hud {
     const ov = document.getElementById("guest-down");
     if (ov) ov.style.display = "none";
   }
+
+  // ─────────────────── IDLE / PRESTIGE / STREAK OVERLAYS ───────────────────
+  // Full-screen overlay divs created lazily and appended near the menu/over
+  // overlays (same root, same .overlay sibling region as #overlay-start /
+  // #overlay-over). Each mirrors showGuestDown's idempotent inline-styled
+  // pattern so they need no CSS changes and can't collide with the other agents.
+
+  /** Format a duration (ms) as a friendly "Xh Ym" / "Ym" / "Zs" string. */
+  private fmtDuration(ms: number): string {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
+    return `${s}s`;
+  }
+
+  private overlayShell(id: string): HTMLElement {
+    let ov = document.getElementById(id);
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = id;
+      ov.style.cssText =
+        "position:fixed;inset:0;display:none;flex-direction:column;align-items:center;" +
+        "justify-content:center;gap:16px;background:rgba(8,10,16,0.74);z-index:60;" +
+        "font-family:inherit;color:#f4f4f4;text-align:center;pointer-events:auto;padding:24px;";
+      this.root.appendChild(ov);
+    }
+    return ov;
+  }
+
+  /** "While You Were Away": offline gold/essence accrued, capped, since lastSeen. */
+  showWelcomeBack(info: { gold: number; essence: number; durationMs: number }) {
+    const ov = this.overlayShell("overlay-welcomeback");
+    ov.innerHTML =
+      `<div style="font-size:30px;font-weight:800;letter-spacing:1px;">Welcome back</div>` +
+      `<div style="opacity:0.85;max-width:380px;">You were away ${this.fmtDuration(info.durationMs)}. Your bankers kept working — at half pace.</div>` +
+      `<div style="font-size:22px;font-weight:700;margin-top:4px;">+${info.gold} 🪙` +
+      (info.essence > 0 ? `  ·  +${info.essence} ✦` : "") +
+      `</div>` +
+      `<button id="btn-welcomeback-ok" style="margin-top:10px;padding:12px 30px;font:inherit;` +
+      `font-weight:700;cursor:pointer;border:none;border-radius:10px;background:#5aa9e0;color:#fff;">Collect</button>`;
+    (ov.querySelector("#btn-welcomeback-ok") as HTMLButtonElement).onclick = () => {
+      ov.style.display = "none";
+    };
+    ov.style.display = "flex";
+  }
 }

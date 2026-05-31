@@ -223,6 +223,9 @@ export function loadSave(): SaveData {
 }
 
 export function writeSave(data: SaveData) {
+  // Stamp the "last seen" wall-clock on every persist so offline accrual on the
+  // next boot measures from the true last interaction (see idle.offlineGold).
+  data.lastSeen = Date.now();
   try {
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch {

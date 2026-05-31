@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, PETS_TUNING, PLAYER, SCORE, ZOMBIE } from "./config";
+import { CAMERA, COSTS, PETS_TUNING, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE } from "./config";
 import { glowMaterial } from "./palette";
 import { Input } from "./input";
 import { Arena } from "./arena";
@@ -35,6 +35,7 @@ import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
+import { offlineGold, prestigeMultiplier } from "./idle";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
@@ -348,6 +349,11 @@ class Game implements GameApi {
     addEventListener("resize", this.onResize);
     this.onResize();
     this.hud.showStart();
+
+    // Idle economy boot: credit offline banker gold (capped, half-rate) and show
+    // the "While You Were Away" screen. Reads wall-clock vs save.lastSeen and
+    // persists; a safe no-op on a brand-new save.
+    this.settleOffline();
 
     this.resetRun(); // place player + default weapon so the menu scene looks alive
     requestAnimationFrame(this.loop);
@@ -1977,6 +1983,44 @@ class Game implements GameApi {
           }
         }
       });
+    }
+  }
+
+  /** Summed ACTIVE gold/sec of every owned banker pet, using the SAME flattened
+   *  rate as the live updatePets loop (roleValue * (1 + (level-1)*scale)). This
+   *  is the basis for offline accrual (idle.offlineGold halves it). */
+  private ownedBankerRatePerSec(): number {
+    let rate = 0;
+    for (const id of this.save.pets) {
+      const def = findAnyPet(id);
+      if (!def || def.role !== "banker") continue;
+      const level = this.save.petLevels[id] ?? 1;
+      rate += (def.roleValue ?? 0) * (1 + (level - 1) * PETS_TUNING.bankerLevelScale);
+    }
+    return rate;
+  }
+
+  /** On boot: pay out gold the owned bankers minted while the tab was closed
+   *  (half rate, capped), and show the "While You Were Away" screen if it's
+   *  worth surfacing. Silent for first-ever saves (lastSeen === 0). */
+  private settleOffline() {
+    if (this.save.lastSeen <= 0) return; // brand-new save — nothing accrued yet
+    const elapsed = Date.now() - this.save.lastSeen;
+    const rate = this.ownedBankerRatePerSec();
+    const gross = offlineGold(rate, elapsed, IDLE.offlineCapMs);
+    if (gross <= 0) return;
+    // Prestige multiplier applies to offline gold too (it's the same faucet).
+    const mul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
+    const gold = Math.floor(gross * mul);
+    if (gold <= 0) return;
+    this.save.gold += gold;
+    this.save.goldEarned += gold;
+    this.save.lifetimeGold += gold;
+    writeSave(this.save);
+    this.renderShop();
+    if (gold >= IDLE.welcomeBackMinGold) {
+      const durationMs = Math.min(elapsed, IDLE.offlineCapMs);
+      this.hud.showWelcomeBack({ gold, essence: 0, durationMs });
     }
   }
 
