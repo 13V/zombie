@@ -214,7 +214,7 @@ export class RoundManager {
 
     // Swarm/dog round: short burst of fast/weak enemies from all sides.
     this.isSwarm = n >= ROUNDS.swarmEvery && n % ROUNDS.swarmEvery === 0 && n % 5 !== 0;
-    let count = ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound;
+    let count = Math.min(ROUNDS.countCap, ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound);
     if (this.isSwarm) {
       count = Math.round(count * 0.7);
       this.curMaxAlive = Math.min(this.maxAliveCeiling + 8, Math.round(this.curMaxAlive * 1.4));

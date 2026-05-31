@@ -46,17 +46,20 @@ export const ZOMBIE = {
 export const ROUNDS = {
   baseCount: 6, // zombies in round 1
   countPerRound: 4, // extra zombies per round
-  intermission: 4, // breather between rounds (seconds)
-  // The three ceilings are ROUND-SCALED (the real fix for late-game farming):
-  // a flat cap lets rising DPS empty the screen; a rising cap + faster spawns
-  // FILL it. With auto-firing pets the only way to keep pressure is overwhelming
-  // density, so the ramp past the inflection is aggressive.
+  // Per-round zombie COUNT is CAPPED so high rounds stay short (the key to
+  // reaching R100-200 in an hour or two). Past the cap, difficulty comes from
+  // HP + elites + speed, NOT from ever-more bodies — otherwise R200 would spawn
+  // 800 zombies and take minutes. count = min(countCap, base + (n-1)*perRound).
+  countCap: 50, // max zombies a round will spawn (reached ~R12)
+  intermission: 2.2, // breather between rounds (seconds) — was 4, snappier pacing
+  // The three ceilings are ROUND-SCALED: a rising alive-cap + faster spawns keep
+  // the screen full even as pets clear. Aggressive so late game stays a wall.
   maxAliveBase: 32, // cap through the inflection round
-  maxAlivePerRound: 6, // +per round past inflection (was 3 — double the density ramp)
-  maxAliveCap: 160, // desktop ceiling (was 100 — late game should be a wall of undead)
-  spawnIntervalBase: 0.9, // seconds between spawns through inflection
-  spawnIntervalMin: 0.22, // floor of the spawn-interval ramp (was 0.4 — spawn nearly 2x faster late)
-  spawnIntervalDecay: 0.07, // -per round past inflection (was 0.05 — reach the floor sooner)
+  maxAlivePerRound: 6, // +per round past inflection
+  maxAliveCap: 160, // desktop ceiling (mobile uses a lower one — see main.ts)
+  spawnIntervalBase: 0.7, // seconds between spawns through inflection (was 0.9 — faster early too)
+  spawnIntervalMin: 0.14, // floor of the spawn-interval ramp (was 0.22 — a near-firehose late)
+  spawnIntervalDecay: 0.08, // -per round past inflection (reach the floor by ~R16)
   swarmEvery: 7, // every Nth round is a fast "swarm/dog" round
 };
 
