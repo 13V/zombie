@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { COSTS, GUMS } from "./config";
+import { COSTS, GUMS, TRAP } from "./config";
 import { COLORS, VOX, glowMaterial, voxelMaterial } from "./palette";
 import { WEAPONS } from "./weapons";
 import { GunStyle, buildGun } from "./gunModels";
@@ -38,6 +38,9 @@ export interface GameApi {
   papInfo(): { cost: number | null; tier: number };
   /** Dispense a random Gobblegum power-up. */
   giveRandomGum(): void;
+  /** Arm a map trap: register a lethal hazard zone main runs for TRAP.duration.
+   *  Spends the cost; returns false (no charge) if unaffordable. */
+  triggerTrap(pos: THREE.Vector3, radius: number, kind: "electric" | "fire"): boolean;
   toast(msg: string): void;
 }
 
@@ -543,6 +546,80 @@ class PerkPad implements Interactable {
   }
 }
 
+/**
+ * A lurable map trap: an electrified / flame pad you pay to arm. While armed it
+ * fries every zombie standing in its zone (main applies the damage via the
+ * active-trap list registered by game.triggerTrap). Self-manages a duration +
+ * recharge and a glow that reads ready / ACTIVE / recharging.
+ */
+class Trap implements Interactable {
+  readonly group = new THREE.Group();
+  range = 2.8;
+  private t = 0;
+  private armed = 0; // seconds of lethal time remaining
+  private cooling = 0; // seconds of recharge remaining
+  private pad: THREE.Mesh;
+  private coils: THREE.Mesh[] = [];
+  private label: string;
+
+  constructor(public pos: THREE.Vector3, private kind: "electric" | "fire") {
+    const { x, z } = pos;
+    const color = kind === "electric" ? 0x6ad7ff : 0xff6a1f;
+    this.label = kind === "electric" ? "Tesla" : "Flame";
+    const baseMat = voxelMaterial(VOX.steelDark);
+    // sunken hazard pad (its own glow material instance so we can animate it)
+    this.pad = new THREE.Mesh(BOX, glowMaterial(color, 0.35));
+    this.pad.scale.set(TRAP.radius * 1.2, 0.12, TRAP.radius * 1.2);
+    this.pad.position.set(x, 0.06, z);
+    this.group.add(this.pad);
+    // corner emitters: tesla coils / flame vents
+    for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+      const px = x + ox * TRAP.radius * 0.5;
+      const pz = z + oz * TRAP.radius * 0.5;
+      this.group.add(vox(0.3, 0.6, 0.3, px, 0.4, pz, baseMat, true));
+      const cap = new THREE.Mesh(BOX, glowMaterial(color, 1.4));
+      cap.scale.set(0.36, 0.18, 0.36);
+      cap.position.set(px, 0.82, pz);
+      this.group.add(cap);
+      this.coils.push(cap);
+    }
+  }
+
+  prompt(game: GameApi) {
+    if (this.armed > 0) return { text: `${this.label} Trap — ACTIVE`, affordable: false };
+    if (this.cooling > 0) return { text: `${this.label} Trap — recharging…`, affordable: false };
+    return { text: `[E] ${this.label} Trap — ${COSTS.trap}`, affordable: game.points >= COSTS.trap };
+  }
+
+  interact(game: GameApi) {
+    if (this.armed > 0 || this.cooling > 0) return;
+    if (game.triggerTrap(this.pos, TRAP.radius, this.kind)) this.armed = TRAP.duration;
+  }
+
+  update(dt: number) {
+    this.t += dt;
+    if (this.armed > 0) {
+      this.armed -= dt;
+      // crackle: bob + flicker the emitters while live
+      for (let i = 0; i < this.coils.length; i++) {
+        const c = this.coils[i];
+        c.position.y = 0.82 + Math.sin(this.t * 16 + i) * 0.08;
+        c.visible = Math.sin(this.t * 30 + i * 1.7) > -0.6;
+      }
+      this.pad.scale.y = 0.12 + Math.abs(Math.sin(this.t * 10)) * 0.05;
+      if (this.armed <= 0) this.cooling = TRAP.cooldown;
+    } else {
+      if (this.cooling > 0) this.cooling -= dt;
+      const ready = this.cooling <= 0;
+      for (const c of this.coils) {
+        c.visible = true;
+        c.position.y = 0.82 + (ready ? Math.sin(this.t * 2) * 0.03 : -0.18);
+      }
+      this.pad.scale.y = ready ? 0.12 : 0.05;
+    }
+  }
+}
+
 /** Builds and manages all the buyable things in the arena. */
 export class Interactables {
   readonly list: Interactable[] = [];
@@ -563,6 +640,9 @@ export class Interactables {
     // buyable map spots: clear rubble to reveal a wall-buy weapon stall
     const gateW = new DebrisGate(new THREE.Vector3(-half + 3, 0, 0), COSTS.debris, "boomstick", COSTS.wallBuy + 500);
     const gateE = new DebrisGate(new THREE.Vector3(half - 3, 0, 0), COSTS.debris, "marksman", COSTS.wallBuy + 1500);
+    // lurable map traps: herd the horde onto the pad and zap/ignite it
+    const trapN = new Trap(new THREE.Vector3(0, 0, half - 7), "electric");
+    const trapS = new Trap(new THREE.Vector3(0, 0, -half + 8), "fire");
 
     items.push({ i: wall, group: wall.group });
     items.push({ i: wheel, group: wheel.group });
@@ -572,6 +652,8 @@ export class Interactables {
     items.push({ i: quick, group: quick.group });
     items.push({ i: gateW, group: gateW.group });
     items.push({ i: gateE, group: gateE.group });
+    items.push({ i: trapN, group: trapN.group });
+    items.push({ i: trapS, group: trapS.group });
 
     for (const { i, group } of items) {
       this.list.push(i);

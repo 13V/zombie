@@ -126,6 +126,17 @@ export const COSTS = {
   packAPunch: 2500,
   gobblegum: 1500,
   debris: 750,
+  trap: 1000, // arm a map trap (electric/fire hazard zone) for a few seconds
+};
+
+/** Lurable map traps: pay to electrify/ignite a zone for a few seconds, then it
+ *  recharges. A skill-expression tool — herd the horde onto the pad and zap it. */
+export const TRAP = {
+  radius: 4.2, // hazard zone radius
+  duration: 5, // seconds the trap stays lethal once armed
+  cooldown: 11, // seconds before it can be re-armed
+  dpsBase: 160, // base damage/sec to zombies in the zone
+  dpsPerRound: 70, // +damage/sec per round so it scales into the late game
 };
 
 /** A zombie variant. Multipliers stack on the round's base health/speed. */

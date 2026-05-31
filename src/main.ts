@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, ELITE, PETS_TUNING, PET_DEPTH, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY, RAMPAGE, GOBLIN } from "./config";
+import { CAMERA, COSTS, ELITE, PETS_TUNING, PET_DEPTH, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY, RAMPAGE, GOBLIN, TRAP } from "./config";
 import { Input } from "./input";
 import { Arena } from "./arena";
 import { Player } from "./player";
@@ -122,6 +122,9 @@ class Game implements GameApi {
   private rampage = 0; // player-kill stacks (decays); drives the rampage multiplier
   private rampageDecay = 0; // seconds left before the stack starts draining
   private _rampageTier = ""; // last announced tier name (so we only toast on climb)
+  /** Armed map traps: lethal hazard zones ticking damage to zombies inside. */
+  private activeTraps: { x: number; z: number; r: number; dps: number; kind: "electric" | "fire"; t: number; fx: number }[] = [];
+  private _trapFx = new THREE.Vector3(); // scratch for trap FX positions
   private wallet = new Wallet();
 
   // progression
@@ -411,6 +414,7 @@ class Game implements GameApi {
     this.sparks.clear();
     this.hitStop = 0;
     this.rampage = 0; this.rampageDecay = 0; this._rampageTier = "";
+    this.activeTraps.length = 0;
     // NOTE: chronosActive is owned by spawnPets() (called above) — do NOT reset
     // it here or it wipes the flag spawnPets just set, killing OVERDRIVE.
     this.hud.setCombo(0, 0);
@@ -1259,6 +1263,7 @@ class Game implements GameApi {
       hasPerk: (p) => self.withActor(actor, () => self.hasPerk(p)),
       upgradeCurrentWeapon: () => self.withActor(actor, () => self.upgradeCurrentWeapon()),
       papInfo: () => self.withActor(actor, () => self.papInfo()),
+      triggerTrap: (pos, radius, kind) => self.withActor(actor, () => self.triggerTrap(pos, radius, kind)),
       giveRandomGum: () => self.withActor(actor, () => self.giveRandomGum()),
       toast: (m) => self.withActor(actor, () => self.toast(m)),
     };
@@ -1898,6 +1903,7 @@ class Game implements GameApi {
     this.updatePets(dt);
     this.resolveRangedFliers();
     this.resolveBlazingTrails();
+    this.resolveTraps(dt);
 
     this.resolveBulletHits();
     this.resolveZombieTouch(dt);
@@ -3183,6 +3189,49 @@ class Game implements GameApi {
         this.audio.hurt();
         this.runStats.tookDamage = true;
       }
+    }
+  }
+
+  /** GameApi: arm a map trap. Spends the cost, registers a lethal hazard zone
+   *  the simulate loop runs for TRAP.duration (damage scales with the round). */
+  triggerTrap(pos: THREE.Vector3, radius: number, kind: "electric" | "fire"): boolean {
+    if (!this.spend(COSTS.trap)) return false;
+    const dps = TRAP.dpsBase + this.rounds.round * TRAP.dpsPerRound;
+    this.activeTraps.push({ x: pos.x, z: pos.z, r: radius, dps, kind, t: TRAP.duration, fx: 0 });
+    this.audio.powerup();
+    this.toast(kind === "electric" ? "⚡ TESLA TRAP ARMED" : "🔥 FLAME TRAP ARMED");
+    this.shake = Math.min(0.4, this.shake + 0.15);
+    return true;
+  }
+
+  /** Tick armed map traps: damage every zombie inside the zone (dt-scaled) and
+   *  throw off crackle/flame FX a few times a second. */
+  private resolveTraps(dt: number) {
+    if (this.activeTraps.length === 0) return;
+    for (let i = this.activeTraps.length - 1; i >= 0; i--) {
+      const tr = this.activeTraps[i];
+      tr.t -= dt;
+      tr.fx -= dt;
+      const color = tr.kind === "electric" ? 0x6ad7ff : 0xff6a1f;
+      const r2 = tr.r * tr.r;
+      const dmg = tr.dps * dt;
+      const sMul = this.powerups.scoreMul();
+      this.rounds.grid.forNear(tr.x, tr.z, tr.r, (z) => {
+        if (!z.alive || z.isBoss) return; // bosses shrug off traps
+        const dx = z.pos.x - tr.x;
+        const dz = z.pos.z - tr.z;
+        if (dx * dx + dz * dz > r2) return;
+        this.damageZombie(z, dmg, sMul);
+      });
+      if (tr.fx <= 0) {
+        tr.fx = 0.12;
+        const ax = tr.x + (Math.random() - 0.5) * tr.r * 1.7;
+        const az = tr.z + (Math.random() - 0.5) * tr.r * 1.7;
+        this._trapFx.set(ax, 0.3, az);
+        this.puffs.burst(this._trapFx, color, 4);
+        this.sparks.burst(this._trapFx, color, 3, { speed: 7, spread: 3, streak: tr.kind === "electric" });
+      }
+      if (tr.t <= 0) this.activeTraps.splice(i, 1);
     }
   }
 
