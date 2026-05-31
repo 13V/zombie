@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { DIFFICULTY, ELITE, ROUNDS, SPECIAL_ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
+import { CURSE, DIFFICULTY, ELITE, ROUNDS, SPECIAL_ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
 import { Affix, Zombie } from "./zombie";
 import { Arena } from "./arena";
 import { AssetManager } from "./assets";
@@ -50,6 +50,14 @@ export class RoundManager {
   /** Lowered on mobile to protect the frame budget (set from main.ts). */
   maxAliveCeiling = ROUNDS.maxAliveCap;
 
+  /**
+   * Opt-in Curse multiplier (≥1). Raising it makes enemies faster / tankier /
+   * spawn quicker AND lifts score+loot proportionally (see curseRewardMul). The
+   * player nudges it between rounds via the HUD slider; main applies the reward
+   * side. Enemy-side scaling is baked into beginRound + spawn here.
+   */
+  curse = CURSE.min;
+
   private bossPending = false;
 
   /** The active round's special flavoring (null on a plain round). */
@@ -99,6 +107,20 @@ export class RoundManager {
    */
   get specialRound(): SpecialRound | null {
     return this.special;
+  }
+
+  /** Score + loot multiplier earned by the current Curse level (≥1). main folds
+   *  this into points/loot so the risk pays out proportionally. */
+  get curseRewardMul(): number {
+    return 1 + (this.curse - 1) * CURSE.rewardScale;
+  }
+
+  /** Nudge the Curse up/down by `dir` steps, clamped to [min,max]. Returns the
+   *  new value. Intended for the between-rounds HUD slider. */
+  adjustCurse(dir: number): number {
+    const next = this.curse + Math.sign(dir) * CURSE.step;
+    this.curse = Math.max(CURSE.min, Math.min(CURSE.max, Math.round(next / CURSE.step) * CURSE.step));
+    return this.curse;
   }
 
   /** Highest difficulty tier unlocked by the current coeff. */
@@ -199,6 +221,16 @@ export class RoundManager {
       this.curSpawnInterval *= 0.5; // twice as fast
     }
     this.toSpawn = count;
+
+    // Curse: opt-in risk→reward. A curse >1 scales enemy HP/speed up and spawns
+    // in quicker; the matching reward bump lives in curseRewardMul (applied by
+    // main). Folded in last so it stacks on every round/swarm adjustment above.
+    const c = this.curse - 1;
+    if (c > 0) {
+      this.curHealth *= 1 + c * CURSE.hpScale;
+      this.curSpeed = Math.min(ZOMBIE.speedCap * 1.3, this.curSpeed * (1 + c * CURSE.speedScale));
+      this.curSpawnInterval = Math.max(ROUNDS.spawnIntervalMin * 0.5, this.curSpawnInterval / (1 + c * CURSE.spawnScale));
+    }
 
     this.spawnTimer = 0;
     this.phase = "active";

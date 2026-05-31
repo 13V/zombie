@@ -323,12 +323,16 @@ class Game implements GameApi {
       }
       this.audio.roundStart();
       this.audio.setIntensity(n / 20);
+      this.hud.setCurseVisible(false); // lock the dial while the round is live
     };
     this.rounds.onIntermission = () => {
       const cleared = this.rounds.round;
       const bonus = SCORE.roundBonusBase + (cleared - 1) * SCORE.roundBonusPerRound;
       this.addPoints(bonus);
       this.hud.toast(`Round clear  +${bonus}`);
+      // Between rounds: surface the Curse dial so the player can up the stakes.
+      this.hud.setCurse(this.rounds.curse, this.rounds.curseRewardMul);
+      this.hud.setCurseVisible(true);
       // Solo: offer a level-up pick during the breather (skipped in co-op).
       if (!this.netplay) this.offerLevelUp();
     };
@@ -343,6 +347,14 @@ class Game implements GameApi {
       this.audio.roundStart();
       this.shake = Math.min(0.4, this.shake + 0.2);
     };
+
+    // Curse slider: between-rounds risk→reward dial. Adjust clamps in rounds +
+    // reflects the new reward multiplier on the chip.
+    this.hud.buildCurseSlider((dir) => {
+      this.rounds.adjustCurse(dir);
+      this.hud.setCurse(this.rounds.curse, this.rounds.curseRewardMul);
+    });
+    this.hud.setCurse(this.rounds.curse, this.rounds.curseRewardMul);
 
     this.hud.onStart(() => this.startRun());
     this.hud.onRestart(() => this.startRun());
@@ -738,6 +750,8 @@ class Game implements GameApi {
     this.audio.stopMusic();
     this.audio.hurt();
     this.hud.hideBoss();
+    this.hud.setCurseVisible(false);
+    this.hud.setScreenTint(null);
     // Co-op host: let guests know the team wiped (they resume when host replays).
     this.netplay?.hostNotify("Team wiped — waiting for host…");
 
