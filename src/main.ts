@@ -847,13 +847,32 @@ class Game implements GameApi {
 
   private applyUpgrade(id: string) {
     if (this.levelPicking) return;
-    // the picker only ever offers cards from this.levelCards (deck + limit-breaks)
-    const u = this.levelCards.find((x) => x.id === id) ?? RUN_UPGRADES.find((x) => x.id === id);
-    if (!u) return;
+    // The HUD has ALREADY locked the cards + visually "chosen" this one before
+    // calling us, so from here EVERY path must end by dismissing the picker and
+    // resuming — otherwise the run hangs "stuck on the chosen card". We mark
+    // levelPicking immediately and let scheduleLevelUpResume() be the one and
+    // only exit; a stale id or a throw inside applyUpgradeCard can't strand it.
     this.levelPicking = true;
-    this.applyUpgradeCard(u);
-    this.hud.toast(`${u.name}!`);
-    this.audio.powerup();
+    try {
+      // the picker only ever offers cards from this.levelCards (deck + limit-breaks)
+      const u = this.levelCards.find((x) => x.id === id) ?? RUN_UPGRADES.find((x) => x.id === id);
+      if (u) {
+        this.applyUpgradeCard(u);
+        this.hud.toast(`${u.name}!`);
+        this.audio.powerup();
+      }
+    } catch (e) {
+      // A bad upgrade must never freeze the run on the picker — log and recover.
+      console.error("level-up apply failed:", e);
+    } finally {
+      this.scheduleLevelUpResume();
+    }
+  }
+
+  /** Dismiss the level-up picker and unfreeze the run after the card's selection
+   *  animation. The SOLE resume path (see applyUpgrade) — also self-heals if a
+   *  previous pick somehow left levelPicking stuck by always clearing it. */
+  private scheduleLevelUpResume() {
     // let the card's selection animation finish before unfreezing the game
     setTimeout(() => {
       this.hud.hideLevelUp();
