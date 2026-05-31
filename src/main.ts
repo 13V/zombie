@@ -1407,6 +1407,10 @@ class Game implements GameApi {
     for (const p of this.pets) {
       if (p.def.role === "buffer") petBuff += (p.def.roleValue ?? 0) * p.level;
     }
+    // Pets inherit your whole upgrade tree, exactly like your own gun. Fire Rate
+    // (incl. Adrenaline) speeds their cadence the same way it speeds yours.
+    const adr = this.mods.adrenaline ? 1 + (1 - this.player.health / this.player.maxHealth) * 0.6 : 1;
+    const petFireRate = this.powerups.fireRateMul() * this.mods.fireRateMul * adr;
     for (let i = 0; i < this.pets.length; i++) {
       const pet = this.pets[i];
       // Signature ability (Epic+): periodic special, fires regardless of role.
@@ -1431,16 +1435,33 @@ class Game implements GameApi {
         this._petTgt.z = near.pos.z;
         tgt = this._petTgt;
       }
-      const shot = pet.update(dt, px, pz, i, this.pets.length, tgt);
+      const shot = pet.update(dt, px, pz, i, this.pets.length, tgt, petFireRate);
       if (shot) {
         const d = pet.def;
-        this.hitTmp.set(shot.ox, 1.0, shot.oz);
-        this._petDir.set(shot.dx, 0, shot.dz);
-        this.bullets.spawn(this.hitTmp, this._petDir, {
-          // pet level x its own dmg x 60% of your damage scaling (every upgrade buffs the squad)
-          speed: 56, damage: d.damage * pet.damageMul * petBuff * (1 + (this.mods.damageMul - 1) * 0.6), pierce: d.pierce + this.mods.pierceBonus, splashRadius: d.splashRadius,
-          splashDamage: d.splashDamage, color: d.bulletColor, scale: d.bulletScale, homing: d.homing,
-        });
+        // Base damage only — damageMul / crit / cryo / explosive / chain are
+        // applied for ALL bullets in resolveBulletHits (the shared player path),
+        // so pets scale with Damage 1:1 with you (no double-dip). Here we attach
+        // the spawn-time mods your gun gets: pierce, bullet size, ricochet,
+        // homing, and Multishot (extra fanned pellets).
+        const baseDamage = d.damage * pet.damageMul * petBuff;
+        const pellets = 1 + Math.max(0, this.mods.bonusPellets);
+        for (let s = 0; s < pellets; s++) {
+          if (s === 0) {
+            this._petDir.set(shot.dx, 0, shot.dz);
+          } else {
+            // fan the extra multishot pellets symmetrically around the aim
+            const ang = (s % 2 === 0 ? 1 : -1) * Math.ceil(s / 2) * 0.12;
+            const c = Math.cos(ang), sn = Math.sin(ang);
+            this._petDir.set(shot.dx * c - shot.dz * sn, 0, shot.dx * sn + shot.dz * c);
+          }
+          this.hitTmp.set(shot.ox, 1.0, shot.oz);
+          this.bullets.spawn(this.hitTmp, this._petDir, {
+            speed: 56, damage: baseDamage, pierce: d.pierce + this.mods.pierceBonus,
+            splashRadius: d.splashRadius, splashDamage: d.splashDamage, color: d.bulletColor,
+            scale: d.bulletScale * this.mods.bulletScaleMul, homing: Math.max(d.homing, this.mods.homing),
+            bounces: this.mods.ricochet,
+          });
+        }
       }
     }
   }
@@ -1460,6 +1481,10 @@ class Game implements GameApi {
     const pz = pet.group.position.z;
     const sMul = this.powerups.scoreMul();
     const dmg = ab.power * pet.damageMul * petBuff;
+    // Bullet-based abilities (nova/volley/coins) inherit Damage via resolveBulletHits.
+    // Direct-hit abilities (chain/meteor/smite/execute/obliterate) bypass it, so
+    // bake your Damage upgrade in here for the same 1:1 scaling.
+    const dmgDirect = dmg * this.mods.damageMul;
     const col = pet.def.bulletColor;
     const near = grid.nearest(px, pz, 64);
     // count this cast toward the pet's evolution trial (per-pet, free to attribute)
@@ -1515,7 +1540,7 @@ class Game implements GameApi {
           // electric snap at each arc node
           this.explosions.flash(cur.pos, 1.5, 0x9fe8ff);
           this.sparks.burst(cur.pos, 0xcdefff, 6, { speed: 9, spread: 3, streak: true });
-          this.damageZombie(cur, dmg, sMul);
+          this.damageZombie(cur, dmgDirect, sMul);
           cur = this.nearestZombie(cur.pos.x, cur.pos.z, 7, hit);
         }
         break;
@@ -1533,7 +1558,7 @@ class Game implements GameApi {
           this.explosions.beam(this._abilTmp, 5.5, 0xffb04a);
           this.explosions.burst(this._abilTmp, r * 1.2, 0xff7a3a);
           this.sparks.burst(this._abilTmp, 0xffa23a, 8, { speed: 7, spread: 5 });
-          this.splash(this._abilTmp, r, dmg, -1, sMul);
+          this.splash(this._abilTmp, r, dmgDirect, -1, sMul);
         }
         this.shake = Math.min(0.6, this.shake + 0.18);
         break;
@@ -1548,7 +1573,7 @@ class Game implements GameApi {
         this.explosions.flash(this._abilTmp, r, col);
         this.explosions.burst(this._abilTmp, r * 1.1, col);
         this.sparks.burst(this._abilTmp, col, 14, { speed: 9, spread: 6, streak: true });
-        this.splash(this._abilTmp, r, dmg, -1, sMul);
+        this.splash(this._abilTmp, r, dmgDirect, -1, sMul);
         if (ab.slow) grid.forNear(cx, cz, r, (z) => { if (z.alive) z.applySlow(ab.slow!, 2.5); });
         if (ab.heal) {
           this.player.heal(ab.heal);
@@ -1573,7 +1598,7 @@ class Game implements GameApi {
           if (dx * dx + dz * dz > r2) return;
           const lethal = !z.isBoss && z.health <= z.maxHealth * thr;
           if (lethal) this.sparks.burst(z.pos, 0xc0a0ff, 5, { speed: 7, spread: 4, streak: true });
-          this.damageZombie(z, lethal ? 1e9 : dmg, sMul);
+          this.damageZombie(z, lethal ? 1e9 : dmgDirect, sMul);
         });
         break;
       }
@@ -1602,7 +1627,7 @@ class Game implements GameApi {
           this.explosions.burst(this._abilTmp, ab.radius, 0xffd24a);
           this.explosions.beam(this._abilTmp, 7, 0xffe07a);
           this.sparks.burst(this._abilTmp, 0xffe07a, 18, { speed: 10, spread: 8, streak: true });
-          this.splash(this._abilTmp, ab.radius, dmg, -1, sMul);
+          this.splash(this._abilTmp, ab.radius, dmgDirect, -1, sMul);
         }
         break;
       }
@@ -1617,7 +1642,7 @@ class Game implements GameApi {
         this.explosions.shockwave(this._abilTmp, r * 1.3, 0xff7aff);
         this.explosions.shockwave(this._abilTmp, r * 0.65, 0xffffff);
         this.sparks.burst(this._abilTmp, 0xff7aff, 24, { speed: 14, spread: 8, streak: true });
-        this.splash(this._abilTmp, r, dmg, -1, sMul);
+        this.splash(this._abilTmp, r, dmgDirect, -1, sMul);
         this.floaters.spawn(pet.group.position, "ANNIHILATE!", "#ff3aff", 1.7, true);
         break;
       }

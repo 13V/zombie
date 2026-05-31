@@ -783,7 +783,7 @@ export class Pet {
   /**
    * Update orbit + animation + fire. Returns a shot when it fires this frame.
    */
-  update(dt: number, playerX: number, playerZ: number, idx: number, total: number, target: { x: number; z: number } | null): { ox: number; oz: number; dx: number; dz: number } | null {
+  update(dt: number, playerX: number, playerZ: number, idx: number, total: number, target: { x: number; z: number } | null, fireRateMul = 1): { ox: number; oz: number; dx: number; dz: number } | null {
     // orbit around the player
     this.orbitAngle += dt * 1.4;
     const slot = (idx / Math.max(1, total)) * Math.PI * 2;
@@ -825,7 +825,8 @@ export class Pet {
       const dist = Math.hypot(dx, dz);
       this.group.rotation.y = Math.atan2(dx, dz);
       if (dist <= this.def.range && this.cd <= 0) {
-        this.cd = this.interval;
+        // your Fire Rate upgrades make pets shoot faster too (same as your gun)
+        this.cd = this.interval / Math.max(0.1, fireRateMul);
         this.onFire();
         const len = dist || 1;
         return { ox, oz, dx: dx / len, dz: dz / len };
