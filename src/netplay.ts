@@ -129,6 +129,31 @@ export interface GuestSlot {
 
 const PLAYER_COLORS = [COLORS.player, 0xe06a4a, 0x53b36a, 0xc78ad8];
 
+/** Map a networked player/zombie id to a palette index, never going negative.
+ *  Guards `PLAYER_COLORS[(id-1) % len]` against a stray id=0 (→ index -1 →
+ *  undefined → `new RemoteFigure(scene, undefined)` crash). */
+function colorForId(id: number): number {
+  const idx = Math.max(0, (id - 1) % PLAYER_COLORS.length);
+  return PLAYER_COLORS[idx];
+}
+
+/** A host snapshot arrives over an untrusted relay; the guest must not trust it
+ *  wholesale. Reject anything whose shape could crash guestRender: players /
+ *  zombies must be arrays, and every entry must carry a finite id ≥ 1 (ids index
+ *  palettes and pooled views). Returns true only for a safe-to-render snapshot. */
+function isValidSnap(msg: SnapMsg): boolean {
+  if (!Array.isArray(msg.players) || !Array.isArray(msg.zombies)) return false;
+  for (const p of msg.players) {
+    if (!p || typeof p !== "object") return false;
+    if (!Number.isFinite(p.id) || p.id < 1) return false;
+  }
+  for (const z of msg.zombies) {
+    if (!z || typeof z !== "object") return false;
+    if (!Number.isFinite(z.id) || z.id < 1) return false;
+  }
+  return true;
+}
+
 /**
  * Owns all multiplayer state for a session. Two roles:
  *  - HOST: simulates a Player for every connected guest and broadcasts the
@@ -183,7 +208,7 @@ export class NetPlay {
   private addGuest(id: number) {
     if (!this.isHost || this.guests.has(id)) return;
     const player = new Player(this.scene, this.assets);
-    player.setSkin(PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length], COLORS.playerAccent);
+    player.setSkin(colorForId(id), COLORS.playerAccent);
     player.pos.set((Math.random() - 0.5) * 4, 0, 9);
     this.guests.set(id, {
       id,
@@ -349,7 +374,7 @@ export class NetPlay {
       } else {
         let fig = this.remote.get(ps.id);
         if (!fig) {
-          fig = new RemoteFigure(this.scene, PLAYER_COLORS[(ps.id - 1) % PLAYER_COLORS.length]);
+          fig = new RemoteFigure(this.scene, colorForId(ps.id));
           this.remote.set(ps.id, fig);
         }
         fig.setTarget(ps.x, ps.z, ps.ry, ps.walking);
@@ -406,7 +431,11 @@ export class NetPlay {
         if (msg.interact) slot.pendingInteract = true;
       }
     } else if (msg.t === "snap" && !this.isHost) {
-      this.latest = msg;
+      // The host snapshot is untrusted relay traffic — validate its shape before
+      // storing so guestRender's for-of loops + palette indexing can't crash on a
+      // non-array players/zombies or a stray id (0/negative/NaN). Drop bad frames;
+      // the next valid snapshot recovers (we keep the last good `latest`).
+      if (isValidSnap(msg)) this.latest = msg;
     } else if (msg.t === "shot" && !this.isHost) {
       // render a non-colliding tracer locally
       const origin = new THREE.Vector3(msg.x, 1.0, msg.z);
