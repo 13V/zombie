@@ -135,3 +135,18 @@ export function glowMaterial(color: number, intensity = 0.9) {
     emissiveIntensity: intensity,
   });
 }
+
+/** Translucent additive halo — for pet "aura" shells that must NOT hide the
+ *  face/body they surround (a soft glow you can see straight through). */
+export function auraMaterial(color: number, intensity = 0.5) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    emissive: color,
+    emissiveIntensity: intensity,
+    transparent: true,
+    opacity: 0.28,
+    depthWrite: false, // don't occlude the face/eyes behind it
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+}

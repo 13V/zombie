@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { voxelMaterial, glowMaterial } from "./palette";
+import { voxelMaterial, glowMaterial, auraMaterial } from "./palette";
 
 /**
  * One shared unit (1×1×1) BoxGeometry reused by every voxel `box()` in this
@@ -685,7 +685,7 @@ export class Pet {
         this.muzzle = box(0.1, 0.1, 0.1, 0, 0, 0.34, glow);
         break;
       case "wisp":
-        this.aura = box(0.52, 0.52, 0.52, 0, 0, 0, glowMaterial(col, 0.5));
+        this.aura = box(0.52, 0.52, 0.52, 0, 0, 0, auraMaterial(col, 0.5));
         box(0.34, 0.34, 0.34, 0, 0, 0, glow);
         box(0.16, 0.16, 0.16, 0, 0.34, 0, glow); // spark crown
         eye(-0.1, 0.03, 0.2, 0.11);
@@ -706,7 +706,7 @@ export class Pet {
         this.muzzle = box(0.16, 0.16, 0.1, 0, 0.18, 0.62, glow);
         break;
       case "ghost":
-        this.aura = box(0.62, 0.7, 0.62, 0, 0, 0, glowMaterial(col, 0.35));
+        this.aura = box(0.62, 0.7, 0.62, 0, 0, 0, auraMaterial(col, 0.35));
         box(0.48, 0.58, 0.48, 0, 0.02, 0, glowMaterial(col, 0.7));
         eye(-0.13, 0.12, 0.24, 0.16); // big adorable peepers
         eye(0.13, 0.12, 0.24, 0.16);
@@ -753,7 +753,7 @@ export class Pet {
         eye(0.12, 0.05, 0.24, 0.13);
         cheeks(-0.04, 0.25);
         smile(-0.08, 0.25, 0.12);
-        this.aura = box(0.7, 0.7, 0.7, 0, 0, 0, glowMaterial(this.def.color, 0.3)); // buff aura
+        this.aura = box(0.7, 0.7, 0.7, 0, 0, 0, auraMaterial(this.def.color, 0.3)); // buff aura
         break;
       case "drone":
         box(0.5, 0.34, 0.46, 0, 0.06, 0, body); // rounder little body
@@ -769,7 +769,7 @@ export class Pet {
         this.muzzle = box(0.13, 0.13, 0.1, 0, -0.12, 0.42, glow);
         break;
       case "slime":
-        this.aura = box(0.66, 0.5, 0.66, 0, -0.02, 0, glowMaterial(col, 0.3));
+        this.aura = box(0.66, 0.5, 0.66, 0, -0.02, 0, auraMaterial(col, 0.3));
         box(0.6, 0.4, 0.6, 0, -0.04, 0, glowMaterial(col, 0.45));
         box(0.46, 0.52, 0.46, 0, 0.1, 0, body); // wobbly blob top
         box(0.12, 0.1, 0.1, 0, 0.36, 0, glowMaterial(0xffffff, 0.7)); // shiny drip highlight
@@ -815,7 +815,7 @@ export class Pet {
         this.muzzle = box(0.1, 0.1, 0.1, 0, 0, 0.3, glow);
         break;
       case "crystal":
-        this.aura = box(0.6, 0.7, 0.6, 0, 0, 0, glowMaterial(col, 0.35));
+        this.aura = box(0.6, 0.7, 0.6, 0, 0, 0, auraMaterial(col, 0.35));
         box(0.34, 0.6, 0.34, 0, 0.06, 0, glowMaterial(col, 0.8)); // central shard
         box(0.18, 0.4, 0.18, -0.22, -0.08, 0, glowMaterial(col, 0.7));
         box(0.18, 0.4, 0.18, 0.22, -0.08, 0, glowMaterial(col, 0.7));
@@ -827,7 +827,7 @@ export class Pet {
         this.muzzle = box(0.12, 0.12, 0.12, 0, 0.06, 0.24, glowMaterial(0xffffff, 1.2));
         break;
       case "star":
-        this.aura = box(0.6, 0.6, 0.2, 0, 0, 0, glowMaterial(col, 0.4));
+        this.aura = box(0.6, 0.6, 0.2, 0, 0, 0, auraMaterial(col, 0.4));
         box(0.58, 0.16, 0.16, 0, 0, 0, glow); // cross spikes
         box(0.16, 0.58, 0.16, 0, 0, 0, glow);
         box(0.4, 0.4, 0.14, 0, 0, 0, glowMaterial(col, 0.9)); // core
@@ -854,7 +854,7 @@ export class Pet {
         this.muzzle = box(0.1, 0.1, 0.1, 0, -0.02, 0.3, glow);
         break;
       case "eye":
-        this.aura = box(0.6, 0.6, 0.6, 0, 0, 0, glowMaterial(col, 0.3));
+        this.aura = box(0.6, 0.6, 0.6, 0, 0, 0, auraMaterial(col, 0.3));
         box(0.5, 0.52, 0.5, 0, 0, 0, glowMaterial(0xffffff, 0.5)); // round sclera
         box(0.28, 0.3, 0.1, 0, -0.02, 0.22, glowMaterial(col, 0.9)); // big iris
         box(0.16, 0.16, 0.06, 0, -0.03, 0.3, dark); // pupil
@@ -900,11 +900,11 @@ export class Pet {
         box(0.12, 0.12, 0.12, 0.28, -0.02, 0.18, glow);
         box(0.12, 0.12, 0.12, -0.28, -0.02, -0.18, glow);
         box(0.12, 0.12, 0.12, 0.28, -0.02, -0.18, glow);
-        this.aura = box(0.3, 0.4, 0.3, 0, -0.24, 0, glowMaterial(col, 0.4)); // tractor beam
+        this.aura = box(0.3, 0.4, 0.3, 0, -0.24, 0, auraMaterial(col, 0.4)); // tractor beam
         this.muzzle = box(0.14, 0.14, 0.14, 0, -0.1, 0.34, glowMaterial(0x9fe8ff, 1.2));
         break;
       case "orb":
-        this.aura = box(0.6, 0.6, 0.6, 0, 0, 0, glowMaterial(col, 0.4));
+        this.aura = box(0.6, 0.6, 0.6, 0, 0, 0, auraMaterial(col, 0.4));
         box(0.42, 0.42, 0.42, 0, 0, 0, glow);
         box(0.6, 0.1, 0.1, 0, 0, 0, glowMaterial(0xffffff, 0.7)); // rings
         box(0.1, 0.6, 0.1, 0, 0, 0, glowMaterial(0xffffff, 0.7));
