@@ -340,6 +340,26 @@ export class Audio {
     });
   }
 
+  /**
+   * Rarity-tiered pickup chime. `tier` 0..4 (common→legendary) raises the root
+   * pitch and the sparkle so rarer drops sound distinctly more exciting. Rarer
+   * tiers also tap the reverb for a touch of grandeur. NON-CASHABLE feedback.
+   */
+  pickup(tier = 0) {
+    if (!this.ok()) return;
+    const t = Math.max(0, Math.min(4, Math.floor(tier)));
+    const root = 523 * this.semi(t * 2); // climb a whole-tone per tier
+    const w = t >= 3 ? this.wet(0.2) : undefined; // epic+ get a little space
+    // a short rising major-ish triad, longer/brighter for higher tiers
+    const steps = 3 + t; // more notes the rarer it is
+    for (let i = 0; i < steps; i++) {
+      const n = root * this.semi(i * 4); // major-third stack
+      this.blip("triangle", n * this.vary(20), 0.12, 0.13, { delay: i * 0.05, dest: w });
+      this.blip("square", n * 2, 0.05, 0.03, { delay: i * 0.05 }); // glint
+    }
+    if (t >= 4) this.blip("sine", root * 4, 0.3, 0.08, { delay: steps * 0.05, dest: w }); // legendary shimmer tail
+  }
+
   /** Buy / interaction confirm. */
   buy() {
     if (!this.ok()) return;

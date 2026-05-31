@@ -286,7 +286,7 @@ class Game implements GameApi {
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene, lowSpec);
     this.floaters = new FloatingText(this.scene);
-    this.drops = new Drops(this.scene);
+    this.drops = new Drops(this.scene, this.audio);
     this.explosions = new Explosions(this.scene, lowSpec);
     this.sparks = new Sparks(this.scene, lowSpec);
     this.hud = new Hud(ui);
