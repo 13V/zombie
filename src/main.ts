@@ -2280,21 +2280,12 @@ class Game implements GameApi {
     });
   }
 
-  /** Nearest alive zombie to (x,z) within `range`, skipping ids in `skip`. */
+  /** Nearest alive zombie to (x,z) within `range`, skipping ids in `skip`.
+   *  Thin wrapper over the spatial grid (O(local) not O(n)). The grid is rebuilt
+   *  in rounds.update (after steerHomingBullets in simulate), so callers here may
+   *  see a 1-frame-stale grid — fine for homing/ricochet/chain targeting. */
   private nearestZombie(x: number, z: number, range: number, skip?: Set<number>): Zombie | null {
-    let best: Zombie | null = null;
-    let bd = range * range;
-    for (const q of this.rounds.zombies) {
-      if (!q.alive || skip?.has(q.id)) continue;
-      const dx = q.pos.x - x;
-      const dz = q.pos.z - z;
-      const d = dx * dx + dz * dz;
-      if (d < bd) {
-        bd = d;
-        best = q;
-      }
-    }
-    return best;
+    return this.rounds.grid.nearest(x, z, range, skip);
   }
 
   /** Apply damage to one zombie and handle the score/FX if it dies. */
