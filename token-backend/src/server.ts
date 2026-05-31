@@ -1,19 +1,18 @@
 /**
  * Tiny Dead — token reward backend (REFERENCE SKELETON).
  *
- * This is the trusted authority the static game client cannot be. It owns the
- * earnings ledger and is the ONLY thing that signs treasury payouts. The client
- * (src/token.ts + src/wallet.ts) can only (a) read claimable and (b) forward a
- * wallet-signed claim request; it can never mint or authorize value.
+ * The trusted authority the static game client cannot be. It owns the $TOKEN
+ * ledger + treasury and is the ONLY thing that signs payouts. The client can
+ * only read balances and forward a wallet-signed claim; it never mints value.
  *
- * WHAT'S REAL HERE:  signature verification, replay protection, the ledger,
- * the claim flow, and a real SPL transfer when a treasury key is configured.
- * WHAT'S STUBBED (do before production — see README):
- *   - durable DB (this uses a JSON file; swap for Postgres/SQLite)
- *   - server-authoritative gameplay/score validation feeding /credit
- *   - anti-Sybil / bot / wash-trade detection, withdrawal limits, KYC, geofence
- *   - provably-fair box RNG hardening (commit-reveal here; consider on-chain VRF)
- *   - hot/cold treasury split + a global daily-outflow circuit breaker
+ * ECONOMY (see /ECONOMY.md): Pump.fun trading fees (+ box sales) fund the
+ * TREASURY. The treasury buys items from players (buyback) and relists them;
+ * players also sell to each other on the marketplace with a 5% fee back to the
+ * treasury. Players withdraw their in-game balance to their wallet via /claim.
+ *
+ * STILL STUBBED for production (see README): real DB (this uses a JSON file),
+ * on-chain buyer funding, anti-Sybil / wash-trade checks, withdrawal limits,
+ * hot/cold treasury split, VRF for high-value boxes.
  */
 import express from "express";
 import cors from "cors";
@@ -21,94 +20,94 @@ import nacl from "tweetnacl";
 import bs58 from "bs58";
 import fs from "fs";
 import crypto from "crypto";
-import {
-  Connection,
-  Keypair,
-  PublicKey,
-  clusterApiUrl,
-} from "@solana/web3.js";
-import {
-  getOrCreateAssociatedTokenAccount,
-  transfer,
-} from "@solana/spl-token";
+import { Connection, Keypair, PublicKey, clusterApiUrl } from "@solana/web3.js";
+import { getOrCreateAssociatedTokenAccount, transfer } from "@solana/spl-token";
 
 // ---- config (from env) ----------------------------------------------------
 const PORT = Number(process.env.PORT ?? 8787);
-const ADMIN_SECRET = process.env.ADMIN_SECRET ?? ""; // protects /credit & /box
+const ADMIN_SECRET = process.env.ADMIN_SECRET ?? ""; // protects admin routes
 const RPC_URL = process.env.SOLANA_RPC ?? clusterApiUrl("devnet");
-const TOKEN_MINT = process.env.TOKEN_MINT ?? ""; // SPL mint address of $TOKEN
+const TOKEN_MINT = process.env.TOKEN_MINT ?? ""; // SPL mint of $TOKEN
 const TREASURY_SECRET = process.env.TREASURY_SECRET ?? ""; // base58 secret key
-const CLAIM_MAX_AGE_MS = 2 * 60 * 1000; // signed intents expire after 2 min
-const DAILY_WITHDRAW_CAP = Number(process.env.DAILY_WITHDRAW_CAP ?? 1000);
-const LEDGER_PATH = process.env.LEDGER_PATH ?? "./ledger.json";
+const CLAIM_MAX_AGE_MS = 2 * 60 * 1000; // signed claim intents expire after 2 min
+const MARKET_FEE = Number(process.env.MARKET_FEE ?? 0.05); // 5% to treasury
+const STATE_PATH = process.env.STATE_PATH ?? "./ledger.json";
+const TREASURY_SELLER = "TREASURY"; // sentinel: a listing owned by the treasury
 
-// ---- ledger (JSON-file placeholder — REPLACE WITH A REAL DB) ---------------
+// ---- state (JSON-file placeholder — REPLACE WITH A REAL DB) ----------------
 interface Account {
-  claimable: number;
-  claimedTotal: number;
-  withdrawnToday: number;
-  dayStamp: string;
-  usedSignatures: string[]; // replay guard
+  balance: number; // in-game $TOKEN the player holds (spendable + withdrawable)
+  claimedTotal: number; // lifetime withdrawn to wallet
+  usedSignatures: string[]; // claim replay guard
 }
-type Ledger = Record<string, Account>;
+interface Listing {
+  id: number;
+  seller: string; // wallet address, or TREASURY_SELLER
+  item: string;
+  rarity: string;
+  price: number;
+}
+interface State {
+  accounts: Record<string, Account>;
+  treasury: number; // $TOKEN held by the treasury (fees + box sales fund this)
+  market: Listing[];
+  nextListingId: number;
+}
 
-function loadLedger(): Ledger {
+function load(): State {
   try {
-    return JSON.parse(fs.readFileSync(LEDGER_PATH, "utf8")) as Ledger;
+    const s = JSON.parse(fs.readFileSync(STATE_PATH, "utf8")) as Partial<State>;
+    return {
+      accounts: s.accounts ?? {},
+      treasury: s.treasury ?? 0,
+      market: s.market ?? [],
+      nextListingId: s.nextListingId ?? 1,
+    };
   } catch {
-    return {};
+    return { accounts: {}, treasury: 0, market: [], nextListingId: 1 };
   }
 }
-function saveLedger(l: Ledger) {
-  fs.writeFileSync(LEDGER_PATH, JSON.stringify(l, null, 2));
+function save(s: State) {
+  fs.writeFileSync(STATE_PATH, JSON.stringify(s, null, 2));
 }
-function acct(l: Ledger, addr: string): Account {
-  const today = new Date().toISOString().slice(0, 10);
-  const a = (l[addr] ??= { claimable: 0, claimedTotal: 0, withdrawnToday: 0, dayStamp: today, usedSignatures: [] });
-  if (a.dayStamp !== today) {
-    a.dayStamp = today;
-    a.withdrawnToday = 0;
-  }
-  return a;
+function acct(s: State, addr: string): Account {
+  return (s.accounts[addr] ??= { balance: 0, claimedTotal: 0, usedSignatures: [] });
+}
+const round = (n: number) => Math.round(n * 1e6) / 1e6; // tame float drift
+
+// ---- helpers --------------------------------------------------------------
+function isAdmin(req: express.Request): boolean {
+  return !!ADMIN_SECRET && req.headers["x-admin-secret"] === ADMIN_SECRET;
 }
 
-// ---- solana payout (real when TREASURY_SECRET + TOKEN_MINT set) ------------
-function treasury(): Keypair | null {
-  if (!TREASURY_SECRET) return null;
-  return Keypair.fromSecretKey(bs58.decode(TREASURY_SECRET));
+function treasuryKeypair(): Keypair | null {
+  return TREASURY_SECRET ? Keypair.fromSecretKey(bs58.decode(TREASURY_SECRET)) : null;
 }
 
 /** Send `amount` whole tokens of $TOKEN from treasury to `toOwner`. */
 async function payout(toOwner: string, amount: number): Promise<string> {
-  const signer = treasury();
-  if (!signer || !TOKEN_MINT) {
-    // No chain configured yet — return a dry-run id so the flow is testable.
-    return "DRYRUN-" + crypto.randomBytes(8).toString("hex");
-  }
+  const signer = treasuryKeypair();
+  if (!signer || !TOKEN_MINT) return "DRYRUN-" + crypto.randomBytes(8).toString("hex");
   const conn = new Connection(RPC_URL, "confirmed");
   const mint = new PublicKey(TOKEN_MINT);
-  const dest = new PublicKey(toOwner);
   const from = await getOrCreateAssociatedTokenAccount(conn, signer, mint, signer.publicKey);
-  const to = await getOrCreateAssociatedTokenAccount(conn, signer, mint, dest);
-  // NOTE: assumes 0 decimals for clarity. Use mint decimals in production.
-  const sig = await transfer(conn, signer, from.address, to.address, signer, amount);
-  return sig;
+  const to = await getOrCreateAssociatedTokenAccount(conn, signer, mint, new PublicKey(toOwner));
+  // NOTE: assumes 0 decimals for clarity — use the mint's real decimals in prod.
+  return transfer(conn, signer, from.address, to.address, signer, amount);
 }
 
-// ---- signature verification -----------------------------------------------
 /** True if `signature` (base64) over `message` was made by `address` (base58). */
 function verifySig(address: string, message: string, signatureB64: string): boolean {
   try {
-    const pub = bs58.decode(address);
-    const sig = Buffer.from(signatureB64, "base64");
-    const msg = new TextEncoder().encode(message);
-    return nacl.sign.detached.verify(msg, sig, pub);
+    return nacl.sign.detached.verify(
+      new TextEncoder().encode(message),
+      Buffer.from(signatureB64, "base64"),
+      bs58.decode(address),
+    );
   } catch {
     return false;
   }
 }
-
-/** Pull the `ts:` field out of the signed message and check it's fresh. */
 function freshTimestamp(message: string): boolean {
   const m = message.match(/ts:\s*(\d+)/);
   if (!m) return false;
@@ -118,60 +117,131 @@ function freshTimestamp(message: string): boolean {
 
 // ---- app ------------------------------------------------------------------
 const app = express();
-app.use(cors()); // TODO: restrict origin to your game domain in production
+app.use(cors()); // TODO: restrict to your game origin in production
 app.use(express.json());
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-/** Server-authoritative claimable balance for a wallet. */
-app.get("/claimable", (req, res) => {
-  const address = String(req.query.address ?? "");
-  if (!address) return res.status(400).json({ error: "address required" });
-  const l = loadLedger();
-  res.json({ claimable: acct(l, address).claimable });
+// --- treasury ---
+app.get("/treasury", (_req, res) => {
+  const s = load();
+  res.json({ treasury: s.treasury, listings: s.market.length });
 });
 
-/**
- * Credit verified earnings to a wallet. ADMIN-ONLY: your server-authoritative
- * game logic (marketplace sale settled, box opened, season prize) calls this —
- * NEVER the game client. Guarded by ADMIN_SECRET.
- */
+/** Record fees arriving (Pump.fun creator fees, box/cosmetic sales). Admin. */
+app.post("/treasury/deposit", (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: "forbidden" });
+  const { amount } = req.body ?? {};
+  if (typeof amount !== "number" || !(amount > 0)) return res.status(400).json({ error: "positive amount required" });
+  const s = load();
+  s.treasury = round(s.treasury + amount);
+  save(s);
+  res.json({ ok: true, treasury: s.treasury });
+});
+
+// --- balances ---
+app.get("/balance", (req, res) => {
+  const s = load();
+  res.json({ balance: acct(s, String(req.query.address ?? "")).balance });
+});
+// client (src/token.ts) reads `claimable`; it's the same withdrawable balance
+app.get("/claimable", (req, res) => {
+  const s = load();
+  res.json({ claimable: acct(s, String(req.query.address ?? "")).balance });
+});
+
+/** Grant rewards to a player's balance (prize pools / events). Admin. */
 app.post("/credit", (req, res) => {
-  if (req.headers["x-admin-secret"] !== ADMIN_SECRET || !ADMIN_SECRET) {
-    return res.status(403).json({ error: "forbidden" });
-  }
+  if (!isAdmin(req)) return res.status(403).json({ error: "forbidden" });
   const { address, amount } = req.body ?? {};
   if (typeof address !== "string" || typeof amount !== "number" || !(amount > 0)) {
     return res.status(400).json({ error: "address + positive amount required" });
   }
-  const l = loadLedger();
-  acct(l, address).claimable += amount;
-  saveLedger(l);
-  res.json({ ok: true, claimable: l[address].claimable });
+  const s = load();
+  acct(s, address).balance = round(acct(s, address).balance + amount);
+  save(s);
+  res.json({ ok: true, balance: s.accounts[address].balance });
 });
 
-/**
- * Provably-fair mystery-box open (commit-reveal). ADMIN/authenticated only —
- * the box outcome is decided HERE, never on the client. This is a skeleton:
- * harden with per-user server seeds, published commits, and on-chain VRF for
- * high-value tiers.
- */
-app.post("/box/open", (req, res) => {
-  if (req.headers["x-admin-secret"] !== ADMIN_SECRET || !ADMIN_SECRET) {
-    return res.status(403).json({ error: "forbidden" });
+// --- marketplace ---
+app.get("/market", (_req, res) => {
+  res.json({ listings: load().market });
+});
+
+/** A player lists an item for $TOKEN. (Item ownership is trusted here; in prod
+ *  the server-authoritative inventory must confirm the seller owns it.) */
+app.post("/market/list", (req, res) => {
+  const { address, item, rarity, price } = req.body ?? {};
+  if (typeof address !== "string" || typeof item !== "string" || typeof price !== "number" || !(price > 0)) {
+    return res.status(400).json({ error: "address + item + positive price required" });
   }
-  const { address, serverSeed, clientSeed, nonce } = req.body ?? {};
-  if (!address || !serverSeed || !clientSeed) return res.status(400).json({ error: "seeds required" });
+  const s = load();
+  const listing: Listing = { id: s.nextListingId++, seller: address, item, rarity: String(rarity ?? "common"), price: round(price) };
+  s.market.push(listing);
+  save(s);
+  res.json({ ok: true, listing });
+});
+
+/** Buy a listing. Buyer pays from balance; 5% fee → treasury; rest → seller
+ *  (or all → treasury if the treasury was the seller, i.e. a relisted buyback). */
+app.post("/market/buy", (req, res) => {
+  const { address, id } = req.body ?? {};
+  if (typeof address !== "string" || typeof id !== "number") {
+    return res.status(400).json({ error: "address + listing id required" });
+  }
+  const s = load();
+  const idx = s.market.findIndex((l) => l.id === id);
+  if (idx < 0) return res.status(404).json({ error: "listing not found" });
+  const listing = s.market[idx];
+  if (listing.seller === address) return res.status(400).json({ error: "can't buy your own listing" });
+  const buyer = acct(s, address);
+  if (buyer.balance < listing.price) return res.status(402).json({ error: "insufficient $TOKEN balance" });
+
+  buyer.balance = round(buyer.balance - listing.price);
+  const fee = round(listing.price * MARKET_FEE);
+  if (listing.seller === TREASURY_SELLER) {
+    s.treasury = round(s.treasury + listing.price); // treasury reselling its own buyback
+  } else {
+    acct(s, listing.seller).balance = round(acct(s, listing.seller).balance + (listing.price - fee));
+    s.treasury = round(s.treasury + fee);
+  }
+  s.market.splice(idx, 1);
+  save(s);
+  res.json({ ok: true, item: listing.item, paid: listing.price, fee, buyerBalance: buyer.balance });
+});
+
+/** Treasury buys an item from a player (liquidity floor) and relists it. Admin
+ *  — your game logic calls this when a player hits "instant sell". */
+app.post("/buyback", (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: "forbidden" });
+  const { address, item, rarity, price } = req.body ?? {};
+  if (typeof address !== "string" || typeof item !== "string" || typeof price !== "number" || !(price > 0)) {
+    return res.status(400).json({ error: "address + item + positive price required" });
+  }
+  const s = load();
+  if (s.treasury < price) return res.status(409).json({ error: "treasury underfunded" });
+  s.treasury = round(s.treasury - price);
+  acct(s, address).balance = round(acct(s, address).balance + price);
+  // relist at a markup so the treasury recovers when another player buys it
+  const listing: Listing = { id: s.nextListingId++, seller: TREASURY_SELLER, item, rarity: String(rarity ?? "common"), price: round(price * 1.25) };
+  s.market.push(listing);
+  save(s);
+  res.json({ ok: true, paid: price, balance: s.accounts[address].balance, relisted: listing });
+});
+
+/** Provably-fair mystery-box open (commit-reveal). Admin/authenticated only. */
+app.post("/box/open", (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: "forbidden" });
+  const { serverSeed, clientSeed, nonce } = req.body ?? {};
+  if (!serverSeed || !clientSeed) return res.status(400).json({ error: "seeds required" });
   const roll = crypto.createHmac("sha256", String(serverSeed)).update(`${clientSeed}:${nonce ?? 0}`).digest();
-  const p = roll.readUInt32BE(0) / 0xffffffff; // 0..1, verifiable post-reveal
+  const p = roll.readUInt32BE(0) / 0xffffffff; // 0..1, verifiable after reveal
   const tier = p < 0.005 ? "mythic" : p < 0.05 ? "legendary" : p < 0.2 ? "epic" : p < 0.5 ? "rare" : "common";
   res.json({ ok: true, tier, p, commit: crypto.createHash("sha256").update(String(serverSeed)).digest("hex") });
 });
 
-/**
- * Claim: client proves wallet ownership; server decides the amount from ITS
- * ledger and signs the treasury transfer. The client never states an amount.
- */
+/** Withdraw in-game balance to the wallet. Client proves ownership; server
+ *  decides the amount from its ledger and signs the treasury transfer. */
 app.post("/claim", async (req, res) => {
   const { address, message, signature } = req.body ?? {};
   if (typeof address !== "string" || typeof message !== "string" || typeof signature !== "string") {
@@ -181,35 +251,28 @@ app.post("/claim", async (req, res) => {
   if (!freshTimestamp(message)) return res.status(400).json({ error: "signed request expired — try again" });
   if (!verifySig(address, message, signature)) return res.status(401).json({ error: "bad signature" });
 
-  const l = loadLedger();
-  const a = acct(l, address);
+  const s = load();
+  const a = acct(s, address);
   if (a.usedSignatures.includes(signature)) return res.status(409).json({ error: "already used" });
+  const amount = a.balance;
+  if (amount <= 0) return res.json({ ok: false, error: "nothing to claim" });
 
-  const amount = a.claimable;
-  if (amount <= 0) return res.status(200).json({ ok: false, error: "nothing to claim" });
-  if (a.withdrawnToday + amount > DAILY_WITHDRAW_CAP) {
-    return res.status(429).json({ error: `daily withdraw cap (${DAILY_WITHDRAW_CAP}) reached` });
-  }
-
-  // Reserve before paying so a crash can't double-pay (idempotency via nonce).
+  // reserve before paying so a crash can't double-pay
   a.usedSignatures.push(signature);
   if (a.usedSignatures.length > 50) a.usedSignatures.shift();
-  a.claimable = 0;
-  a.claimedTotal += amount;
-  a.withdrawnToday += amount;
-  saveLedger(l);
+  a.balance = 0;
+  a.claimedTotal = round(a.claimedTotal + amount);
+  save(s);
 
   try {
     const txid = await payout(address, amount);
     res.json({ ok: true, claimed: amount, txid });
   } catch (e) {
-    // refund the ledger on payout failure
-    a.claimable += amount;
-    a.claimedTotal -= amount;
-    a.withdrawnToday -= amount;
-    saveLedger(l);
+    a.balance = round(a.balance + amount); // refund on failure
+    a.claimedTotal = round(a.claimedTotal - amount);
+    save(s);
     res.status(502).json({ error: "payout failed: " + (e as Error).message });
   }
 });
 
-app.listen(PORT, () => console.log(`token-backend listening on :${PORT} (rpc=${RPC_URL})`));
+app.listen(PORT, () => console.log(`token-backend on :${PORT} (rpc=${RPC_URL}, fee=${MARKET_FEE})`));

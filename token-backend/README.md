@@ -26,12 +26,24 @@ The amount is decided **here**, from this server's ledger — never by the clien
 | **This backend** | earnings ledger, signature/replay checks, withdrawal caps, signs treasury transfer. |
 | **Solana** | `$TOKEN` mint, treasury wallet, settlement. |
 
+## The economy (see /ECONOMY.md)
+Pump.fun trading fees (+ box/cosmetic sales) fund the **treasury**. The treasury
+buys items from players (buyback, a liquidity floor) and relists them; players
+also sell to each other on the **marketplace** with a **5% fee** back to the
+treasury. Players withdraw their in-game `$TOKEN` balance to their wallet.
+
 ## Endpoints
 - `GET  /health` — liveness.
-- `GET  /claimable?address=…` — server-authoritative claimable balance.
-- `POST /credit` *(admin)* — your **server-authoritative game logic** credits verified earnings (a settled marketplace sale, a box open, a season prize). Guarded by `ADMIN_SECRET`. **Never call this from the game client.**
+- `GET  /treasury` — treasury balance + active listing count.
+- `POST /treasury/deposit` *(admin)* — record fees arriving (Pump.fun creator fees, box sales).
+- `GET  /balance?address=…` · `GET /claimable?address=…` — a player's `$TOKEN` (same number; the client reads `claimable`).
+- `POST /credit` *(admin)* — grant rewards to a player's balance (prize pools / events). **Never from the game client.**
+- `GET  /market` — active listings.
+- `POST /market/list` — a player lists an item for `$TOKEN`.
+- `POST /market/buy` — a player buys a listing; 5% fee → treasury, rest → seller.
+- `POST /buyback` *(admin)* — treasury buys an item from a player and relists it at a markup.
 - `POST /box/open` *(admin)* — provably-fair (commit-reveal) box outcome decided server-side.
-- `POST /claim` — verifies the wallet signature + freshness + replay, reads claimable, enforces the daily cap, signs the SPL transfer, zeroes the ledger entry, returns `{ ok, claimed, txid }`.
+- `POST /claim` — verifies wallet signature + freshness + replay, pays out the balance, returns `{ ok, claimed, txid }`.
 
 ## Run it (dry-run, no real tokens)
 ```bash
