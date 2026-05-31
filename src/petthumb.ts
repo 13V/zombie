@@ -10,7 +10,7 @@ import { Pet, findAnyPet } from "./pets";
  * model is built, snapshotted, then disposed — nothing lingers on the GPU.
  */
 
-const SIZE = 96; // px (square); shown ~48px in the card, 2x for crispness
+const SIZE = 256; // px (square) — high-res hero shot, displayed big in the card
 const cache = new Map<string, string>();
 
 let renderer: THREE.WebGLRenderer | undefined;
@@ -21,19 +21,24 @@ function ensure(): boolean {
   if (renderer) return true;
   try {
     renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(2); // crisp on hi-dpi; SIZE×2 internal
     renderer.setSize(SIZE, SIZE);
-    renderer.setClearColor(0x000000, 0); // transparent
+    renderer.setClearColor(0x000000, 0); // transparent — card supplies the plinth
     scene = new THREE.Scene();
-    // soft 3/4 lighting so the voxel facets read
-    const key = new THREE.DirectionalLight(0xffffff, 1.5);
-    key.position.set(2, 4, 3);
-    const amb = new THREE.AmbientLight(0xffffff, 0.85);
-    scene.add(key, amb);
-    // small orthographic box framing the ~1-unit-tall pet
-    const half = 0.95;
+    // 3-point studio lighting so the voxel facets + cute faces pop
+    const key = new THREE.DirectionalLight(0xffffff, 1.7);
+    key.position.set(3, 5, 4);
+    const fill = new THREE.DirectionalLight(0xbfd8ff, 0.6); // cool fill from the left
+    fill.position.set(-4, 2, 2);
+    const rim = new THREE.DirectionalLight(0xfff2d0, 0.7); // warm rim from behind
+    rim.position.set(-1, 3, -4);
+    const amb = new THREE.AmbientLight(0xffffff, 0.75);
+    scene.add(key, fill, rim, amb);
+    // tight orthographic framing of the ~1.2-unit-tall pet — fills the canvas
+    const half = 0.82;
     camera = new THREE.OrthographicCamera(-half, half, half, -half, 0.1, 100);
-    camera.position.set(2.2, 1.9, 2.6);
-    camera.lookAt(0, 0.1, 0);
+    camera.position.set(2.0, 1.7, 2.6);
+    camera.lookAt(0, 0.12, 0);
     return true;
   } catch {
     renderer = undefined; // headless/no-WebGL — fall back to no thumbnail

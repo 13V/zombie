@@ -580,14 +580,14 @@ export class Hud {
       const starBtn = r.canStar
         ? `<span class="pet-starbuy" data-star="${r.id}" title="Convert a dupe into a star" style="display:block;margin-top:3px;padding:2px 6px;border-radius:6px;font-size:10px;cursor:pointer;background:rgba(255,210,74,0.18);color:#ffd24a;text-align:center;">★+ ⛀ ${r.starCost ?? 0}</span>`
         : "";
-      // Real voxel-model preview (data-URL) so you see what you're buying; the
-      // colour dot is the fallback when WebGL thumbnails aren't available.
-      const preview = r.thumb
-        ? `<img class="pet-preview" src="${r.thumb}" alt="" width="48" height="48" loading="lazy" />`
-        : `<span class="pet-dot"></span>`;
+      // Big "studio" hero shot of the actual voxel model on a tinted plinth so
+      // the pet is the focus of the card; colour dot is the no-WebGL fallback.
+      const stage = r.thumb
+        ? `<div class="pet-stage"><img class="pet-preview" src="${r.thumb}" alt="" loading="lazy" /></div>`
+        : `<div class="pet-stage"><span class="pet-dot"></span></div>`;
       return `<div class="pet-card-wrap" style="display:flex;flex-direction:column;">
         <button class="pet-card ${r.owned ? "owned" : ""} ${cls}" data-id="${r.id}" style="--pc:${r.color};--rc:${r.rarityColor}">
-        ${preview}${lvlBadge}${activeBadge}${shinyBadge}
+        ${stage}${lvlBadge}${activeBadge}${shinyBadge}
         <span class="pet-name">${r.name}</span>
         ${starBadge}
         ${roleBadge}

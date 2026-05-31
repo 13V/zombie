@@ -200,7 +200,7 @@ body.touch .controls { display: none; }
 
 /* ---- Pets tab ---- */
 .pets-hint { font-size: 11px; opacity: 0.6; }
-.pets-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.pets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
 .pet-rarity-head {
   display: flex; align-items: center; justify-content: space-between;
   font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
@@ -219,8 +219,36 @@ body.touch .controls { display: none; }
 .pet-card:hover:not(:disabled) { background: color-mix(in srgb, var(--pc) 24%, rgba(0,0,0,0.25)); }
 .pet-card.locked { opacity: 0.5; cursor: not-allowed; }
 .pet-card.owned { opacity: 0.7; cursor: default; border-color: rgba(120,230,140,0.5); }
-.pet-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--pc); box-shadow: 0 0 8px var(--pc); }
-.pet-preview { width: 48px; height: 48px; image-rendering: auto; align-self: center; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
+.pet-dot { width: 24px; height: 24px; border-radius: 50%; background: var(--pc); box-shadow: 0 0 10px var(--pc); }
+/* Studio "hero" stage: a rounded tinted plinth (in the pet's own rarity colour)
+   with a radial spotlight, the big model floating on it. */
+.pet-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 132px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 12px;
+  margin-bottom: 6px;
+  background:
+    radial-gradient(ellipse at 50% 38%, color-mix(in srgb, var(--pc) 38%, transparent), transparent 70%),
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(0,0,0,0.34));
+  border: 1px solid color-mix(in srgb, var(--rc, var(--pc)) 35%, transparent);
+  overflow: hidden;
+}
+/* soft elliptical floor shadow under the model */
+.pet-stage::after {
+  content: ""; position: absolute; bottom: 14%; left: 50%; transform: translateX(-50%);
+  width: 54%; height: 12%; border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(0,0,0,0.45), transparent 72%);
+}
+.pet-preview {
+  position: relative; z-index: 1;
+  width: 92%; height: 92%; object-fit: contain;
+  image-rendering: auto;
+  filter: drop-shadow(0 4px 6px rgba(0,0,0,0.45));
+}
+.pet-card:hover .pet-preview { transform: scale(1.06); transition: transform 0.15s ease; }
 .pet-name { font-weight: 800; font-size: 14px; color: var(--pc); }
 .pet-desc { font-size: 11px; opacity: 0.8; }
 .pet-ability { font-size: 10px; font-weight: 800; letter-spacing: 0.02em; color: var(--rc, #ffd24a); opacity: 0.95; margin-top: 1px; }
