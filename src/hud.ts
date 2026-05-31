@@ -117,6 +117,7 @@ export class Hud {
         <span class="island-tip">🏝️ Walk up to a glowing pad · <b>E</b> to use</span>
         <button class="coop-btn" id="btn-leave-island">Leave Island</button>
       </div>
+      <div id="build-bar" class="hidden"></div>
 
       <div class="overlay" id="overlay-start">
         <h1>TINY <span class="dead">DEAD</span></h1>
@@ -250,6 +251,31 @@ export class Hud {
   /** Bring the menu/shop overlay back up (used by the island Shop pad). */
   openShop() {
     this.startOverlay.classList.remove("hidden");
+  }
+  /** Build-mode palette bar: one swatch per part; `onPick` sets the active part. */
+  showBuildBar(
+    parts: { kind: string; label: string; color: number }[],
+    active: string,
+    onPick: (kind: any) => void,
+  ) {
+    const bar = this.q("#build-bar");
+    bar.classList.remove("hidden");
+    bar.innerHTML = parts
+      .map(
+        (p) => `<button class="build-swatch ${p.kind === active ? "active" : ""}" data-kind="${p.kind}">
+          <span class="sw" style="background:#${p.color.toString(16).padStart(6, "0")}"></span>${p.label}
+        </button>`,
+      )
+      .join("");
+    bar.querySelectorAll<HTMLButtonElement>(".build-swatch").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        bar.querySelectorAll(".build-swatch").forEach((b) => b.classList.toggle("active", b === btn));
+        onPick(btn.dataset.kind);
+      });
+    });
+  }
+  hideBuildBar() {
+    this.q("#build-bar").classList.add("hidden");
   }
 
   /** Render the persistent best-run line on the menu. */

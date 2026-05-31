@@ -129,6 +129,20 @@ body.touch .controls { display: none; }
 #island-bar.hidden { display: none; }
 .island-tip { font-size: 13px; color: #d6ffe0; }
 .island-tip b { color: #9fffc0; }
+#build-bar {
+  position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%);
+  display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 92vw;
+  padding: 8px 10px; background: rgba(0,0,0,0.5); border-radius: 12px;
+  border: 1px solid rgba(255,210,74,0.4); pointer-events: auto; backdrop-filter: blur(4px);
+}
+#build-bar.hidden { display: none; }
+.build-swatch {
+  display: flex; align-items: center; gap: 5px; padding: 5px 9px; border-radius: 8px;
+  background: rgba(255,255,255,0.08); border: 1px solid transparent; color: #fff;
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.build-swatch.active { border-color: #ffd24a; background: rgba(255,210,74,0.18); }
+.build-swatch .sw { width: 14px; height: 14px; border-radius: 3px; box-shadow: 0 0 4px rgba(0,0,0,0.5); }
 .claim-row { margin-top: 6px; }
 .claim-row.hidden { display: none; }
 #btn-claim {

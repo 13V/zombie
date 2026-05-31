@@ -52,6 +52,8 @@ interface State {
   treasury: number; // $TOKEN held by the treasury (fees + box sales fund this)
   market: Listing[];
   nextListingId: number;
+  /** Player housing keyed by "owner:plotIndex" → house layout JSON. */
+  houses: Record<string, unknown>;
 }
 
 function load(): State {
@@ -62,9 +64,10 @@ function load(): State {
       treasury: s.treasury ?? 0,
       market: s.market ?? [],
       nextListingId: s.nextListingId ?? 1,
+      houses: s.houses ?? {},
     };
   } catch {
-    return { accounts: {}, treasury: 0, market: [], nextListingId: 1 };
+    return { accounts: {}, treasury: 0, market: [], nextListingId: 1, houses: {} };
   }
 }
 function save(s: State) {
@@ -238,6 +241,32 @@ app.post("/box/open", (req, res) => {
   const p = roll.readUInt32BE(0) / 0xffffffff; // 0..1, verifiable after reveal
   const tier = p < 0.005 ? "mythic" : p < 0.05 ? "legendary" : p < 0.2 ? "epic" : p < 0.5 ? "rare" : "common";
   res.json({ ok: true, tier, p, commit: crypto.createHash("sha256").update(String(serverSeed)).digest("hex") });
+});
+
+// --- housing (island plots) ---
+app.get("/house", (req, res) => {
+  const owner = String(req.query.owner ?? "");
+  const plot = String(req.query.plot ?? "");
+  if (!owner || plot === "") return res.status(400).json({ error: "owner + plot required" });
+  const s = load();
+  res.json({ house: s.houses[`${owner}:${plot}`] ?? null });
+});
+
+/** Save a plot's house layout. Open by design (it's cosmetic, no value); add
+ *  wallet-signature auth here if you want to lock plots to their owner. */
+app.post("/house", (req, res) => {
+  const { owner, plot, house } = req.body ?? {};
+  if (typeof owner !== "string" || (typeof plot !== "number" && typeof plot !== "string")) {
+    return res.status(400).json({ error: "owner + plot required" });
+  }
+  const parts = (house as { parts?: unknown })?.parts;
+  if (!Array.isArray(parts) || parts.length > 400) {
+    return res.status(400).json({ error: "invalid house (parts array, max 400)" });
+  }
+  const s = load();
+  s.houses[`${owner}:${plot}`] = house;
+  save(s);
+  res.json({ ok: true });
 });
 
 /** Withdraw in-game balance to the wallet. Client proves ownership; server

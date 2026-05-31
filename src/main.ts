@@ -26,6 +26,8 @@ import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
 import { Island, IslandZone } from "./island";
 import { IslandNet } from "./islandnet";
+import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, starterHouse, sanitizeHouse } from "./house";
+import { loadHouse, saveHouse } from "./houses";
 import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
@@ -111,6 +113,10 @@ class Game implements GameApi {
   private arena: Arena;
   private island!: Island;
   private islandNet?: IslandNet;
+  private houseViews = new Map<number, HouseView>();
+  private editingPlot = -1; // plot index currently in build mode (-1 = none)
+  private editData: HouseData = { parts: [] };
+  private editPart: PartKind = "wall";
   private player: Player;
   private bullets: BulletSystem;
   private rounds: RoundManager;
@@ -1131,6 +1137,22 @@ class Game implements GameApi {
     this.player.group.position.copy(this.player.pos);
     this.hud.setIslandMode(true);
     this.connectIslandPresence();
+    this.loadIslandHouses();
+  }
+
+  /** Render any saved houses onto their plots when entering the hub. */
+  private async loadIslandHouses() {
+    const owner = this.wallet.state.address ?? "local";
+    for (const plot of this.island.plots) {
+      const data = await loadHouse(plot.index, owner);
+      if (!data) continue;
+      let view = this.houseViews.get(plot.index);
+      if (!view) {
+        view = new HouseView(this.scene, plot.pos);
+        this.houseViews.set(plot.index, view);
+      }
+      view.render(sanitizeHouse(data));
+    }
   }
 
   /** Join the shared island instance so other players appear (best-effort). */
@@ -1161,7 +1183,10 @@ class Game implements GameApi {
 
   /** Leave the island back to the classic menu (arena visible behind it). */
   private leaveIsland() {
+    if (this.editingPlot >= 0) this.exitBuildMode();
     this.disconnectIslandPresence();
+    for (const v of this.houseViews.values()) v.dispose(this.scene);
+    this.houseViews.clear();
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.hud.setIslandMode(false);
@@ -1183,6 +1208,14 @@ class Game implements GameApi {
       x: this.player.pos.x, z: this.player.pos.z,
       ry: this.player.group.rotation.y, moving: axis.x !== 0 || axis.y !== 0,
     });
+
+    // ---- build mode: clicks place/remove parts; E exits + saves ----
+    if (this.editingPlot >= 0) {
+      this.hud.showPrompt("Click to place · [E] to finish & save", true);
+      if (this.input.clicked()) this.placeAtGround(this.input.aimPoint);
+      if (this.input.pressed("KeyE")) this.exitBuildMode();
+      return;
+    }
 
     // proximity prompt for the nearest interactive pad / plot
     const near = this.island.nearestZone(this.player.pos);
@@ -1210,12 +1243,66 @@ class Game implements GameApi {
         this.hud.openShop();
         break;
       case "plot":
-        this.hud.toast(`House Plot ${(zone.plotIndex ?? 0) + 1} — building coming soon!`);
+        this.enterBuildMode(zone.plotIndex ?? 0);
         break;
       case "play":
         this.startRun();
         break;
     }
+  }
+
+  // ---- house building -----------------------------------------------------
+
+  /** Enter build mode for a plot: load its layout + show the build bar. */
+  private async enterBuildMode(plotIndex: number) {
+    const owner = this.wallet.state.address ?? "local";
+    const existing = await loadHouse(plotIndex, owner);
+    this.editData = existing ? sanitizeHouse(existing) : starterHouse();
+    this.editingPlot = plotIndex;
+    this.editPart = "wall";
+    let view = this.houseViews.get(plotIndex);
+    if (!view) {
+      const plot = this.island.plots.find((p) => p.index === plotIndex)!;
+      view = new HouseView(this.scene, plot.pos);
+      this.houseViews.set(plotIndex, view);
+    }
+    view.render(this.editData);
+    this.hud.showBuildBar(HOUSE_PARTS, this.editPart, (k) => (this.editPart = k));
+    this.hud.toast(`Building Plot ${plotIndex + 1} — click cells to place, again to remove`);
+  }
+
+  /** Place/remove a part at the plot cell under the click, then re-render+save. */
+  private placeAtGround(world: THREE.Vector3) {
+    if (this.editingPlot < 0) return;
+    const plot = this.island.plots.find((p) => p.index === this.editingPlot);
+    if (!plot) return;
+    const CELL = 1.2;
+    const gx = Math.round((world.x - plot.pos.x) / CELL);
+    const gz = Math.round((world.z - plot.pos.z) / CELL);
+    if (Math.abs(gx) > 2 || Math.abs(gz) > 2) return; // outside the 6x6 plot
+    // stack: place on top of whatever's already in this column for build-up parts
+    const tall = HOUSE_PARTS.find((d) => d.kind === this.editPart)?.tall;
+    const col = this.editData.parts.filter((p) => p.gx === gx && p.gz === gz);
+    // toggle: clicking an existing identical top part removes it
+    const top = col.reduce<HousePart | null>((hi, p) => (!hi || p.gy > hi.gy ? p : hi), null);
+    if (top && top.kind === this.editPart) {
+      this.editData.parts = this.editData.parts.filter((p) => p !== top);
+    } else {
+      const gy = tall ? (top ? top.gy + 1 : 1) : 0;
+      const def = HOUSE_PARTS.find((d) => d.kind === this.editPart);
+      this.editData.parts.push({ kind: this.editPart, gx, gy, gz, color: def?.color });
+    }
+    this.houseViews.get(this.editingPlot)?.render(this.editData);
+  }
+
+  /** Save the edited house + exit build mode. */
+  private exitBuildMode() {
+    if (this.editingPlot < 0) return;
+    const owner = this.wallet.state.address ?? "local";
+    void saveHouse(this.editingPlot, owner, this.editData);
+    this.hud.toast(`Plot ${this.editingPlot + 1} saved!`);
+    this.editingPlot = -1;
+    this.hud.hideBuildBar();
   }
 
   private simulate(dt: number) {
