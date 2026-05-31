@@ -32,6 +32,7 @@ import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, PART_CATS, HOUS
 import { loadHouse, saveHouse, getHouseMeta, likeHouse, localOwnerId } from "./houses";
 import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
+import { Decals } from "./decals";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
@@ -161,6 +162,7 @@ class Game implements GameApi {
   private drops: Drops;
   private explosions: Explosions;
   private sparks: Sparks;
+  private decals: Decals; // pooled corpse/gib/scorch decals (juice; capped + lowSpec-aware)
   private pets: Pet[] = [];
   private _petTgt = { x: 0, z: 0 };
   private _petDir = new THREE.Vector3();
@@ -297,6 +299,7 @@ class Game implements GameApi {
     this.drops = new Drops(this.scene, this.audio);
     this.explosions = new Explosions(this.scene, lowSpec);
     this.sparks = new Sparks(this.scene, lowSpec);
+    this.decals = new Decals(this.scene, lowSpec); // corpse decals; no-op on lowSpec (cap 0)
     this.hud = new Hud(ui);
 
     // Resume audio on the first user gesture (browser autoplay policy).
@@ -1227,6 +1230,7 @@ class Game implements GameApi {
     this.puffs.update(dt);
     this.explosions.update(dt);
     this.sparks.update(dt);
+    this.decals.update(dt); // corpse decals: linger then fade + recycle
     this.floaters.update(dt);
     this.updateCamera(dt);
 
@@ -2604,6 +2608,10 @@ class Game implements GameApi {
       this.puffs.burst(z.pos, crit ? 0xffe14a : z.puffColor, burstN);
       // crunchy gib sparks flinging off the corpse (streaky, bigger on crit/combo)
       this.sparks.burst(z.pos, crit ? 0xffe14a : z.puffColor, crit || mult >= 3 ? 7 : 4, { speed: 7, spread: 4, streak: true });
+      // ── CORPSE DECALS (juice, ADD-only): pooled voxel gibs + scorch that linger
+      // then fade. HARD-CAPPED, recycled, and a no-op on lowSpec (cap 0). Gib
+      // count scales up on crit / combo kills. See decals.ts for the pool/cap. ──
+      this.decals.emit(z.pos, crit ? 0xffe14a : z.puffColor, crit ? 1.8 : mult >= 3 ? 1.5 : 1);
       z.flingDeath(crit || mult >= 3 ? 6 : 2);
       // rising-pitch streak: feed the live combo length so kill/hit tones ascend
       this.audio.comboStep(this.combo.count);
