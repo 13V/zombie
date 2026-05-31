@@ -117,6 +117,21 @@ export interface PlayerSnap {
   rl?: boolean;
 }
 
+/**
+ * Elite affix code carried in a ZombieSnap so guests can render the matching
+ * aura/tell. Host-side affix *gameplay* lives in zombie.ts; the wire only needs
+ * a tiny enum. Keep in sync with zombie.ts `Affix` (blazing/glacial/overloading).
+ *   0 = none, 1 = blazing, 2 = glacial, 3 = overloading.
+ */
+export const enum AffixCode {
+  None = 0,
+  Blazing = 1,
+  Glacial = 2,
+  Overloading = 3,
+}
+/** Highest valid AffixCode — guests clamp received values to this range. */
+export const AFFIX_CODE_MAX = 3;
+
 export interface ZombieSnap {
   id: number;
   x: number;
@@ -126,6 +141,9 @@ export interface ZombieSnap {
   type: number;
   /** 0 = alive, 1 = dying. */
   state: number;
+  /** Elite affix code (AffixCode); 0/absent = plain zombie. Optional so old
+   *  snapshots (pre-affix hosts) decode as "none" instead of breaking. */
+  affix?: number;
 }
 
 /** Host → guests, broadcast every network tick. */
