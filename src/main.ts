@@ -148,6 +148,8 @@ class Game implements GameApi {
   private _petTgt = { x: 0, z: 0 };
   private _petDir = new THREE.Vector3();
   private _petGold = 0; // fractional gold accumulator for banker pets
+  private _bankerRoundGold = 0; // gold minted by bankers this round (per-round cap)
+  private _bankerRound = -1; // round the above was last reset for
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
@@ -1987,12 +1989,21 @@ class Game implements GameApi {
       const pet = this.pets[i];
       // Signature ability (Epic+): periodic special, fires regardless of role.
       if (pet.tickAbility(dt)) this.firePetAbility(pet, petBuff);
-      // Banker (Piggy Bank): earn gold over time — the idle-economy hook.
+      // Banker (Piggy Bank): earn gold over time — the idle-economy hook. Output
+      // is FLATTENED (roleValue * (1 + level*scale), not * level) and CAPPED per
+      // round so it stays meaningful idle income, not a level-20 firehose.
       if (pet.def.role === "banker") {
-        this._petGold += (pet.def.roleValue ?? 0) * pet.level * dt;
-        if (this._petGold >= 1) {
-          const g = Math.floor(this._petGold);
+        if (this.rounds.round !== this._bankerRound) {
+          this._bankerRound = this.rounds.round;
+          this._bankerRoundGold = 0;
+        }
+        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale);
+        this._petGold += rate * dt;
+        if (this._petGold >= 1 && this._bankerRoundGold < PETS_TUNING.bankerGoldPerRoundCap) {
+          let g = Math.floor(this._petGold);
           this._petGold -= g;
+          g = Math.min(g, PETS_TUNING.bankerGoldPerRoundCap - this._bankerRoundGold);
+          this._bankerRoundGold += g;
           this.save.gold += g;
           this.save.goldEarned += g;
         }
@@ -2296,6 +2307,11 @@ class Game implements GameApi {
       const mult = this.combo.onKill();
       const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult);
       this.addPoints(pts);
+      // Per-kill gold drip: COMBAT is the primary gold faucet (bankers are now
+      // capped). Scales with the zombie's worth + scoreMul (Double Points etc).
+      const kg = Math.max(1, Math.round(PETS_TUNING.killGoldBase * z.scoreMul * scoreMul));
+      this.save.gold += kg;
+      this.save.goldEarned += kg;
       this.floaters.spawn(z.pos, this.floatNum(pts), mult > 1 ? "#ffd24a" : "#ffffff", mult > 1 ? 1.2 : 1);
       // beefier, warmer burst on crit / combo kills; ragdoll fling on big hits
       const burstN = crit ? 13 : mult >= 3 ? 11 : 8;
