@@ -36,7 +36,7 @@ import { Sparks } from "./particles";
 import { Decals } from "./decals";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
-import { loadSave, writeSave, SaveData } from "./save";
+import { loadSave, writeSave, SaveData, recordScore } from "./save";
 import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
@@ -895,6 +895,10 @@ class Game implements GameApi {
       this.save.bestRound = Math.max(this.save.bestRound, this.rounds.round);
       this.save.bestScore = Math.max(this.save.bestScore, this.points);
     }
+    // Fold this run into the personal leaderboard (top runs by round, then score).
+    const entry = { round: this.rounds.round, score: this.points, date: Date.now() };
+    const lb = recordScore(this.save.scores, entry);
+    this.save.scores = lb.board;
 
     // Fold this run into lifetime stats, then settle any newly-met challenges.
     this.runStats.round = this.rounds.round;
@@ -916,7 +920,7 @@ class Game implements GameApi {
     this.renderShop();
     this.refreshPrestigeUi();
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
-    this.hud.showGameOver(this.rounds.round, this.points, earned + bonus, newBest);
+    this.hud.showGameOver(this.rounds.round, this.points, earned + bonus, newBest, this.save.scores, lb.rank);
   }
 
   /** Award Essence for any challenges completed this run. Returns the total. */

@@ -35,7 +35,7 @@ const store = new MemStorage();
 
 const KEY = "tinydead.save.v1";
 
-const { loadSave } = await import("../src/save.ts");
+const { loadSave, recordScore } = await import("../src/save.ts");
 
 /** Helper: write a raw blob under the save key, then load it. */
 function load(raw: unknown) {
@@ -64,6 +64,48 @@ test("totally garbage (non-JSON) blob returns a valid blank", () => {
   assert.equal(s.essence, 0);
   assert.deepEqual(s.skins, ["classic"]);
   assert.deepEqual(s.stats, { kills: 0, crits: 0, bossKills: 0, drops: 0, games: 0 });
+});
+
+test("blank save starts with an empty leaderboard", () => {
+  assert.deepEqual(load(undefined).scores, []);
+});
+
+test("leaderboard sanitizer drops junk, sorts by round then score, and caps", () => {
+  const scores = [
+    { round: 5, score: 100, date: 1 },
+    "garbage",
+    { round: 20, score: 50, date: 2 },
+    { round: 20, score: 999, date: 3 }, // same round, higher score → ranks above
+    { round: -3, score: 1e9, date: 4 }, // negative round coerced to 0
+    null,
+  ];
+  const s = load({ scores });
+  assert.equal(s.scores[0].round, 20);
+  assert.equal(s.scores[0].score, 999); // higher score wins the tie
+  assert.equal(s.scores[1].round, 20);
+  assert.equal(s.scores[1].score, 50);
+  assert.equal(s.scores[2].round, 5);
+  assert.ok(s.scores.every((e) => Number.isFinite(e.round) && e.round >= 0));
+});
+
+test("recordScore inserts in sorted order and reports the rank", () => {
+  const board = [
+    { round: 30, score: 500, date: 1 },
+    { round: 10, score: 200, date: 2 },
+  ];
+  const entry = { round: 20, score: 300, date: 3 };
+  const { board: next, rank } = recordScore(board, entry);
+  assert.equal(rank, 1); // lands between R30 and R10
+  assert.equal(next[1], entry);
+  assert.equal(next.length, 3);
+});
+
+test("recordScore caps the board and returns -1 when a run doesn't make it", () => {
+  const full = Array.from({ length: 10 }, (_, i) => ({ round: 100 - i, score: 0, date: i }));
+  const tooLow = { round: 1, score: 0, date: 99 };
+  const { board, rank } = recordScore(full, tooLow);
+  assert.equal(board.length, 10);
+  assert.equal(rank, -1); // didn't crack the top 10
 });
 
 test("JSON 'null' blob returns a valid blank", () => {

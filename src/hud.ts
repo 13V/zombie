@@ -900,12 +900,34 @@ export class Hud {
     this.startOverlay.classList.add("hidden");
   }
 
-  showGameOver(round: number, points: number, essenceEarned: number, newBest: boolean) {
+  showGameOver(
+    round: number,
+    points: number,
+    essenceEarned: number,
+    newBest: boolean,
+    board: { round: number; score: number; date: number }[] = [],
+    rank = -1,
+  ) {
+    // Personal leaderboard: top runs, with THIS run highlighted at its slot.
+    let lb = "";
+    if (board.length) {
+      const rows = board
+        .map((e, i) => {
+          const me = i === rank ? " lb-me" : "";
+          const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+          return `<div class="lb-row${me}"><span class="lb-rank">${medal}</span>` +
+            `<span class="lb-rd">Round ${e.round}</span>` +
+            `<span class="lb-sc">${e.score.toLocaleString()}</span></div>`;
+        })
+        .join("");
+      lb = `<div class="lb-title">★ Best Runs ★</div><div class="lb">${rows}</div>`;
+    }
     this.overStats.innerHTML = `
       ${newBest ? '<p class="stat newbest">★ NEW BEST ★</p>' : ""}
       <p class="stat">Reached Round ${round}</p>
       <p class="stat">${points} points banked</p>
-      <p class="stat essence-earn">+${essenceEarned} ✦ Essence earned</p>`;
+      <p class="stat essence-earn">+${essenceEarned} ✦ Essence earned</p>
+      ${lb}`;
     this.overOverlay.classList.remove("hidden");
   }
   hideGameOver() {

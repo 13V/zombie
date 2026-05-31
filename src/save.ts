@@ -33,6 +33,28 @@ export interface DailyState {
   claimed: string[]; // quest ids whose reward has already been paid out
 }
 
+/** One run on the personal leaderboard (top runs by round, then score). */
+export interface ScoreEntry {
+  round: number;
+  score: number;
+  date: number; // ms epoch the run ended
+}
+
+/** Max runs kept on the personal leaderboard. */
+export const LEADERBOARD_CAP = 10;
+
+/**
+ * Pure insert: fold a finished run into the leaderboard and return the new top
+ * list (sorted by round desc, then score desc, capped). Exported + side-effect
+ * free so it's unit-testable. The `rank` is the 0-based slot the new run landed
+ * in, or -1 if it didn't make the board.
+ */
+export function recordScore(board: ScoreEntry[], entry: ScoreEntry, cap = LEADERBOARD_CAP): { board: ScoreEntry[]; rank: number } {
+  const next = [...board, entry].sort((a, b) => b.round - a.round || b.score - a.score).slice(0, cap);
+  const rank = next.indexOf(entry);
+  return { board: next, rank };
+}
+
 export interface SaveData {
   version: number; // save-schema version (for future migrations; starts at 1)
   lastSeen: number; // ms epoch of the last writeSave (drives offline accrual)
@@ -45,6 +67,7 @@ export interface SaveData {
   goldEarned: number; // lifetime gold earned (stats / future token bridge)
   bestRound: number;
   bestScore: number;
+  scores: ScoreEntry[]; // personal leaderboard: top runs (round desc, score desc)
   owned: string[]; // purchased meta-upgrade ids
   skins: string[]; // unlocked cosmetic skin ids
   skin: string; // equipped skin id
@@ -85,6 +108,7 @@ function blank(): SaveData {
     goldEarned: 0,
     bestRound: 0,
     bestScore: 0,
+    scores: [],
     owned: [],
     skins: ["classic"],
     skin: "classic",
@@ -121,6 +145,19 @@ function sanitizeStash(raw: unknown): SavedItem[] {
 
 function strArray(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** Coerce the saved leaderboard: drop junk, re-sort, and cap (guards a forged
+ *  save from injecting absurd entries or a giant array). */
+function sanitizeScores(raw: unknown): ScoreEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ScoreEntry[] = [];
+  for (const it of raw) {
+    if (!it || typeof it !== "object") continue;
+    const o = it as Partial<ScoreEntry>;
+    out.push({ round: Math.floor(num(o.round)), score: Math.floor(num(o.score)), date: num(o.date) });
+  }
+  return out.sort((a, b) => b.round - a.round || b.score - a.score).slice(0, LEADERBOARD_CAP);
 }
 
 /** Nested pet-id -> { stat -> finite count } map; drops anything malformed. */
@@ -202,6 +239,7 @@ export function loadSave(): SaveData {
       goldEarned: num(data.goldEarned),
       bestRound: num(data.bestRound),
       bestScore: num(data.bestScore),
+      scores: sanitizeScores(data.scores),
       owned: strArray(data.owned),
       skins: skins.length ? skins : ["classic"],
       skin: typeof data.skin === "string" ? data.skin : "classic",
