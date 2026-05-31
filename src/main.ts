@@ -27,8 +27,9 @@ import { Island, IslandZone } from "./island";
 import { IslandNet, makeBubble } from "./islandnet";
 import { EmoteMenu } from "./emotes";
 import type { EmoteId } from "./voxelChar";
-import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, PART_CATS, HOUSE_SWATCHES, TROPHY_TIERS, trophyTierForRound, starterHouse, sanitizeHouse } from "./house";
+import { HouseView, HouseData, PartKind, HOUSE_PARTS, PART_CATS, HOUSE_SWATCHES, TROPHY_TIERS, trophyTierForRound, starterHouse, sanitizeHouse } from "./house";
 import { loadHouse, saveHouse, getHouseMeta, likeHouse, localOwnerId } from "./houses";
+import { aimCell, applyBuild, CELL as BUILD_CELL } from "./build";
 import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
@@ -1519,7 +1520,7 @@ class Game implements GameApi {
   }
 
   // ---- house building -----------------------------------------------------
-  private static readonly CELL = 1.2; // plot grid cell size (matches house.ts)
+  private static readonly CELL = BUILD_CELL; // plot grid cell size (single source: build.ts)
 
   // v1: all 8 plots are YOURS to build on, each persisted independently under
   // your id (build a little neighbourhood). isOwnPlot() ALWAYS returns true ON
@@ -1634,54 +1635,49 @@ class Game implements GameApi {
     this.hud.showPetPicker(owned, this.editPetId, (id) => { this.editPetId = id; });
   }
 
-  /** Project the aim point to a plot-local grid cell, or null if off the pad. */
+  /** Project the aim point to a plot-local grid cell, or null if off the pad.
+   *  (Grid math lives in the pure, tested src/build.ts.) */
   private aimCell(world: THREE.Vector3): { gx: number; gz: number } | null {
     const plot = this.island.plots.find((p) => p.index === this.editingPlot);
     if (!plot) return null;
-    const gx = Math.round((world.x - plot.pos.x) / Game.CELL);
-    const gz = Math.round((world.z - plot.pos.z) / Game.CELL);
-    if (Math.abs(gx) > 2 || Math.abs(gz) > 2) return null; // outside the plot pad
-    return { gx, gz };
+    return aimCell(world.x, world.z, plot.pos.x, plot.pos.z);
   }
 
-  /** Place/paint/remove a part at the plot cell under the click. */
+  /** Place/paint/remove a part at the plot cell under the click. The data
+   *  transform is the pure, tested `applyBuild`; this method owns the
+   *  side-effects (undo snapshot, re-render, sfx) keyed off its outcome. */
   private placeAtGround(world: THREE.Vector3) {
     if (this.editingPlot < 0 || this.editReadOnly) return;
     const cell = this.aimCell(world);
     if (!cell) return;
-    const { gx, gz } = cell;
-    const atCell = this.editData.parts.filter((p) => p.gx === gx && p.gz === gz);
-
-    // Paint mode: recolour the topmost part at this cell instead of placing.
-    if (this.editPaint) {
-      const target = atCell[atCell.length - 1];
-      if (!target) { this.audio.deny(); return; }
-      this.pushUndo();
-      if (this.editColor === null) delete target.color;
-      else target.color = this.editColor;
-      this.houseViews.get(this.editingPlot)?.render(this.editData);
-      this.audio.ui();
-      return;
+    const out = applyBuild(this.editData, cell.gx, cell.gz, {
+      paint: this.editPaint,
+      part: this.editPart,
+      color: this.editColor,
+      rot: this.editRot,
+      petId: this.editPetId,
+      trophyTier: trophyTierForRound(this.save.bestRound),
+    });
+    switch (out.result) {
+      case "denied-empty": // paint with nothing under the cursor
+      case "denied-full": // hit the 400-part cap
+        this.audio.deny();
+        return;
+      case "painted":
+        this.pushUndo();
+        this.editData = out.data;
+        this.houseViews.get(this.editingPlot)?.render(this.editData);
+        this.audio.ui();
+        return;
+      case "removed":
+      case "placed":
+        this.pushUndo();
+        this.editData = out.data;
+        this.houseViews.get(this.editingPlot)?.render(this.editData);
+        return;
     }
-
-    const tall = !!HOUSE_PARTS.find((d) => d.kind === this.editPart)?.tall;
-    // toggle: clicking the existing identical top part removes it
-    const top = atCell.reduce<HousePart | null>((hi, p) => (!hi || p.gy > hi.gy ? p : hi), null);
-    this.pushUndo();
-    if (top && top.kind === this.editPart) {
-      this.editData.parts = this.editData.parts.filter((p) => p !== top);
-    } else {
-      if (this.editData.parts.length >= 400) { this.undoStack.pop(); this.audio.deny(); return; }
-      const gy = tall ? (top ? top.gy + 1 : 1) : 0;
-      const part: HousePart = { kind: this.editPart, gx, gy, gz };
-      if (this.editColor !== null) part.color = this.editColor;
-      if (this.editRot) part.rot = this.editRot;
-      if (this.editPart === "perch" && this.editPetId) part.petId = this.editPetId;
-      if (this.editPart === "trophy") part.tier = trophyTierForRound(this.save.bestRound);
-      this.editData.parts.push(part);
-    }
-    this.houseViews.get(this.editingPlot)?.render(this.editData);
   }
+
 
   /** Translucent preview at the aim cell — green = valid, red = off-plot,
    *  amber = paint. */
