@@ -289,10 +289,9 @@ class Game implements GameApi {
       // Between rounds: surface the Curse dial so the player can up the stakes.
       this.hud.setCurse(this.rounds.curse, this.rounds.curseRewardMul);
       this.hud.setCurseVisible(true);
-      // ✦ The Oracle of Fate (Celestial): auto-grant the BEST available perk
-      // each round, FREE, on top of your normal pick — its signature foresight.
-      this.grantOraclePerk();
       // Solo: offer a level-up pick during the breather (skipped in co-op).
+      // ✦ The Oracle of Fate (Celestial) AUTO-PICKS the best card for you — no
+      // screen — instead of the manual chooser (handled inside offerLevelUp).
       if (!this.netplay) this.offerLevelUp();
     };
     this.rounds.onBossSpawn = () => {
@@ -750,40 +749,29 @@ class Game implements GameApi {
   }
 
   /** Pause the breather and offer 1 of 3 stacking run upgrades. */
-  /** ✦ Oracle of Fate: if owned (and active), auto-apply the single best perk
-   *  available this round — FREE, no pick. "Best" = highest tier, picked from a
-   *  fresh roll so it's still varied. Stacks like any normal upgrade. */
-  private grantOraclePerk() {
-    if (!this.save.pets.includes("oracle") || this.save.benchedPets.includes("oracle")) return;
-    // roll a small candidate pool and take the highest-tier card
-    const rank: Record<string, number> = { legendary: 3, rare: 2, common: 1 };
-    const pool = rollUpgrades(5, this.rounds.round);
-    const best = pool.reduce((a, b) => (rank[b.tier] > rank[a.tier] ? b : a), pool[0]);
-    if (!best) return;
-    best.apply(this.mods);
-    // honor the transform floors + live-state refresh, same as a manual pick
-    if (this.mods.pierceExplode > 0) {
-      this.mods.pierceBonus = Math.max(this.mods.pierceBonus, 1);
-      this.mods.explosiveRadius = Math.max(this.mods.explosiveRadius, 1.4);
-    }
-    if (this.mods.critChain > 0) {
-      this.mods.chainCount = Math.max(this.mods.chainCount, 1);
-      this.mods.critChance = Math.max(this.mods.critChance, 0.15);
-    }
-    this.player.maxHealth = PLAYER.maxHealth + this.mods.maxHealthBonus;
-    this.combo.windowBonus = this.mods.comboWindowBonus;
-    this.hud.toast(`🔮 Oracle: ${best.name}!`);
-    this.audio.powerup();
-  }
-
   private offerLevelUp() {
     this.levelNum++;
     this.levelCards = rollUpgrades(3, this.rounds.round);
     this.rerollCost = 500;
     this.levelPicking = false;
+    // ✦ Oracle of Fate: auto-resolve the pick — choose the BEST of the three
+    // offered cards and apply it instantly, NO chooser screen. (Owned + active.)
+    if (this.ownsActiveOracle()) {
+      const rank: Record<string, number> = { legendary: 3, rare: 2, common: 1 };
+      const best = this.levelCards.reduce((a, b) => (rank[b.tier] > rank[a.tier] ? b : a), this.levelCards[0]);
+      this.applyUpgradeCard(best);
+      this.hud.toast(`🔮 Oracle chose: ${best.name}!`);
+      this.audio.levelUp();
+      return; // skip the manual picker entirely
+    }
     this.state = "levelup";
     this.audio.levelUp();
     this.renderLevelUp();
+  }
+
+  /** True if the player owns The Oracle and it's in the active squad. */
+  private ownsActiveOracle(): boolean {
+    return this.save.pets.includes("oracle") && !this.save.benchedPets.includes("oracle");
   }
 
   /** Build card view-models (with live stat previews) and hand them to the HUD. */
@@ -813,16 +801,13 @@ class Game implements GameApi {
     this.renderLevelUp();
   }
 
-  private applyUpgrade(id: string) {
-    if (this.levelPicking) return;
-    const u = RUN_UPGRADES.find((x) => x.id === id);
-    if (!u) return;
-    this.levelPicking = true;
-    u.apply(this.mods);
-    // ── TRANSFORM picks (ADD): re-assert the pierce+explode / crit+chain floors
-    // in the mod-apply path so the build identity holds even if later cards leave
-    // a field at 0. Capped to the late-game envelope (+1 pierce / modest splash /
-    // +1 chain) — never a runaway stack. Idempotent. ──
+  /** Apply a card's effects to this.mods + refresh live state. Pure of any UI
+   *  freeze/timer, so both the manual picker AND the Oracle auto-pick reuse it.
+   *  Searches both the normal deck and the Limit-Break pool (Oracle can roll LBs). */
+  private applyUpgradeCard(card: RunUpgrade) {
+    card.apply(this.mods);
+    // ── TRANSFORM picks: re-assert the pierce+explode / crit+chain floors so the
+    // build identity holds even if later cards leave a field at 0. Idempotent. ──
     if (this.mods.pierceExplode > 0) {
       this.mods.pierceBonus = Math.max(this.mods.pierceBonus, 1);
       this.mods.explosiveRadius = Math.max(this.mods.explosiveRadius, 1.4);
@@ -831,10 +816,19 @@ class Game implements GameApi {
       this.mods.chainCount = Math.max(this.mods.chainCount, 1);
       this.mods.critChance = Math.max(this.mods.critChance, 0.15);
     }
-    // a few upgrades change live state immediately
+    // live-state effects
     this.player.maxHealth = PLAYER.maxHealth + this.mods.maxHealthBonus;
     this.player.heal(25); // small reward heal on every pick
     this.combo.windowBonus = this.mods.comboWindowBonus;
+  }
+
+  private applyUpgrade(id: string) {
+    if (this.levelPicking) return;
+    // the picker only ever offers cards from this.levelCards (deck + limit-breaks)
+    const u = this.levelCards.find((x) => x.id === id) ?? RUN_UPGRADES.find((x) => x.id === id);
+    if (!u) return;
+    this.levelPicking = true;
+    this.applyUpgradeCard(u);
     this.hud.toast(`${u.name}!`);
     this.audio.powerup();
     // let the card's selection animation finish before unfreezing the game
@@ -2653,8 +2647,8 @@ class Game implements GameApi {
   private firePetAbility(pet: Pet, petBuff: number) {
     const ab = pet.def.ability;
     if (!ab) return;
-    // The Oracle's "autoperk" isn't a timed cast — it's granted at round end
-    // (grantOraclePerk). Nothing to fire here.
+    // The Oracle's "autoperk" isn't a timed cast — it auto-resolves the level-up
+    // pick at round end (offerLevelUp). Nothing to fire here.
     if (ab.kind === "autoperk") return;
     const grid = this.rounds.grid;
     const px = pet.group.position.x;
