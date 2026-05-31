@@ -594,6 +594,16 @@ class Game implements GameApi {
       this.save.gold -= def.cost;
       this.save.pets.push(id);
       this.save.petLevels[id] = 1;
+      // Cosmetic shiny/chroma chase: low-odds roll on first acquisition. Stored as
+      // petProgress[id]._shiny (reserved numeric key). PURELY visual (tint/sparkle
+      // in pets.ts Pet.build/update) — never affects power, never cashable.
+      if (Math.random() < PET_DEPTH.cosmetic.shinyOdds) {
+        (this.save.petProgress[id] ??= {})._shiny = 1;
+        this.hud.toast(`✨ SHINY ${def.name}! ✨`);
+      }
+      // Collection-completion milestone: a one-time soft-essence reward when a new
+      // distinct pet crosses a threshold count. NON-CASHABLE (essence only).
+      this.grantCollectionMilestones();
     } else {
       const level = this.save.petLevels[id] ?? 1;
       const cost = petLevelCost(baseForCost, level);
@@ -610,6 +620,29 @@ class Game implements GameApi {
     this.audio.powerup();
     if (!owned) this.spawnPets();
     this.renderShop();
+  }
+
+  /** Pay any newly-crossed collection-completion milestone in SOFT essence.
+   *  The highest `own` threshold already rewarded is persisted under a reserved
+   *  pseudo-pet-id `petProgress["_collection"].paid` (save.ts sanitizes it as a
+   *  numeric counter — no save.ts edit needed). NON-CASHABLE: essence only. */
+  private grantCollectionMilestones() {
+    const collected = this.petCollectedCount();
+    const meta = (this.save.petProgress["_collection"] ??= {});
+    const paid = meta.paid ?? 0;
+    let totalEssence = 0;
+    let highest = paid;
+    for (const m of PET_DEPTH.cosmetic.milestones) {
+      if (collected >= m.own && m.own > paid) {
+        totalEssence += m.essence;
+        highest = Math.max(highest, m.own);
+      }
+    }
+    if (totalEssence > 0) {
+      meta.paid = highest;
+      this.save.essence += totalEssence;
+      this.hud.toast(`✦ Collection ${collected}/${PETS.length} — +${totalEssence} essence!`);
+    }
   }
 
   /** Dupe → STAR ascension. Buying a copy of a pet you already own converts the
