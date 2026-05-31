@@ -336,6 +336,11 @@ class Game implements GameApi {
       const bonus = SCORE.roundBonusBase + (cleared - 1) * SCORE.roundBonusPerRound;
       this.addPoints(bonus);
       this.hud.toast(`Round clear  +${bonus}`);
+      // Special rounds with a guaranteed reward (Hound) drop a treasure chest at
+      // the player on clear. classifySpecial(cleared) since `special` has advanced.
+      if (RoundManager.classifySpecial(cleared)?.guaranteedDrop) {
+        this.drops.spawnChest(this.player.pos, this.mods.dropChance + 0.5);
+      }
       // Between rounds: surface the Curse dial so the player can up the stakes.
       this.hud.setCurse(this.rounds.curse, this.rounds.curseRewardMul);
       this.hud.setCurseVisible(true);
@@ -2552,11 +2557,13 @@ class Game implements GameApi {
       this.runStats.kills++;
       if (wasBoss) this.runStats.bossKills++;
       const mult = this.combo.onKill();
-      const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult);
+      // Curse is opt-in risk→reward: a higher curse boosts both score and gold.
+      const cMul = this.rounds.curseRewardMul;
+      const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult * cMul);
       this.addPoints(pts);
       // Per-kill gold drip: COMBAT is the primary gold faucet (bankers are now
-      // capped). Scales with the zombie's worth + scoreMul (Double Points etc).
-      const kg = Math.max(1, Math.round(PETS_TUNING.killGoldBase * z.scoreMul * scoreMul));
+      // capped). Scales with the zombie's worth + scoreMul (Double Points etc) + curse.
+      const kg = Math.max(1, Math.round(PETS_TUNING.killGoldBase * z.scoreMul * scoreMul * cMul));
       this.save.gold += kg;
       this.save.goldEarned += kg;
       // tiered pop: crit > combo > plain (color/size handled by FloatingText)
@@ -2605,7 +2612,9 @@ class Game implements GameApi {
         this.hud.hideBoss();
         this.audio.boom();
         this.audio.levelUp(); // victory fanfare
-        for (let i = 0; i < 3; i++) this.drops.maybeSpawn(z.pos, 1, true);
+        // boss → a cascading treasure chest (Luck-scaled 1/3/5 items) instead of
+        // three flat drops, for a proper jackpot moment.
+        this.drops.spawnChest(z.pos, this.mods.dropChance);
         // boss candy explosion: multi-color radial puff blast + camera punch-zoom
         const candy = [0xff5d8f, 0x6ad7ff, 0xffd24a, 0x8fcf6f, 0xc792ea];
         for (let i = 0; i < 5; i++) this.puffs.burst(z.pos, candy[i], 10);
