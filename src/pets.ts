@@ -401,9 +401,17 @@ export function findAnyPet(id: string): PetDef | undefined {
   return PETS.find((p) => p.id === id) ?? PET_EVOLUTIONS.find((p) => p.id === id);
 }
 
-/** Gold cost to take a pet from `level` to `level+1` (escalating). */
+/** Gold cost to take a pet from `level` to `level+1` (escalating).
+ *  Flatter geometric base (1.22) keeps early levels cheap and stops Mythic L12
+ *  from hitting ~1M gold; past `soft` the curve switches to a gentler linear
+ *  ramp so the deep levels stay reachable in an idle loop (soft level cap ~10). */
 export function petLevelCost(def: PetDef, level: number): number {
-  return Math.round(def.cost * 0.5 * Math.pow(1.35, level - 1));
+  const soft = 10;
+  const base = def.cost * 0.5;
+  if (level <= soft) return Math.round(base * Math.pow(1.22, level - 1));
+  // beyond the soft cap, grow linearly off the level-`soft` cost (no more compounding)
+  const at = base * Math.pow(1.22, soft - 1);
+  return Math.round(at * (1 + (level - soft) * 0.5));
 }
 
 /** Damage multiplier from a pet's level (+18%/level, compounding feel). */
