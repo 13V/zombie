@@ -34,7 +34,7 @@ import { petThumbnail } from "./petthumb";
 import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
-import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
+import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, isTrialComplete, RARITY_COLOR, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData, recordScore } from "./save";
 import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
@@ -112,6 +112,7 @@ class Game implements GameApi {
   // the squad kill delta each pet-frame so on-kill role bonuses stay tied to real
   // kills without touching the shared bullet/damageZombie path. ──
   private _petKillMark = 0; // runStats.kills at the last updatePets frame
+  private _petLeveledThisFrame = false; // a pet hit a new level via XP → re-check evolutions after the loop
   private _drainerRoundHeal = 0; // HP healed by drainers this round (cap)
   private _harvesterRoundGold = 0; // bonus gold from harvesters this round (cap)
   private _petDepthRound = -1; // round the two accumulators above were reset for
@@ -506,6 +507,8 @@ class Game implements GameApi {
           id: ownId, name: p.name, desc: p.desc, cost: base.cost,
           color: `#${p.color.toString(16).padStart(6, "0")}`,
           owned, level,
+          xp: this.save.petProgress[ownId]?._xp ?? 0,
+          xpNext: petXpForLevel(level),
           upCost,
           affordable: owned ? this.save.gold >= upCost : this.save.gold >= base.cost,
           rarity,
@@ -1905,6 +1908,14 @@ class Game implements GameApi {
     const targets = this.netplay ? this.netplay.hostPlayerPositions(this.player) : [this.player.pos];
     this.rounds.update(dt, this.arena, targets);
     this.updatePets(dt);
+    // XP level-ups can push a pet past its evolve gate; re-check now (outside the
+    // pet loop) since evolving rebuilds the squad. Persist so progress isn't lost
+    // on a mid-run crash/refresh.
+    if (this._petLeveledThisFrame) {
+      this._petLeveledThisFrame = false;
+      this.checkPetEvolutions();
+      writeSave(this.save);
+    }
     this.resolveRangedFliers();
     this.resolveBlazingTrails();
     this.resolveTraps(dt);
@@ -2488,6 +2499,45 @@ class Game implements GameApi {
   }
 
   /** Tick companion pets: orbit the player, auto-target, fire real bullets. */
+  /**
+   * Drip combat XP to every ACTIVE pet for the squad's kills this frame, leveling
+   * them up live (with a floating "Lv N!" + puff). XP lives in petProgress[id]._xp
+   * and carries leftover across level-ups; a pet can multi-level on a big burst.
+   * Sets _petLeveledThisFrame so simulate re-checks evolutions after the loop
+   * (mutating the squad mid-updatePets would be unsafe).
+   */
+  private grantSquadXp(kills: number) {
+    const gain = kills * PETS_TUNING.xpPerKill;
+    if (gain <= 0) return;
+    let leveled = false;
+    for (const p of this.pets) {
+      const id = p.def.id;
+      const pr = (this.save.petProgress[id] ??= {});
+      let xp = (pr._xp ?? 0) + gain;
+      let lvl = this.save.petLevels[id] ?? 1;
+      let need = petXpForLevel(lvl);
+      let did = false;
+      while (xp >= need) {
+        xp -= need;
+        lvl++;
+        did = true;
+        need = petXpForLevel(lvl);
+      }
+      pr._xp = xp;
+      if (did) {
+        this.save.petLevels[id] = lvl;
+        p.setLevel(lvl);
+        this.floaters.spawn(p.group.position, `Lv ${lvl}!`, "#9be86a", 1.1, true);
+        this.puffs.burst(p.group.position, p.def.color, 6);
+        leveled = true;
+      }
+    }
+    if (leveled) {
+      this.audio.levelUp();
+      this._petLeveledThisFrame = true;
+    }
+  }
+
   private updatePets(dt: number) {
     if (!this.pets.length) return;
     this.computePetSynergy();
@@ -2505,6 +2555,10 @@ class Game implements GameApi {
     const killsNow = this.runStats.kills;
     const killsThisFrame = Math.max(0, killsNow - this._petKillMark);
     this._petKillMark = killsNow;
+    // ── COMBAT XP: every squad kill drips XP to each active pet so they LEVEL by
+    // fighting (gold-leveling is now an optional fast-track). Live level-ups grow
+    // the pet on the spot; an evolution re-check is deferred to after the loop. ──
+    if (killsThisFrame > 0) this.grantSquadXp(killsThisFrame);
     if (killsThisFrame > 0) {
       let combat = 0, drainers = 0, harvesters = 0;
       // 3★+ drainers/harvesters add a small per-pet star kicker to their faucet.

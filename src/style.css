@@ -292,6 +292,9 @@ body.touch .controls { display: none; }
 .pet-card.owned .pet-cost { color: #7be08a; }
 .pet-card.owned { opacity: 1; cursor: pointer; border-color: rgba(255,210,74,0.45); }
 .pet-lvl { position: absolute; top: 6px; right: 8px; font-size: 10px; font-weight: 800; color: #ffd24a; background: rgba(0,0,0,0.35); padding: 1px 6px; border-radius: 999px; }
+/* combat-XP bar (pets level by fighting) */
+.pet-xp { display: block; width: 100%; height: 4px; margin-top: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; }
+.pet-xp > span { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, #6ad7ff, #9be86a); transition: width 0.2s ease; }
 .pet-card { position: relative; }
 
 #ui {

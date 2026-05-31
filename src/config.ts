@@ -91,6 +91,9 @@ export const PETS_TUNING = {
   bankerLevelScale: 0.08,
   /** Cap on gold a banker squad can mint per round (idle income, not a firehose). */
   bankerGoldPerRoundCap: 1500,
+  /** Combat XP each ACTIVE squad pet earns per squad kill. Pets level by fighting
+   *  (see petXpForLevel); gold-leveling is an optional fast-track on top. */
+  xpPerKill: 1,
 };
 
 export const SCORE = {

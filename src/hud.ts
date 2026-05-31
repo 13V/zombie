@@ -38,6 +38,8 @@ export interface ChallengeRow {
 export interface PetRow {
   id: string; name: string; desc: string; cost: number; color: string;
   owned: boolean; level: number; upCost: number; affordable: boolean;
+  xp?: number; xpNext?: number; // combat-XP progress toward the next level
+  stage?: number; stageName?: string; // evolution stage (0-based) + its label
   rarity: string; rarityColor: string; ability?: string;
   thumb?: string; // data-URL preview of the pet's voxel model (see petthumb.ts)
   trial?: { label: string; cur: number; goal: number; done: boolean }[];
@@ -563,7 +565,12 @@ export class Hud {
     const card = (r: (typeof rows)[number]) => {
       const cls = r.affordable ? "" : "locked";
       const action = r.owned ? `Lv ${r.level} → ⛀ ${r.upCost}` : `⛀ ${r.cost}`;
-      const lvlBadge = r.owned ? `<span class="pet-lvl">Lv ${r.level}</span>` : "";
+      const stageTag = r.owned && r.stage && r.stageName ? ` · ${r.stageName}` : "";
+      const lvlBadge = r.owned ? `<span class="pet-lvl">Lv ${r.level}${stageTag}</span>` : "";
+      // combat-XP bar toward the next level (pets level by fighting)
+      const xpBar = r.owned && r.xpNext
+        ? `<span class="pet-xp" title="Combat XP: ${Math.floor(r.xp ?? 0)}/${r.xpNext}"><span style="width:${Math.max(0, Math.min(100, ((r.xp ?? 0) / r.xpNext) * 100))}%"></span></span>`
+        : "";
       const abilityTag = r.ability ? `<span class="pet-ability">✦ ${r.ability}</span>` : "";
       // ── PET DEPTH badges: role verb, shiny, star ascension, active marker ──
       const roleBadge = r.roleIcon ? `<span class="pet-role" title="${r.roleLabel ?? ""}" style="display:inline-block;font-size:10px;opacity:0.9;margin:2px 0;">${r.roleIcon} ${r.roleLabel ?? ""}</span>` : "";
@@ -608,6 +615,7 @@ export class Hud {
         <span class="pet-desc">${r.desc}</span>
         ${abilityTag}
         <span class="pet-cost">${action}</span>
+        ${xpBar}
         ${trialBlock}
       </button>${squadBtn}${starBtn}</div>`;
     };

@@ -545,6 +545,18 @@ export function petLevelCost(def: PetDef, level: number): number {
 export function petDamageMul(level: number): number {
   return 1 + (level - 1) * 0.18;
 }
+
+/**
+ * Combat XP needed to advance from `level` to `level+1`. Pets earn XP by
+ * FIGHTING in your squad (every squad kill drips XP to each member), so they
+ * "raise" through play; gold-leveling is just an optional fast-track on top.
+ * Curve: cheap early (a fresh pet shoots up the first few levels — that raising
+ * dopamine) then compounds, so late levels still take a real grind even when the
+ * late-game horde feeds hundreds of kills a round.
+ */
+export function petXpForLevel(level: number): number {
+  return Math.round(6 * Math.pow(1.16, Math.max(1, level) - 1));
+}
 /** Fire-rate (interval) multiplier — pets fire faster as they level (caps). */
 export function petIntervalMul(level: number): number {
   return Math.max(0.5, 1 - (level - 1) * 0.04);
