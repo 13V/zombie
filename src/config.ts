@@ -21,7 +21,7 @@ export const PLAYER = {
   speed: 8,
   maxHealth: 100,
   regenDelay: 4, // seconds after last hit before regen begins
-  regenRate: 24, // hp per second
+  regenRate: 14, // hp per second (lowered from 24 — full-regen kiting was too safe)
   touchInvuln: 0.0,
 };
 
@@ -36,7 +36,7 @@ export const ZOMBIE = {
   hpGrowth: 1.1, // per-round HP multiplier past the inflection (1.08–1.12 sweet spot)
   baseSpeed: 2.4,
   speedPerRound: 0.1, // nudged up so kiting gets riskier through 10→20
-  speedCap: 5.4,
+  speedCap: 6.2, // raised from 5.4 — late-game horde can close the gap on a kiter
   touchDamage: 12,
   touchInterval: 0.6, // seconds between hits while in contact
   separation: 2.0, // how hard they push apart so they don't stack
@@ -50,8 +50,8 @@ export const ROUNDS = {
   // a flat cap lets rising DPS empty the screen; a rising cap + faster spawns
   // fill it. Difficulty from density + geometry, not just HP.
   maxAliveBase: 32, // cap through the inflection round
-  maxAlivePerRound: 3, // +per round past inflection
-  maxAliveCap: 60, // desktop ceiling (mobile uses a lower one — see main.ts)
+  maxAlivePerRound: 3, // +per round past inflection (keeps ramping past R20 now the cap is higher)
+  maxAliveCap: 100, // desktop ceiling, raised from 60 (mobile uses a lower one — see main.ts)
   spawnIntervalBase: 0.9, // seconds between spawns through inflection
   spawnIntervalMin: 0.4, // floor of the spawn-interval ramp
   spawnIntervalDecay: 0.05, // -per round past inflection
