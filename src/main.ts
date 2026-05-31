@@ -24,6 +24,7 @@ import { Audio } from "./audio";
 import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
+import { Island, IslandZone } from "./island";
 import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
@@ -94,7 +95,7 @@ class Puffs {
   }
 }
 
-type State = "menu" | "playing" | "paused" | "over" | "levelup";
+type State = "menu" | "island" | "playing" | "paused" | "over" | "levelup";
 
 class Game implements GameApi {
   private renderer: THREE.WebGLRenderer;
@@ -107,6 +108,7 @@ class Game implements GameApi {
   private input: Input;
   private touch?: TouchControls;
   private arena: Arena;
+  private island!: Island;
   private player: Player;
   private bullets: BulletSystem;
   private rounds: RoundManager;
@@ -230,6 +232,7 @@ class Game implements GameApi {
       this.touch = new TouchControls(this.input);
     }
     this.arena = new Arena(this.scene);
+    this.island = new Island(this.scene);
     this.player = new Player(this.scene, this.assets);
     this.bullets = new BulletSystem(this.scene);
     if (lowSpec) this.bullets.maxLive = 70; // fewer live tracers on mobile GPUs
@@ -284,6 +287,8 @@ class Game implements GameApi {
     this.hud.onHost(() => this.hostGame());
     this.hud.onJoin((code) => this.joinGame(code));
     this.hud.onServer(() => this.changeServer());
+    this.hud.onIsland(() => this.enterIsland());
+    this.hud.onLeaveIsland(() => this.leaveIsland());
     this.hud.onWallet(() => this.toggleWallet());
     this.hud.onClaim(() => this.claimTokens(), () => this.changeTokenApi());
     this.wallet.onChange = () => this.syncWallet();
@@ -643,6 +648,11 @@ class Game implements GameApi {
   }
 
   private startRun() {
+    // leaving the hub for the zombie world: swap scenes back to the arena
+    this.island.setVisible(false);
+    this.arena.group.visible = true;
+    this.hud.setIslandMode(false);
+    this.hud.hidePrompt();
     this.resetRun();
     this.hud.hideStart();
     this.hud.hideGameOver();
@@ -847,6 +857,10 @@ class Game implements GameApi {
       this.netplay = new NetPlay(this.net!, this.scene, this.assets, this.bullets);
       this.netplay.onToast = (m) => this.hud.toast(m); // host-pushed feedback
       // guests render the host's authoritative world; no local sim
+      this.island.setVisible(false);
+      this.arena.group.visible = true;
+      this.hud.setIslandMode(false);
+      this.hud.hidePrompt();
       this.resetRun();
       this.hud.hideStart();
       this.hud.hideGameOver();
@@ -1076,15 +1090,18 @@ class Game implements GameApi {
       dt = 0;
     }
 
-    this.touch?.setActive(this.state === "playing" || this.state === "paused");
+    this.touch?.setActive(this.state === "playing" || this.state === "paused" || this.state === "island");
     this.player.showAimGuide(this.state === "playing");
     if (this.state === "playing") {
       if (this.netplay && !this.netplay.isHost) this.simulateGuest(dt);
       else this.simulate(dt);
+    } else if (this.state === "island") {
+      this.simulateIsland(dt);
     } else {
       this.player.idle(dt); // keep the figure breathing on menu / pause / over
     }
 
+    this.island.update(dt);
     this.arena.update(dt);
     this.interactables.update(dt);
     this.puffs.update(dt);
@@ -1096,6 +1113,72 @@ class Game implements GameApi {
     this.composer.render();
     this.input.endFrame();
   };
+
+  /** Enter the island hub: hide the arena, show the island, drop the player in. */
+  private enterIsland() {
+    this.teardownNet();
+    this.state = "island";
+    this.hud.hideStart();
+    this.hud.hideGameOver();
+    this.arena.group.visible = false;
+    this.island.setVisible(true);
+    this.player.alive = true;
+    this.player.pos.set(0, 0, 6); // stand just south of the plaza
+    this.player.group.position.copy(this.player.pos);
+    this.hud.setIslandMode(true);
+  }
+
+  /** Leave the island back to the classic menu (arena visible behind it). */
+  private leaveIsland() {
+    this.island.setVisible(false);
+    this.arena.group.visible = true;
+    this.hud.setIslandMode(false);
+    this.hud.hidePrompt();
+    this.state = "menu";
+    this.hud.showStart();
+  }
+
+  /** Free-roam the island: walk the character, clamp to shore, drive prompts. */
+  private simulateIsland(dt: number) {
+    const axis = this.input.moveAxis(this._axis);
+    // aiming=false → the character faces where it walks (no gun aim in the hub)
+    this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, false);
+    this.island.clamp(this.player.pos);
+    this.player.group.position.copy(this.player.pos);
+
+    // proximity prompt for the nearest interactive pad / plot
+    const near = this.island.nearestZone(this.player.pos);
+    if (near) this.hud.showPrompt(near.label + "  [E]", true);
+    else this.hud.hidePrompt();
+
+    // E (or tap-confirm) activates whatever you're standing on
+    if (near && (this.input.pressed("KeyE") || this.input.pressed("Space"))) {
+      this.activateIslandZone(near);
+    }
+  }
+
+  /** Act on the pad the player triggered. */
+  private activateIslandZone(zone: IslandZone) {
+    switch (zone.kind) {
+      case "host":
+        this.hostGame();
+        break;
+      case "join": {
+        const code = window.prompt("Enter your friend's 4-letter room code:");
+        if (code && code.trim()) this.joinGame(code.trim());
+        break;
+      }
+      case "shop":
+        this.hud.openShop();
+        break;
+      case "plot":
+        this.hud.toast(`House Plot ${(zone.plotIndex ?? 0) + 1} — building coming soon!`);
+        break;
+      case "play":
+        this.startRun();
+        break;
+    }
+  }
 
   private simulate(dt: number) {
     this.powerups.update(dt);

@@ -119,6 +119,16 @@ body.touch .controls { display: none; }
   font-weight: 700;
   color: #ffd24a;
 }
+.play.secondary { background: rgba(255,247,230,0.14); color: #fff; margin-top: 8px; }
+#island-bar {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+  background: rgba(0,0,0,0.45); border: 1px solid rgba(120,230,160,0.4);
+  border-radius: 12px; pointer-events: auto; backdrop-filter: blur(4px);
+}
+#island-bar.hidden { display: none; }
+.island-tip { font-size: 13px; color: #d6ffe0; }
+.island-tip b { color: #9fffc0; }
 .claim-row { margin-top: 6px; }
 .claim-row.hidden { display: none; }
 #btn-claim {

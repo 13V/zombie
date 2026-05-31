@@ -113,6 +113,10 @@ export class Hud {
       </div>
       <div id="prompt"></div>
       <div id="toast"></div>
+      <div id="island-bar" class="hidden">
+        <span class="island-tip">🏝️ Walk up to a glowing pad · <b>E</b> to use</span>
+        <button class="coop-btn" id="btn-leave-island">Leave Island</button>
+      </div>
 
       <div class="overlay" id="overlay-start">
         <h1>TINY <span class="dead">DEAD</span></h1>
@@ -149,7 +153,8 @@ export class Hud {
           <span class="k">M</span><span>Mute</span>
           <span class="k">F</span><span>Nuke (when charged)</span>
         </div>
-        <button class="play" id="btn-start">Play Solo</button>
+        <button class="play" id="btn-island">🏝️ Enter Island</button>
+        <button class="play secondary" id="btn-start">Play Solo</button>
         <div class="coop">
           <button class="coop-btn" id="btn-host">Host Co-op</button>
           <div class="join-row">
@@ -231,6 +236,20 @@ export class Hud {
   }
   onHost(cb: () => void) {
     this.q("#btn-host").addEventListener("click", cb);
+  }
+  onIsland(cb: () => void) {
+    this.q("#btn-island").addEventListener("click", cb);
+  }
+  /** Toggle the on-island HUD affordances (a small "leave island" control). */
+  setIslandMode(on: boolean) {
+    this.q("#island-bar").classList.toggle("hidden", !on);
+  }
+  onLeaveIsland(cb: () => void) {
+    this.q("#btn-leave-island").addEventListener("click", cb);
+  }
+  /** Bring the menu/shop overlay back up (used by the island Shop pad). */
+  openShop() {
+    this.startOverlay.classList.remove("hidden");
   }
 
   /** Render the persistent best-run line on the menu. */
