@@ -512,6 +512,7 @@ class Game implements GameApi {
     );
 
     // Pets: buy companions with gold (the gold sink + late-game chaos).
+    const activeIds = new Set(this.pets.map((pp) => pp.def.id));
     this.hud.renderPets(
       this.save.gold,
       PETS.map((base) => {
@@ -536,6 +537,8 @@ class Game implements GameApi {
             }),
           ];
         }
+        // ── PET DEPTH: role display (stars/shiny/convert wired in items 4–5) ──
+        const role = p.combatRole;
         return {
           id: ownId, name: p.name, desc: p.desc, cost: base.cost,
           color: `#${p.color.toString(16).padStart(6, "0")}`,
@@ -546,10 +549,28 @@ class Game implements GameApi {
           rarityColor: RARITY_COLOR[rarity],
           ability: p.ability?.name ?? base.ability?.name,
           trial,
+          roleIcon: role ? ROLE_ICON[role] : undefined,
+          roleLabel: role ? ROLE_LABEL[role] : undefined,
+          active: activeIds.has(ownId),
         };
       }),
       (id) => this.buyOrLevelPet(id),
+      this.petCollectionInfo(),
     );
+  }
+
+  /** Distinct owned pet count (counts an evolved pet as its slot). */
+  private petCollectedCount(): number {
+    return this.save.pets.length;
+  }
+
+  /** Squad-role tally + synergy bonuses + collection progress for the Pets tab. */
+  private petCollectionInfo() {
+    const sq = this.petSquadInfo();
+    const collected = this.petCollectedCount();
+    const total = PETS.length;
+    const next = PET_DEPTH.cosmetic.milestones.find((m) => collected < m.own);
+    return { roles: sq.roles, bonuses: sq.bonuses, collected, total, nextMilestone: next };
   }
 
   /** Buy a companion pet with gold; it joins you on the next run (and this one). */

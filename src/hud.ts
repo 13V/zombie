@@ -34,6 +34,29 @@ export interface ChallengeRow {
   done: boolean;
 }
 
+/** One pet row in the Pets shop tab (view-model built by the game). */
+export interface PetRow {
+  id: string; name: string; desc: string; cost: number; color: string;
+  owned: boolean; level: number; upCost: number; affordable: boolean;
+  rarity: string; rarityColor: string; ability?: string;
+  trial?: { label: string; cur: number; goal: number; done: boolean }[];
+  // ── PET DEPTH: collection/role display ──
+  roleIcon?: string; roleLabel?: string; // combat-role verb badge
+  stars?: number; maxStars?: number; // dupe→star ascension
+  shiny?: boolean; // cosmetic chroma variant
+  canStar?: boolean; starCost?: number; // a dupe is available to convert into a star
+  active?: boolean; // currently in the live combat squad
+}
+
+/** Active-squad role tally + synergy bonuses for the Pets tab header. */
+export interface PetSquadInfo {
+  roles: { role: string; icon: string; label: string; count: number }[];
+  bonuses: string[];
+  collected: number;
+  total: number;
+  nextMilestone?: { own: number; essence: number };
+}
+
 /** One level-up card as the HUD renders it (view-model built by the game). */
 export interface LevelCardVM {
   id: string;
@@ -517,8 +540,10 @@ export class Hud {
   /** Pets tab: buy companion pets with gold. */
   renderPets(
     gold: number,
-    rows: { id: string; name: string; desc: string; cost: number; color: string; owned: boolean; level: number; upCost: number; affordable: boolean; rarity: string; rarityColor: string; ability?: string; trial?: { label: string; cur: number; goal: number; done: boolean }[] }[],
+    rows: PetRow[],
     onAction: (id: string) => void,
+    squad?: PetSquadInfo,
+    onStar?: (id: string) => void,
   ) {
     const order = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
     const label = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
@@ -528,6 +553,11 @@ export class Hud {
       const action = r.owned ? `Lv ${r.level} → ⛀ ${r.upCost}` : `⛀ ${r.cost}`;
       const lvlBadge = r.owned ? `<span class="pet-lvl">Lv ${r.level}</span>` : "";
       const abilityTag = r.ability ? `<span class="pet-ability">✦ ${r.ability}</span>` : "";
+      // ── PET DEPTH badges: role verb, shiny, star ascension, active marker ──
+      const roleBadge = r.roleIcon ? `<span class="pet-role" title="${r.roleLabel ?? ""}" style="display:inline-block;font-size:10px;opacity:0.9;margin:2px 0;">${r.roleIcon} ${r.roleLabel ?? ""}</span>` : "";
+      const shinyBadge = r.shiny ? `<span class="pet-shiny" title="Shiny variant" style="position:absolute;top:4px;left:4px;font-size:12px;">✨</span>` : "";
+      const activeBadge = r.active ? `<span class="pet-active" title="In your active squad" style="position:absolute;top:4px;right:22px;color:#7be08a;font-size:10px;">●</span>` : "";
+      const starBadge = this.petStarRow(r);
       let trialBlock = "";
       if (r.trial && r.trial.length) {
         const allDone = r.trial.every((t) => t.done);
@@ -544,14 +574,21 @@ export class Hud {
           <span class="pet-trial-head">${allDone ? "✦ EVOLUTION READY" : "Evolution Trial"}</span>${goals}
         </div>`;
       }
-      return `<button class="pet-card ${r.owned ? "owned" : ""} ${cls}" data-id="${r.id}" style="--pc:${r.color};--rc:${r.rarityColor}">
-        <span class="pet-dot"></span>${lvlBadge}
+      // Star-convert button (a dupe is available) — a separate clickable hook.
+      const starBtn = r.canStar
+        ? `<span class="pet-starbuy" data-star="${r.id}" title="Convert a dupe into a star" style="display:block;margin-top:3px;padding:2px 6px;border-radius:6px;font-size:10px;cursor:pointer;background:rgba(255,210,74,0.18);color:#ffd24a;text-align:center;">★+ ⛀ ${r.starCost ?? 0}</span>`
+        : "";
+      return `<div class="pet-card-wrap" style="display:flex;flex-direction:column;">
+        <button class="pet-card ${r.owned ? "owned" : ""} ${cls}" data-id="${r.id}" style="--pc:${r.color};--rc:${r.rarityColor}">
+        <span class="pet-dot"></span>${lvlBadge}${activeBadge}${shinyBadge}
         <span class="pet-name">${r.name}</span>
+        ${starBadge}
+        ${roleBadge}
         <span class="pet-desc">${r.desc}</span>
         ${abilityTag}
         <span class="pet-cost">${action}</span>
         ${trialBlock}
-      </button>`;
+      </button>${starBtn}</div>`;
     };
     // Group into rarity sections so a deep roster stays browsable.
     const ownedCount = rows.filter((r) => r.owned).length;
@@ -568,10 +605,16 @@ export class Hud {
       .join("");
     this.q("#tab-pets").innerHTML = `
       <div class="mkt-head"><span>Gold: <b>⛀ ${gold}</b></span><span class="pets-hint">Collected ${ownedCount}/${rows.length} · level up with gold</span></div>
+      ${this.petSquadPanel(squad)}
       ${sections}`;
     this.q("#tab-pets").querySelectorAll<HTMLButtonElement>(".pet-card").forEach((btn) => {
       btn.addEventListener("click", () => onAction(btn.dataset.id!));
     });
+    if (onStar) {
+      this.q("#tab-pets").querySelectorAll<HTMLElement>(".pet-starbuy").forEach((el) => {
+        el.addEventListener("click", (e) => { e.stopPropagation(); onStar(el.dataset.star!); });
+      });
+    }
   }
 
   /**
@@ -1091,5 +1134,48 @@ export class Hud {
   setCurseVisible(on: boolean) {
     const box = document.getElementById("curse-slider");
     if (box) box.style.display = on ? "flex" : "none";
+  }
+
+  // ───────────────────────── PET DEPTH display helpers ─────────────────────────
+  // (Added at END of class per the pets-tab ownership boundary.)
+
+  // Inline styles keep the depth UI self-contained (no style.css dependency).
+  private static readonly CHIP = "display:inline-block;padding:1px 6px;margin:1px 3px 1px 0;border-radius:8px;font-size:10px;line-height:1.5;";
+
+  /** A row of filled/empty stars for a pet's dupe-ascension level (owned only). */
+  private petStarRow(r: PetRow): string {
+    if (!r.owned || !r.maxStars) return "";
+    const filled = Math.max(0, Math.min(r.maxStars, r.stars ?? 0));
+    if (filled <= 0 && !r.canStar) return "";
+    let s = "";
+    for (let i = 0; i < r.maxStars; i++) s += i < filled ? "★" : "☆";
+    return `<span class="pet-stars" title="${filled}/${r.maxStars} stars" style="color:#ffd24a;font-size:11px;letter-spacing:1px;">${s}</span>`;
+  }
+
+  /** Active-squad role tally + live synergy bonuses + collection progress, shown
+   *  at the top of the Pets tab. Empty-safe (renders a hint when no squad). */
+  private petSquadPanel(squad?: PetSquadInfo): string {
+    if (!squad) return "";
+    const C = Hud.CHIP;
+    const roleChips = squad.roles.length
+      ? squad.roles
+          .map((r) => `<span title="${r.label}" style="${C}background:rgba(120,200,255,0.16);">${r.icon} ${r.label}${r.count > 1 ? ` ×${r.count}` : ""}</span>`)
+          .join("")
+      : `<span style="${C}opacity:0.6;">No combat pets equipped</span>`;
+    const bonusChips = squad.bonuses.length
+      ? squad.bonuses.map((b) => `<span style="${C}background:rgba(199,146,234,0.22);color:#e9d6ff;">✦ ${b}</span>`).join("")
+      : `<span style="${C}opacity:0.6;">Pair up roles for squad synergies</span>`;
+    const pct = squad.total ? Math.round((squad.collected / squad.total) * 100) : 0;
+    const next = squad.nextMilestone
+      ? `<span style="font-size:10px;opacity:0.8;margin-left:8px;">Next: own ${squad.nextMilestone.own} → +${squad.nextMilestone.essence} ✦</span>`
+      : `<span style="font-size:10px;opacity:0.8;margin-left:8px;">Collection complete ✦</span>`;
+    return `<div style="margin:6px 0 10px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);">
+      <div style="margin-bottom:4px;"><span style="font-weight:700;font-size:11px;opacity:0.85;margin-right:6px;">Active Squad</span>${roleChips}</div>
+      <div style="margin-bottom:4px;">${bonusChips}</div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="flex:0 0 90px;height:6px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden;display:inline-block;"><span style="display:block;height:100%;width:${pct}%;background:#ffd24a;"></span></span>
+        <span style="font-size:10px;opacity:0.85;">${squad.collected}/${squad.total} collected</span>${next}
+      </div>
+    </div>`;
   }
 }
