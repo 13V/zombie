@@ -398,7 +398,8 @@ class Game implements GameApi {
     this.explosions.clear();
     this.sparks.clear();
     this.hitStop = 0;
-    this.chronosActive = false; // recomputed by spawnPets from the active squad
+    // NOTE: chronosActive is owned by spawnPets() (called above) — do NOT reset
+    // it here or it wipes the flag spawnPets just set, killing OVERDRIVE.
     this.hud.setCombo(0, 0);
     this.hud.hideBoss();
     this.hud.hideLevelUp();
@@ -2352,8 +2353,10 @@ class Game implements GameApi {
     });
     // Squad changed → recompute synergy lazily next frame.
     this._petSynergyKey = "";
-    // Chronos in the active squad = permanent 2x OVERDRIVE for the whole run.
-    this.chronosActive = this.pets.some((p) => p.def.id === "chronos");
+    // Chronos = permanent 2x OVERDRIVE while OWNED + not benched. Keyed off
+    // ownership (not the spawn list) so a full combat squad can't crowd the
+    // time-god out of its passive.
+    this.chronosActive = this.save.pets.includes("chronos") && !this.save.benchedPets.includes("chronos");
   }
 
   /** Stars a pet has earned via dupe-ascension (petProgress[id]._stars). */
