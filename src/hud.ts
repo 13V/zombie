@@ -136,6 +136,8 @@ export class Hud {
               <button class="shop-tab" data-tab="pets">Pets</button>
             </div>
             <span class="shop-essence">✦ <span id="essence-bal">0</span></span>
+            <span class="shop-essence" id="prestige-chip" title="Ascension multiplier" style="margin-left:8px;cursor:pointer;">✦✦ <span id="prestige-bal">0</span> <span id="prestige-mul" style="opacity:0.8;">(x1.00)</span></span>
+            <span class="shop-essence" id="streak-chip" title="Login streak" style="margin-left:8px;">🔥 <span id="streak-count">0</span>d</span>
           </div>
           <div class="tab" id="tab-upgrades"></div>
           <div class="tab hidden" id="tab-skins"></div>
@@ -143,6 +145,7 @@ export class Hud {
           <div class="tab hidden" id="tab-market"></div>
           <div class="tab hidden" id="tab-pets"></div>
         </div>
+        <div id="daily-board"></div>
         <div class="controls">
           <span class="k">WASD</span><span>Move</span>
           <span class="k">Mouse</span><span>Aim</span>
@@ -850,5 +853,151 @@ export class Hud {
   hideGuestDown() {
     const ov = document.getElementById("guest-down");
     if (ov) ov.style.display = "none";
+  }
+
+  // ─────────────────── IDLE / PRESTIGE / STREAK OVERLAYS ───────────────────
+  // Full-screen overlay divs created lazily and appended near the menu/over
+  // overlays (same root, same .overlay sibling region as #overlay-start /
+  // #overlay-over). Each mirrors showGuestDown's idempotent inline-styled
+  // pattern so they need no CSS changes and can't collide with the other agents.
+
+  /** Format a duration (ms) as a friendly "Xh Ym" / "Ym" / "Zs" string. */
+  private fmtDuration(ms: number): string {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
+    return `${s}s`;
+  }
+
+  private overlayShell(id: string): HTMLElement {
+    let ov = document.getElementById(id);
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = id;
+      ov.style.cssText =
+        "position:fixed;inset:0;display:none;flex-direction:column;align-items:center;" +
+        "justify-content:center;gap:16px;background:rgba(8,10,16,0.74);z-index:60;" +
+        "font-family:inherit;color:#f4f4f4;text-align:center;pointer-events:auto;padding:24px;";
+      this.root.appendChild(ov);
+    }
+    return ov;
+  }
+
+  /** "While You Were Away": offline gold/essence accrued, capped, since lastSeen. */
+  showWelcomeBack(info: { gold: number; essence: number; durationMs: number }) {
+    const ov = this.overlayShell("overlay-welcomeback");
+    ov.innerHTML =
+      `<div style="font-size:30px;font-weight:800;letter-spacing:1px;">Welcome back</div>` +
+      `<div style="opacity:0.85;max-width:380px;">You were away ${this.fmtDuration(info.durationMs)}. Your bankers kept working — at half pace.</div>` +
+      `<div style="font-size:22px;font-weight:700;margin-top:4px;">+${info.gold} 🪙` +
+      (info.essence > 0 ? `  ·  +${info.essence} ✦` : "") +
+      `</div>` +
+      `<button id="btn-welcomeback-ok" style="margin-top:10px;padding:12px 30px;font:inherit;` +
+      `font-weight:700;cursor:pointer;border:none;border-radius:10px;background:#5aa9e0;color:#fff;">Collect</button>`;
+    (ov.querySelector("#btn-welcomeback-ok") as HTMLButtonElement).onclick = () => {
+      ov.style.display = "none";
+    };
+    ov.style.display = "flex";
+  }
+
+  /** Wire the menu prestige chip to open the ascension overlay. */
+  onPrestige(cb: () => void) {
+    this.q("#prestige-chip").addEventListener("click", cb);
+  }
+
+  /** Reflect prestige standing on the menu chip (banked points, multiplier, and
+   *  whether any are claimable — chip glows when so). */
+  setPrestige(prestige: number, multiplier: number, available: number) {
+    this.q("#prestige-bal").textContent = String(prestige);
+    this.q("#prestige-mul").textContent = `(x${multiplier.toFixed(2)})`;
+    const chip = this.q("#prestige-chip");
+    chip.style.opacity = available > 0 ? "1" : "0.85";
+    chip.style.textShadow = available > 0 ? "0 0 10px rgba(255,210,74,0.9)" : "none";
+    chip.title = available > 0 ? `Ascend now for +${available} prestige` : "Ascension multiplier";
+  }
+
+  /** Ascension confirmation overlay. `onConfirm` performs the prestige (resets
+   *  the gold economy, banks the points). Disabled when nothing's claimable. */
+  showPrestige(
+    info: { current: number; gain: number; lifetimeGold: number; nextMultiplier: number },
+    onConfirm: () => void,
+  ) {
+    const ov = this.overlayShell("overlay-prestige");
+    const can = info.gain > 0;
+    ov.innerHTML =
+      `<div style="font-size:30px;font-weight:800;letter-spacing:1px;">Ascend</div>` +
+      `<div style="opacity:0.85;max-width:420px;">Bank your lifetime gold into permanent <b>Prestige</b> for a bigger gold &amp; essence multiplier. This <b>resets your gold, gold income upgrades</b> — your pets, skins, essence, bests and streak stay.</div>` +
+      `<div style="font-size:16px;opacity:0.9;">Lifetime gold: ${Math.floor(info.lifetimeGold).toLocaleString()}</div>` +
+      `<div style="font-size:22px;font-weight:700;margin-top:2px;">` +
+      (can ? `+${info.gain} prestige  ·  x${info.nextMultiplier.toFixed(2)} next` : `Keep earning gold to unlock your next prestige`) +
+      `</div>` +
+      `<div style="display:flex;gap:12px;margin-top:8px;">` +
+      `<button id="btn-prestige-go" ${can ? "" : "disabled"} style="padding:12px 28px;font:inherit;font-weight:700;` +
+      `cursor:${can ? "pointer" : "not-allowed"};border:none;border-radius:10px;` +
+      `background:${can ? "#ffd24a" : "#555"};color:${can ? "#2a2208" : "#aaa"};">Ascend</button>` +
+      `<button id="btn-prestige-cancel" style="padding:12px 28px;font:inherit;font-weight:700;cursor:pointer;` +
+      `border:none;border-radius:10px;background:#3a3f4a;color:#f4f4f4;">Cancel</button>` +
+      `</div>`;
+    const close = () => {
+      ov.style.display = "none";
+    };
+    if (can) {
+      (ov.querySelector("#btn-prestige-go") as HTMLButtonElement).onclick = () => {
+        close();
+        onConfirm();
+      };
+    }
+    (ov.querySelector("#btn-prestige-cancel") as HTMLButtonElement).onclick = close;
+    ov.style.display = "flex";
+  }
+
+  /** Login-streak chip: 🔥 N-day count + a tiny ❄ marker per banked freeze. */
+  setStreak(count: number, freezes: number) {
+    this.q("#streak-count").textContent = String(count);
+    const chip = this.q("#streak-chip");
+    chip.title = freezes > 0 ? `${count}-day streak · ${freezes} freeze${freezes > 1 ? "s" : ""} banked` : `${count}-day streak`;
+    chip.style.opacity = count > 0 ? "1" : "0.7";
+    // append freeze markers to the chip label (rebuild the suffix each call)
+    const existing = chip.querySelector(".streak-freezes");
+    if (existing) existing.remove();
+    if (freezes > 0) {
+      const span = document.createElement("span");
+      span.className = "streak-freezes";
+      span.style.marginLeft = "4px";
+      span.textContent = "❄".repeat(Math.min(freezes, 3));
+      chip.appendChild(span);
+    }
+  }
+
+  /** Daily-quest board on the menu: a row per quest with a progress bar and its
+   *  soft gold/essence reward; finished rows are ticked. */
+  showDailies(
+    rows: { id: string; name: string; progress: number; goal: number; gold: number; essence: number; done: boolean; claimed: boolean }[],
+  ) {
+    const board = this.q("#daily-board");
+    const items = rows
+      .map((r) => {
+        const pct = Math.max(0, Math.min(1, r.goal > 0 ? r.progress / r.goal : 0)) * 100;
+        const tick = r.done ? "✓ " : "";
+        const status = r.claimed ? "claimed" : r.done ? "ready" : `${r.progress}/${r.goal}`;
+        return (
+          `<div class="daily-row" style="display:flex;align-items:center;gap:10px;padding:6px 2px;opacity:${r.claimed ? 0.55 : 1};">` +
+          `<div style="flex:1;min-width:0;">` +
+          `<div style="font-weight:700;font-size:13px;">${tick}${r.name}</div>` +
+          `<div style="height:5px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden;margin-top:3px;">` +
+          `<div style="height:100%;width:${pct}%;background:${r.done ? "#8fcf6f" : "#5aa9e0"};"></div></div>` +
+          `</div>` +
+          `<div style="font-size:12px;opacity:0.85;text-align:right;white-space:nowrap;">${status}<br>+${r.gold}🪙 +${r.essence}✦</div>` +
+          `</div>`
+        );
+      })
+      .join("");
+    board.innerHTML =
+      `<div style="margin-top:14px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,0.05);">` +
+      `<div style="font-weight:800;letter-spacing:0.5px;opacity:0.9;margin-bottom:4px;">DAILY QUESTS</div>` +
+      items +
+      `</div>`;
   }
 }

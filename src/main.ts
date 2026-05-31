@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, PETS_TUNING, PLAYER, SCORE, ZOMBIE } from "./config";
+import { CAMERA, COSTS, PETS_TUNING, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE } from "./config";
 import { glowMaterial } from "./palette";
 import { Input } from "./input";
 import { Arena } from "./arena";
@@ -35,6 +35,7 @@ import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
+import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
@@ -164,6 +165,11 @@ class Game implements GameApi {
   private _petTgt = { x: 0, z: 0 };
   private _petDir = new THREE.Vector3();
   private _petGold = 0; // fractional gold accumulator for banker pets
+  // lifetimeGold (the prestige basis) is reconciled from the monotonic goldEarned
+  // total so EVERY gold faucet (kills, jackpot, loot, banker, offline) counts
+  // without touching combat code. This marks goldEarned at the last reconcile.
+  private _goldEarnedMark = 0;
+  private _runGoldStart = 0; // goldEarned at this run's start (for the "earn gold" daily)
   private _bankerRoundGold = 0; // gold minted by bankers this round (per-round cap)
   private _bankerRound = -1; // round the above was last reset for
   private audio = new Audio();
@@ -329,6 +335,7 @@ class Game implements GameApi {
     this.hud.onStart(() => this.startRun());
     this.hud.onRestart(() => this.startRun());
     this.hud.onMenu(() => this.toMenu());
+    this.hud.onPrestige(() => this.openPrestige());
     this.hud.onHost(() => this.hostGame());
     this.hud.onJoin((code) => this.joinGame(code));
     this.hud.onServer(() => this.changeServer());
@@ -348,6 +355,18 @@ class Game implements GameApi {
     addEventListener("resize", this.onResize);
     this.onResize();
     this.hud.showStart();
+
+    // Idle economy boot: credit offline banker gold (capped, half-rate) and show
+    // the "While You Were Away" screen, then settle the daily login streak +
+    // roll the daily-quest board. All read wall-clock vs save.lastSeen and
+    // persist; safe no-ops on a brand-new save.
+    this.settleOffline();
+    this.settleLogin();
+    // Anchor the lifetimeGold reconciler at the post-boot goldEarned so only
+    // NEW gold (this session onward) feeds the prestige basis — migrated saves
+    // with a large pre-feature goldEarned don't dump it into prestige at once.
+    this._goldEarnedMark = this.save.goldEarned;
+    this.refreshPrestigeUi();
 
     this.resetRun(); // place player + default weapon so the menu scene looks alive
     requestAnimationFrame(this.loop);
@@ -708,6 +727,7 @@ class Game implements GameApi {
     this.resetRun();
     this.hud.hideStart();
     this.hud.hideGameOver();
+    this._runGoldStart = this.save.goldEarned; // baseline for the daily "earn gold" quest
     this.state = "playing";
     this.rounds.start();
     this.audio.startMusic(0);
@@ -723,8 +743,10 @@ class Game implements GameApi {
     // Co-op host: let guests know the team wiped (they resume when host replays).
     this.netplay?.hostNotify("Team wiped — waiting for host…");
 
-    // Every run pays out Essence and may set a new personal best.
-    const earned = essenceFor(this.rounds.round, this.points, this.mods.essenceMul);
+    // Every run pays out Essence and may set a new personal best. The prestige
+    // multiplier (1 + prestige*k) boosts the payout — that's the ascension reward.
+    const pMul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
+    const earned = Math.round(essenceFor(this.rounds.round, this.points, this.mods.essenceMul) * pMul);
     this.save.essence += earned;
     const newBest = this.rounds.round > this.save.bestRound || (this.rounds.round === this.save.bestRound && this.points > this.save.bestScore);
     if (newBest) {
@@ -743,9 +765,14 @@ class Game implements GameApi {
     const bonus = this.settleChallenges();
     this.foldPetTrials();
     this.checkPetEvolutions();
+    this.settleDailies(); // fold run into daily quests + pay finished ones
+
+    // Fold this run's gold into the prestige basis, then refresh the menu chip.
+    this.reconcileLifetimeGold();
 
     writeSave(this.save);
     this.renderShop();
+    this.refreshPrestigeUi();
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
     this.hud.showGameOver(this.rounds.round, this.points, earned + bonus, newBest);
   }
@@ -1980,6 +2007,153 @@ class Game implements GameApi {
     }
   }
 
+  /** Summed ACTIVE gold/sec of every owned banker pet, using the SAME flattened
+   *  rate as the live updatePets loop (roleValue * (1 + (level-1)*scale)). This
+   *  is the basis for offline accrual (idle.offlineGold halves it). */
+  private ownedBankerRatePerSec(): number {
+    let rate = 0;
+    for (const id of this.save.pets) {
+      const def = findAnyPet(id);
+      if (!def || def.role !== "banker") continue;
+      const level = this.save.petLevels[id] ?? 1;
+      rate += (def.roleValue ?? 0) * (1 + (level - 1) * PETS_TUNING.bankerLevelScale);
+    }
+    return rate;
+  }
+
+  /** On boot: pay out gold the owned bankers minted while the tab was closed
+   *  (half rate, capped), and show the "While You Were Away" screen if it's
+   *  worth surfacing. Silent for first-ever saves (lastSeen === 0). */
+  private settleOffline() {
+    if (this.save.lastSeen <= 0) return; // brand-new save — nothing accrued yet
+    const elapsed = Date.now() - this.save.lastSeen;
+    const rate = this.ownedBankerRatePerSec();
+    const gross = offlineGold(rate, elapsed, IDLE.offlineCapMs);
+    if (gross <= 0) return;
+    // Prestige multiplier applies to offline gold too (it's the same faucet).
+    const mul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
+    const gold = Math.floor(gross * mul);
+    if (gold <= 0) return;
+    this.save.gold += gold;
+    this.save.goldEarned += gold;
+    writeSave(this.save);
+    this.renderShop();
+    if (gold >= IDLE.welcomeBackMinGold) {
+      const durationMs = Math.min(elapsed, IDLE.offlineCapMs);
+      this.hud.showWelcomeBack({ gold, essence: 0, durationMs });
+    }
+  }
+
+  /** Boot: settle the login streak (UTC day buckets, with freeze) and roll the
+   *  daily-quest board over if the UTC day changed. Pays the streak reward in
+   *  soft gold + essence, surfaces the streak chip, and refreshes the daily board. */
+  private settleLogin() {
+    const today = dayUtc(Date.now());
+    if (today <= 0) return; // unusable clock — leave state untouched
+
+    const r = settleStreak(this.save.streak, today);
+    this.save.streak = r.streak;
+    if (r.advanced) {
+      this.save.gold += r.gold;
+      this.save.goldEarned += r.gold;
+      this.save.essence += r.essence;
+      const freezeNote = r.usedFreeze ? " (streak freeze used)" : "";
+      this.hud.toast(`Day ${r.streak.count} streak${freezeNote}  +${r.gold} 🪙 +${r.essence} ✦`);
+    }
+
+    // Roll the daily board to today (clears progress/claims on a new UTC day).
+    this.save.daily = rollDaily(this.save.daily, today);
+
+    writeSave(this.save);
+    this.renderShop();
+    this.refreshStreakUi();
+    this.refreshDailyUi();
+  }
+
+  private refreshStreakUi() {
+    this.hud.setStreak(this.save.streak.count, this.save.streak.freezes);
+  }
+
+  private refreshDailyUi() {
+    this.hud.showDailies(dailyRows(this.save.daily));
+  }
+
+  /** Run-settle: fold this run's deltas (1 run, kills, gold) into the daily
+   *  board, pay out any newly-finished quests, and refresh the board. */
+  private settleDailies() {
+    const runGold = Math.max(0, this.save.goldEarned - this._runGoldStart);
+    this.save.daily = applyDailyProgress(this.save.daily, {
+      runs: 1,
+      kills: this.runStats.kills,
+      gold: runGold,
+    });
+    const done = settleDaily(this.save.daily);
+    this.save.daily = done.daily;
+    if (done.gold > 0 || done.essence > 0) {
+      this.save.gold += done.gold;
+      this.save.goldEarned += done.gold;
+      this.save.essence += done.essence;
+      this.hud.toast(`Daily complete  +${done.gold} 🪙 +${done.essence} ✦`);
+    }
+    this.refreshDailyUi();
+  }
+
+  /** Roll any newly-earned gold (goldEarned delta) into lifetimeGold — the
+   *  prestige basis. Idempotent; called before reading prestige availability. */
+  private reconcileLifetimeGold() {
+    const delta = this.save.goldEarned - this._goldEarnedMark;
+    if (delta > 0) this.save.lifetimeGold += delta;
+    this._goldEarnedMark = this.save.goldEarned;
+  }
+
+  /** Push the current prestige standing to the menu (banked count + multiplier +
+   *  how many points are claimable right now). */
+  private refreshPrestigeUi() {
+    this.reconcileLifetimeGold();
+    const available = prestigeGain(this.save.lifetimeGold, this.save.prestige, PRESTIGE.x);
+    const mul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
+    this.hud.setPrestige(this.save.prestige, mul, available);
+  }
+
+  /**
+   * Open the ascension confirmation. Prestige BANKS the newly-available points
+   * (√ curve over lifetimeGold) for a permanent +k gold/essence multiplier, then
+   * RESETS the run-scoped gold economy.
+   *
+   *  RESETS:    gold, goldEarned, lifetimeGold, owned (essence meta-upgrades).
+   *  PRESERVES: prestige (incremented), essence, pets/petLevels/petProgress,
+   *             skins/skin, stash, bestRound/bestScore, stats, claimed,
+   *             streak, daily, muted.
+   */
+  private openPrestige() {
+    this.reconcileLifetimeGold();
+    const gain = prestigeGain(this.save.lifetimeGold, this.save.prestige, PRESTIGE.x);
+    const afterMul = prestigeMultiplier(this.save.prestige + gain, PRESTIGE.k);
+    this.hud.showPrestige(
+      { current: this.save.prestige, gain, lifetimeGold: this.save.lifetimeGold, nextMultiplier: afterMul },
+      () => this.doPrestige(),
+    );
+  }
+
+  private doPrestige() {
+    this.reconcileLifetimeGold();
+    const gain = prestigeGain(this.save.lifetimeGold, this.save.prestige, PRESTIGE.x);
+    if (gain <= 0) return; // not enough yet — no-op (button is disabled too)
+    this.save.prestige += gain;
+    // Reset the gold economy that fed this ascension; keep the long-arc meta.
+    this.save.gold = 0;
+    this.save.goldEarned = 0;
+    this.save.lifetimeGold = 0;
+    this.save.owned = [];
+    this._goldEarnedMark = 0;
+    this._petGold = 0;
+    writeSave(this.save);
+    this.resetRun(); // rebuild mods from the now-empty owned list + respawn pets
+    this.renderShop();
+    this.refreshPrestigeUi();
+    this.hud.toast(`Ascended! +${gain} ✦✦ prestige`);
+  }
+
   /** Rebuild live pets from the owned list (called on run start / purchase). */
   private spawnPets() {
     for (const p of this.pets) this.scene.remove(p.group);
@@ -2036,7 +2210,11 @@ class Game implements GameApi {
           this._bankerRound = this.rounds.round;
           this._bankerRoundGold = 0;
         }
-        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale);
+        // Prestige multiplier (1 + prestige*k) couples ascension into the live
+        // banker faucet — same boost the offline accrual gets, so active income
+        // always leads offline at any prestige level.
+        const pMul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
+        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale) * pMul;
         this._petGold += rate * dt;
         if (this._petGold >= 1 && this._bankerRoundGold < PETS_TUNING.bankerGoldPerRoundCap) {
           let g = Math.floor(this._petGold);

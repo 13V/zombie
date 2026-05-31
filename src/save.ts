@@ -19,7 +19,27 @@ export interface SavedItem {
   gold: number;
 }
 
+/** Login-streak tracking (UTC day buckets — see idle.ts dayUtc/settleStreak). */
+export interface StreakState {
+  count: number; // consecutive UTC days played (current streak length)
+  lastDayUtc: number; // UTC day-index of the last day the streak advanced (0 = never)
+  freezes: number; // banked "skip a day" tokens — forgive ONE missed day each
+}
+
+/** Daily-quest tracking, reset on UTC day change (see idle.ts rollDaily). */
+export interface DailyState {
+  dayUtc: number; // UTC day-index these quests belong to (0 = uninitialised)
+  progress: Record<string, number>; // quest id -> current progress count
+  claimed: string[]; // quest ids whose reward has already been paid out
+}
+
 export interface SaveData {
+  version: number; // save-schema version (for future migrations; starts at 1)
+  lastSeen: number; // ms epoch of the last writeSave (drives offline accrual)
+  prestige: number; // ascension currency — permanent gold/essence multiplier
+  lifetimeGold: number; // running total of all gold ever earned (prestige basis)
+  streak: StreakState; // login-streak state
+  daily: DailyState; // daily-quest state
   essence: number; // permanent meta currency
   gold: number; // tradable soft currency (earned by selling loot)
   goldEarned: number; // lifetime gold earned (stats / future token bridge)
@@ -43,8 +63,22 @@ function blankStats(): LifetimeStats {
   return { kills: 0, crits: 0, bossKills: 0, drops: 0, games: 0 };
 }
 
+function blankStreak(): StreakState {
+  return { count: 0, lastDayUtc: 0, freezes: 0 };
+}
+
+function blankDaily(): DailyState {
+  return { dayUtc: 0, progress: {}, claimed: [] };
+}
+
 function blank(): SaveData {
   return {
+    version: 1,
+    lastSeen: 0,
+    prestige: 0,
+    lifetimeGold: 0,
+    streak: blankStreak(),
+    daily: blankDaily(),
     essence: 0,
     gold: 0,
     goldEarned: 0,
@@ -115,6 +149,38 @@ function sanitizeLevels(raw: unknown): Record<string, number> {
   return out;
 }
 
+/** Coerce a freeform record of finite non-negative numbers (daily quest progress). */
+function sanitizeNumMap(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      const n = typeof v === "number" ? v : Number(v);
+      if (Number.isFinite(n) && n >= 0) out[k] = n;
+    }
+  }
+  return out;
+}
+
+function sanitizeStreak(raw: unknown): StreakState {
+  if (!raw || typeof raw !== "object") return blankStreak();
+  const o = raw as Partial<StreakState>;
+  return {
+    count: Math.floor(num(o.count)),
+    lastDayUtc: Math.floor(num(o.lastDayUtc)),
+    freezes: Math.floor(num(o.freezes)),
+  };
+}
+
+function sanitizeDaily(raw: unknown): DailyState {
+  if (!raw || typeof raw !== "object") return blankDaily();
+  const o = raw as Partial<DailyState>;
+  return {
+    dayUtc: Math.floor(num(o.dayUtc)),
+    progress: sanitizeNumMap(o.progress),
+    claimed: strArray(o.claimed),
+  };
+}
+
 export function loadSave(): SaveData {
   try {
     const raw = localStorage.getItem(KEY);
@@ -122,6 +188,13 @@ export function loadSave(): SaveData {
     const data = JSON.parse(raw) as Partial<SaveData>;
     const skins = strArray(data.skins);
     return {
+      // version: clamp to >=1 so a corrupt/0 value still reads as the v1 schema.
+      version: Math.max(1, Math.floor(num(data.version, 1))),
+      lastSeen: num(data.lastSeen),
+      prestige: Math.floor(num(data.prestige)),
+      lifetimeGold: num(data.lifetimeGold),
+      streak: sanitizeStreak(data.streak),
+      daily: sanitizeDaily(data.daily),
       essence: num(data.essence),
       gold: num(data.gold),
       goldEarned: num(data.goldEarned),
@@ -150,6 +223,9 @@ export function loadSave(): SaveData {
 }
 
 export function writeSave(data: SaveData) {
+  // Stamp the "last seen" wall-clock on every persist so offline accrual on the
+  // next boot measures from the true last interaction (see idle.offlineGold).
+  data.lastSeen = Date.now();
   try {
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch {

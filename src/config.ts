@@ -166,3 +166,63 @@ export const GUMS: GumDef[] = [
   { id: "sugarRush", name: "Sugar Rush", short: "SPEED", duration: 25, color: 0x8fcf6f },
   { id: "fullPockets", name: "Full Pockets", short: "AMMO", duration: 0, color: 0xc792ea },
 ];
+
+// ── IDLE & PRESTIGE TUNING ──
+// Soft-currency idle/ascension economy. ALL rewards are gold/essence (soft);
+// nothing here ever mints token — active shooting stays the primary faucet.
+// The pure math lives in src/idle.ts; these are the only knobs to tweak.
+export const IDLE = {
+  /** Offline accrues at HALF the active banker rate, so logging in and SHOOTING
+   *  always beats idling. (Spec-locked at 0.5 — don't raise without re-tuning.) */
+  offlineRate: 0.5,
+  /** Max offline window that pays out, in ms. 8h: a generous overnight catch-up
+   *  that still can't replace a few active runs. */
+  offlineCapMs: 8 * 60 * 60 * 1000,
+  /** Don't bother showing the "While You Were Away" screen for trivial amounts
+   *  (a quick tab-out). Below this many gold we credit silently. */
+  welcomeBackMinGold: 25,
+};
+
+export const PRESTIGE = {
+  /** AdVenture-Capitalist √ shape: prestige = floor(sqrt(lifetimeGold / X)).
+   *  X = 50_000 ⇒ the FIRST ascension lands once lifetime gold crosses ~50k,
+   *  which with bankers + kill-gold is roughly a 2–3h investment. The √ means
+   *  each additional prestige point costs quadratically more lifetime gold
+   *  (50k, 200k, 450k, 800k …), so early ascensions feel fast and it self-paces. */
+  x: 50_000,
+  /** Permanent gold/essence multiplier = 1 + prestige * k. k = 0.10 ⇒ +10% per
+   *  ascension point — meaningful but never runaway (no compounding). */
+  k: 0.1,
+};
+
+export const STREAK = {
+  /** Soft daily-login reward, scaled by streak length (capped). Gold + a pinch
+   *  of essence so a streak is worth keeping but never cashable. */
+  baseGold: 100,
+  goldPerDay: 50, // + this * min(count, capDays)
+  capDays: 14, // streak reward stops growing past two weeks
+  baseEssence: 2,
+  essencePerDay: 1,
+  essenceCap: 20,
+  /** A "freeze" forgives ONE missed UTC day so a single skip won't reset the
+   *  streak. Grant 1 every `freezeGrantEvery` days; never bank more than max. */
+  freezeGrantEvery: 5,
+  freezeMax: 2,
+};
+
+/** A finishable daily quest. `metric` keys into the run/lifetime delta settled
+ *  at run-end (see main.ts settleDaily). All rewards are soft gold/essence. */
+export interface DailyQuestDef {
+  id: string;
+  name: string;
+  metric: "runs" | "kills" | "gold";
+  goal: number;
+  gold: number;
+  essence: number;
+}
+
+export const DAILY_QUESTS: DailyQuestDef[] = [
+  { id: "play", name: "Do 1 run", metric: "runs", goal: 1, gold: 150, essence: 3 },
+  { id: "cull", name: "Kill 200 zombies", metric: "kills", goal: 200, gold: 250, essence: 5 },
+  { id: "earn", name: "Earn 500 gold", metric: "gold", goal: 500, gold: 200, essence: 4 },
+];
