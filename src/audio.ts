@@ -17,6 +17,11 @@ export class Audio {
   private musicGain?: GainNode;
   private reverb?: ConvolverNode; // procedural space
   private reverbSend?: GainNode; // post-reverb level into the limiter
+  // Pre-generated static white-noise buffers, reused by every noise() voice
+  // (filter + playbackRate vary the timbre) so we never allocate/fill a buffer
+  // per gunshot/hit/explosion. Two ~1s mono buffers picked round-robin.
+  private noiseBufs: AudioBuffer[] = [];
+  private noisePick = 0;
   private unlocked = false;
   private lastGunAt = 0;
   private lastGroanAt = 0;
@@ -64,6 +69,10 @@ export class Audio {
       this.reverbSend.gain.value = 0.9;
       this.reverb.connect(this.reverbSend);
       this.reverbSend.connect(this.limiter); // wet path bypasses master so it's stable
+
+      // Pre-bake two seconds of white noise once; noise() slices a random
+      // window of these instead of generating fresh samples on every shot.
+      this.noiseBufs = [this.makeNoise(1.0), this.makeNoise(1.0)];
       this.unlocked = true;
     } catch {
       /* no audio available — game still runs silently */
@@ -97,6 +106,16 @@ export class Audio {
         data[i] = (Math.random() * 2 - 1) * env;
       }
     }
+    return buf;
+  }
+
+  /** Build a static mono white-noise buffer (reused across all noise voices). */
+  private makeNoise(dur: number): AudioBuffer {
+    const ctx = this.ctx!;
+    const frames = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const buf = ctx.createBuffer(1, frames, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
     return buf;
   }
 
@@ -137,12 +156,16 @@ export class Audio {
   ) {
     const ctx = this.ctx!;
     const start = this.t + (opts.delay ?? 0);
-    const frames = Math.max(1, Math.floor(ctx.sampleRate * dur));
-    const buf = ctx.createBuffer(1, frames, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
     const src = ctx.createBufferSource();
+    // Reuse a pre-baked static noise buffer (round-robin between the two) and
+    // loop it from a random offset so every shot still sounds fresh/random,
+    // without allocating + filling a buffer per call.
+    const buf = this.noiseBufs[this.noisePick++ % this.noiseBufs.length] ?? this.makeNoise(dur);
     src.buffer = buf;
+    src.loop = true;
+    src.loopStart = 0;
+    src.loopEnd = buf.duration;
+    const offset = Math.random() * buf.duration;
     const filt = ctx.createBiquadFilter();
     filt.type = filterType;
     filt.frequency.setValueAtTime(freq, start);
@@ -154,7 +177,7 @@ export class Audio {
     src.connect(filt);
     filt.connect(g);
     this.route(g, opts.dest, opts.pan, start);
-    src.start(start);
+    src.start(start, offset);
     src.stop(start + dur + 0.02);
   }
 
