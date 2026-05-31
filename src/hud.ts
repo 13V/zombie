@@ -153,6 +153,9 @@ export class Hud {
           <span class="k">P</span><span>Pause</span>
           <span class="k">M</span><span>Mute</span>
           <span class="k">F</span><span>Nuke (when charged)</span>
+          <span class="k">T</span><span>Emote (island)</span>
+          <span class="k">R</span><span>Rotate part (build)</span>
+          <span class="k">Z</span><span>Undo (build)</span>
         </div>
         <button class="play" id="btn-island">🏝️ Enter Island</button>
         <button class="play secondary" id="btn-start">Play Solo</button>

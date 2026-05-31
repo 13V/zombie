@@ -128,6 +128,7 @@ export class HouseView {
     for (let i = this.group.children.length - 1; i >= 0; i--) {
       const c = this.group.children[i];
       this.group.remove(c);
+      disposeObject(c); // free GPU geometry/materials — render() fires every edit
     }
     for (const p of data.parts) this.addPart(p);
   }
@@ -342,7 +343,20 @@ export class HouseView {
 
   dispose(scene: THREE.Scene) {
     scene.remove(this.group);
+    for (let i = this.group.children.length - 1; i >= 0; i--) disposeObject(this.group.children[i]);
+    this.group.clear();
   }
+}
+
+/** Recursively free a scene object's geometries + materials (incl. perch pets). */
+function disposeObject(obj: THREE.Object3D) {
+  obj.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+    else mat?.dispose();
+  });
 }
 
 /** Validate/sanitize HouseData coming from storage or the network. */

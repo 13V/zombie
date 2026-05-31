@@ -1,6 +1,12 @@
 import * as THREE from "three";
 import { VoxelChar, EmoteId } from "./voxelChar";
 import { NetClient, NetMsg, PresenceMsg } from "./net";
+import { EMOTES, QUICK_CHAT } from "./emotes";
+
+// The relay is untrusted: only accept emote ids / chat we actually broadcast.
+const VALID_EMOTES = new Set<string>(EMOTES.map((e) => e.id));
+const VALID_CHAT = new Set<string>(QUICK_CHAT);
+const CHAT_MAX = 48; // hard cap even on accepted text
 
 /**
  * Island presence layer — lightweight, peer-to-peer (no authoritative host).
@@ -190,6 +196,8 @@ export class IslandNet {
 
   private onMessage(from: number, msg: NetMsg) {
     if (msg.t === "presence") {
+      // reject malformed coords/yaw so a hostile peer can't NaN our figures
+      if (![msg.x, msg.z, msg.ry].every(Number.isFinite)) return;
       let f = this.peers.get(from);
       if (!f) {
         // first pose from a peer also tells us their look — (re)create with it
@@ -198,9 +206,12 @@ export class IslandNet {
       }
       f.setTarget(msg);
     } else if (msg.t === "emote") {
-      this.peers.get(from)?.playEmote(msg.id as EmoteId);
+      if (VALID_EMOTES.has(msg.id)) this.peers.get(from)?.playEmote(msg.id as EmoteId);
     } else if (msg.t === "chat") {
-      this.peers.get(from)?.say(msg.text);
+      // only render preset phrases (defense in depth); cap length regardless
+      if (typeof msg.text === "string" && VALID_CHAT.has(msg.text)) {
+        this.peers.get(from)?.say(msg.text.slice(0, CHAT_MAX));
+      }
     }
   }
 
