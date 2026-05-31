@@ -337,6 +337,12 @@ class Game implements GameApi {
       this.hud.toast("A BOSS APPROACHES");
       this.shake = Math.min(0.6, this.shake + 0.4);
     };
+    // Difficulty director: a loud tier banner each time the horde escalates.
+    this.rounds.onDifficultyTier = (name, color) => {
+      this.hud.showRoundBanner(name, color);
+      this.audio.roundStart();
+      this.shake = Math.min(0.4, this.shake + 0.2);
+    };
 
     this.hud.onStart(() => this.startRun());
     this.hud.onRestart(() => this.startRun());

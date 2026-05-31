@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { ELITE, ROUNDS, SPECIAL_ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
+import { DIFFICULTY, ELITE, ROUNDS, SPECIAL_ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
 import { Affix, Zombie } from "./zombie";
 import { Arena } from "./arena";
 import { AssetManager } from "./assets";
@@ -55,10 +55,15 @@ export class RoundManager {
   /** The active round's special flavoring (null on a plain round). */
   private special: SpecialRound | null = null;
 
-  /** Continuous difficulty director coefficient (see item 4: rises with round +
-   *  run time). Used to bias affix frequency. Placeholder until updated in
-   *  update(); a round-only floor keeps it sane before time accrues. */
+  /** Continuous difficulty director coefficient: rises with round + run time.
+   *  Recomputed every update(); biases affix frequency + the elite-credit swap. */
   difficultyCoeff = 0;
+  /** Accumulated active-run seconds (drives the time term of difficultyCoeff). */
+  private runTime = 0;
+  /** Index of the difficulty tier whose banner we last surfaced (-1 = none). */
+  private lastTier = -1;
+  /** Fires when the difficulty director crosses into a new named tier. */
+  onDifficultyTier?: (name: string, color: string) => void;
 
   onRoundStart?: (round: number) => void;
   onIntermission?: (nextRound: number) => void;
@@ -94,6 +99,14 @@ export class RoundManager {
    */
   get specialRound(): SpecialRound | null {
     return this.special;
+  }
+
+  /** Highest difficulty tier unlocked by the current coeff. */
+  get difficultyTier(): { name: string; color: string } {
+    const tiers = DIFFICULTY.tiers;
+    let cur = tiers[0];
+    for (const t of tiers) if (this.difficultyCoeff >= t.at) cur = t;
+    return cur;
   }
 
   /**
@@ -314,6 +327,23 @@ export class RoundManager {
     return z;
   }
 
+  /** Difficulty credit: quietly recycle one weak, unaffixed basic so an elite
+   *  can take the freed slot. Picks a low-value type (cheap to lose) and just
+   *  flips it idle — no FX, it's a behind-the-scenes density swap. */
+  private retireWeakForElite() {
+    let victim: Zombie | undefined;
+    for (const z of this.zombies) {
+      if (!z.alive || z.affix || z.isBoss || z.flying) continue;
+      // prefer the cheapest fodder (low score multiplier ≈ basic)
+      if (!victim || z.scoreMul < victim.scoreMul) victim = z;
+    }
+    if (victim) {
+      victim.alive = false;
+      victim.dying = false;
+      victim.group.visible = false;
+    }
+  }
+
   /** Necromancer summon: raise a few fast crawlers near the summoner. */
   private summonAdds(from: Zombie, count: number) {
     if (this.aliveCount >= this.curMaxAlive + 6) return; // respect the cap (+small slack)
@@ -339,6 +369,19 @@ export class RoundManager {
   }
 
   update(dt: number, arena: Arena, playerPositions: THREE.Vector3[]) {
+    // Difficulty director: accumulate run time while a round is live, recompute
+    // the continuous coeff, and surface a banner each time we cross into a new
+    // named tier (Restless → Hungry → … → Apocalypse).
+    if (this.phase === "active") this.runTime += dt;
+    this.difficultyCoeff = (this.round - 1) * DIFFICULTY.perRound + (this.runTime / 60) * DIFFICULTY.perMinute;
+    let tier = 0;
+    for (let i = 0; i < DIFFICULTY.tiers.length; i++) if (this.difficultyCoeff >= DIFFICULTY.tiers[i].at) tier = i;
+    if (tier > this.lastTier) {
+      this.lastTier = tier;
+      const t = DIFFICULTY.tiers[tier];
+      if (this.round > 0) this.onDifficultyTier?.(t.name, t.color);
+    }
+
     // Rebuild the spatial grid once per frame; zombies + combat systems query it.
     this.grid.rebuild(this.zombies);
     if (this.phase === "active") {
@@ -346,9 +389,17 @@ export class RoundManager {
       if (this.bossPending) this.spawnBoss(arena);
       if (this.toSpawn > 0) {
         this.spawnTimer -= dt;
-        if (this.spawnTimer <= 0 && this.aliveCount < this.curMaxAlive) {
-          this.spawnOne(arena);
-          this.spawnTimer = this.curSpawnInterval;
+        if (this.spawnTimer <= 0) {
+          // Normally we stall at the alive cap. Past a high difficulty coeff we
+          // "credit-swap": retire one weak basic to make room for an elite, so
+          // late rounds get scarier in QUALITY without blowing the perf budget.
+          if (this.aliveCount >= this.curMaxAlive && this.difficultyCoeff >= 1 && this.affixedAlive < ELITE.maxAlive) {
+            this.retireWeakForElite();
+          }
+          if (this.aliveCount < this.curMaxAlive) {
+            this.spawnOne(arena);
+            this.spawnTimer = this.curSpawnInterval;
+          }
         }
       } else if (this.aliveCount === 0) {
         this.phase = "intermission";
@@ -405,5 +456,8 @@ export class RoundManager {
     this.phase = "pre";
     this.toSpawn = 0;
     this.special = null;
+    this.runTime = 0;
+    this.difficultyCoeff = 0;
+    this.lastTier = -1;
   }
 }
