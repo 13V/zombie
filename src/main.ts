@@ -537,8 +537,13 @@ class Game implements GameApi {
             }),
           ];
         }
-        // ── PET DEPTH: role display (stars/shiny/convert wired in items 4–5) ──
+        // ── PET DEPTH: role / star-ascension / shiny display + dupe-convert hook ──
         const role = p.combatRole;
+        const stars = this.petStars(ownId);
+        const maxStars = PET_DEPTH.stars.maxStars;
+        const shiny = (this.save.petProgress[ownId]?._shiny ?? 0) > 0;
+        const starCost = Math.round(base.cost * PET_DEPTH.stars.convertCostMul);
+        const canStar = owned && stars < maxStars; // re-buying mints a star (dupe)
         return {
           id: ownId, name: p.name, desc: p.desc, cost: base.cost,
           color: `#${p.color.toString(16).padStart(6, "0")}`,
@@ -551,11 +556,14 @@ class Game implements GameApi {
           trial,
           roleIcon: role ? ROLE_ICON[role] : undefined,
           roleLabel: role ? ROLE_LABEL[role] : undefined,
+          stars, maxStars, shiny,
+          canStar, starCost: canStar ? starCost : undefined,
           active: activeIds.has(ownId),
         };
       }),
       (id) => this.buyOrLevelPet(id),
       this.petCollectionInfo(),
+      (id) => this.convertDupeToStar(id),
     );
   }
 
@@ -604,6 +612,29 @@ class Game implements GameApi {
     this.renderShop();
   }
 
+  /** Dupe → STAR ascension. Buying a copy of a pet you already own converts the
+   *  gold into a star (petProgress[id]._stars, capped at PET_DEPTH.stars.maxStars).
+   *  Stars give a small flat damage bump (dmgPerStar) AND, at thresholds, a role-
+   *  behavior kicker (see updatePets roleKickAt/eliteKickAt) — skills, not raw
+   *  stat creep. NON-CASHABLE: cost is gold only; nothing pays out tokens. */
+  private convertDupeToStar(id: string) {
+    if (!this.save.pets.includes(id)) { this.audio.deny(); return; }
+    const stars = this.petStars(id);
+    if (stars >= PET_DEPTH.stars.maxStars) { this.audio.deny(); return; }
+    // Cost keys off the base pet's price (evolved forms have cost 0).
+    const base = PETS.find((p) => p.evolvesTo === id) ?? findAnyPet(id);
+    const cost = Math.round((base?.cost ?? 0) * PET_DEPTH.stars.convertCostMul);
+    if (this.save.gold < cost) { this.audio.deny(); return; }
+    this.save.gold -= cost;
+    const pr = (this.save.petProgress[id] ??= {});
+    pr._stars = stars + 1;
+    writeSave(this.save);
+    this.audio.levelUp();
+    const liveName = findAnyPet(id)?.name ?? "Pet";
+    this.hud.toast(`★ ${liveName} ascended to ${pr._stars}★!`);
+    this.renderShop();
+  }
+
   /** Accumulate this run's "while-equipped" totals into each owned pet's trial. */
   private foldPetTrials() {
     for (const id of this.save.pets) {
@@ -643,10 +674,19 @@ class Game implements GameApi {
     const idx = this.save.pets.indexOf(id);
     if (idx < 0) return;
     const lvl = this.save.petLevels[id] ?? 1;
+    // Carry the cosmetic/ascension reserved keys across evolution so stars + shiny
+    // survive the form swap (trial counters are reset — the evo no longer evolves).
+    const stars = this.save.petProgress[id]?._stars ?? 0;
+    const shiny = this.save.petProgress[id]?._shiny ?? 0;
     this.save.pets[idx] = def.evolvesTo;
     this.save.petLevels[def.evolvesTo] = lvl;
     delete this.save.petLevels[id];
     delete this.save.petProgress[id];
+    if (stars > 0 || shiny > 0) {
+      const pr = (this.save.petProgress[def.evolvesTo] ??= {});
+      if (stars > 0) pr._stars = stars;
+      if (shiny > 0) pr._shiny = shiny;
+    }
     this.audio.levelUp();
     this.hud.toast("✦ Evolved into " + (findAnyPet(def.evolvesTo)?.name ?? "?") + "!");
   }
@@ -2345,18 +2385,23 @@ class Game implements GameApi {
     this._petKillMark = killsNow;
     if (killsThisFrame > 0) {
       let combat = 0, drainers = 0, harvesters = 0;
+      // 3★+ drainers/harvesters add a small per-pet star kicker to their faucet.
+      let drainerStarKick = 0, harvesterStarKick = 0;
       for (const p of this.pets) {
         if (p.def.role === "banker" || p.def.role === "buffer") continue;
         combat++;
-        if (p.def.combatRole === "drainer") drainers++;
-        if (p.def.combatRole === "harvester") harvesters++;
+        const st = this.petStars(p.def.id);
+        const kick = st >= PET_DEPTH.stars.roleKickAt ? 1 : 0;
+        if (p.def.combatRole === "drainer") { drainers++; drainerStarKick += kick; }
+        if (p.def.combatRole === "harvester") { harvesters++; harvesterStarKick += kick; }
       }
       if (combat > 0) {
         const R = PET_DEPTH.roles;
         if (drainers > 0 && this._drainerRoundHeal < R.drainer.healCapPerRound) {
-          // share = drainer fraction; + squad lifesteal synergy bump.
+          // share = drainer fraction; + squad lifesteal synergy bump + star kicker.
           const share = drainers / combat;
-          let heal = R.drainer.healPerKill * killsThisFrame * share + syn.lifesteal * killsThisFrame * share;
+          const starFrac = drainerStarKick / drainers; // 0..1 of drainers at 3★+
+          let heal = (R.drainer.healPerKill * (1 + starFrac * 0.5) + syn.lifesteal) * killsThisFrame * share;
           heal = Math.min(heal, R.drainer.healCapPerRound - this._drainerRoundHeal);
           if (heal > 0.01) {
             this._drainerRoundHeal += heal;
@@ -2365,7 +2410,8 @@ class Game implements GameApi {
         }
         if (harvesters > 0 && this._harvesterRoundGold < R.harvester.goldCapPerRound) {
           const share = harvesters / combat;
-          let g = Math.round((R.harvester.goldPerKill + syn.gold) * killsThisFrame * share);
+          const starFrac = harvesterStarKick / harvesters;
+          let g = Math.round((R.harvester.goldPerKill * (1 + starFrac * 0.5) + syn.gold) * killsThisFrame * share);
           g = Math.min(g, R.harvester.goldCapPerRound - this._harvesterRoundGold);
           if (g > 0) {
             this._harvesterRoundGold += g;
@@ -2426,8 +2472,8 @@ class Game implements GameApi {
       // ── role: engage RANGE verbs (tank soaks wider, sniper reaches far) +
       // squad-range synergy. All additive, tiny. ──
       let range = d.range;
-      if (role === "tank") range += R.tank.orbitRange;
-      if (role === "sniper") range += R.sniper.bonusRange;
+      if (role === "tank") range += R.tank.orbitRange + (stars >= PET_DEPTH.stars.roleKickAt ? 2 : 0);
+      if (role === "sniper") range += R.sniper.bonusRange + (stars >= PET_DEPTH.stars.eliteKickAt ? 2 : 0);
       range += syn.range;
       // nearest zombie to the pet, within its (role-adjusted) range
       const near = grid.nearest(pet.group.position.x, pet.group.position.z, range);
@@ -2456,8 +2502,10 @@ class Game implements GameApi {
         let dmgMul = pet.damageMul * petBuff * syn.damageMul * pet.engineMul;
         dmgMul *= 1 + stars * PET_DEPTH.stars.dmgPerStar; // dupe→star: flat, capped
         // sniper: crit-on-distant — a modest multiplier when the target is far.
+        // 3★+ snipers crit from a shorter distance (skill bump, not raw damage).
         const dist = shot.dist;
-        if (role === "sniper" && dist >= R.sniper.critRange) {
+        const critRange = R.sniper.critRange - (stars >= PET_DEPTH.stars.roleKickAt ? 3 : 0);
+        if (role === "sniper" && dist >= critRange) {
           dmgMul *= R.sniper.critMul * syn.critMul;
         }
         let splashRadius = d.splashRadius;
