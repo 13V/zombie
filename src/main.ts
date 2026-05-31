@@ -36,6 +36,7 @@ import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, warmServer, getServerUrl, setServerUrl } from "./net";
 import { TouchControls, isTouchDevice } from "./touchControls";
 import { Wallet } from "./wallet";
+import { getTokenApiUrl, setTokenApiUrl, fetchClaimable } from "./token";
 import { NetPlay, GuestSlot } from "./netplay";
 import { COLORS } from "./palette";
 import { TiltShift } from "./tiltShift";
@@ -284,9 +285,7 @@ class Game implements GameApi {
     this.hud.onJoin((code) => this.joinGame(code));
     this.hud.onServer(() => this.changeServer());
     this.hud.onWallet(() => this.toggleWallet());
-    this.wallet.onChange = () => this.syncWallet();
-    this.wallet.tryEagerConnect();
-    this.hud.onWallet(() => this.toggleWallet());
+    this.hud.onClaim(() => this.claimTokens(), () => this.changeTokenApi());
     this.wallet.onChange = () => this.syncWallet();
     this.wallet.tryEagerConnect();
 
@@ -729,14 +728,48 @@ class Game implements GameApi {
     await this.wallet.connect();
   }
 
-  /** Reflect wallet state on the menu (button label + Essence-as-token balance). */
-  private syncWallet() {
+  /** Reflect wallet state on the menu, then ask the backend what's claimable. */
+  private async syncWallet() {
     const s = this.wallet.state;
-    // Until the token launches, show the player's earned Essence as their
-    // claimable balance, so the "what will I earn" loop is visible now.
-    const label = s.connected ? `${this.save.essence} ✦ to claim` : "";
-    this.hud.setWallet(s.connected, this.wallet.short, label);
-    if (s.connected) this.hud.setLobbyStatus("Wallet linked — earned Essence will convert at token launch.");
+    if (!s.connected || !s.address) {
+      this.hud.setWallet(false, "", "");
+      this.hud.setClaimStatus("");
+      return;
+    }
+    // Optimistic label until the authoritative backend answers.
+    this.hud.setWallet(true, this.wallet.short, "checking…");
+    this.hud.setLobbyStatus("Wallet linked.");
+    // The ONLY source of truth for claimable tokens is the server ledger.
+    const claimable = await fetchClaimable(s.address);
+    if (claimable !== null) {
+      this.hud.setWallet(true, this.wallet.short, `${claimable} $TOKEN claimable`);
+      this.hud.setClaimStatus(claimable > 0 ? "Ready to claim" : "Keep playing to earn");
+    } else {
+      // No backend yet — show local Essence as a provisional, unverified preview.
+      this.hud.setWallet(true, this.wallet.short, `${this.save.essence} ✦ pending`);
+      this.hud.setClaimStatus(getTokenApiUrl() ? "Backend unreachable" : "Set token backend ⚙ to enable claims");
+    }
+  }
+
+  /** Ask the reward backend to pay out earnings to the connected wallet. */
+  private async claimTokens() {
+    this.hud.setClaimStatus("Requesting claim…");
+    const r = await this.wallet.requestClaim();
+    this.hud.setClaimStatus(r.message);
+    this.audio[r.ok ? "powerup" : "deny"]();
+    if (r.ok) this.syncWallet();
+  }
+
+  /** Point the client at a deployed token-backend (claims route through it). */
+  private changeTokenApi() {
+    const next = window.prompt(
+      "Token reward backend URL (https://…):\n\nDeploy /token-backend and paste its URL here. The backend verifies your wallet, reads its own ledger, and signs the payout — the game client never mints tokens.",
+      getTokenApiUrl(),
+    );
+    if (next === null) return;
+    const url = setTokenApiUrl(next);
+    this.hud.setClaimStatus(url ? `Backend set: ${url}` : "Backend cleared");
+    this.syncWallet();
   }
 
   /** Tick a "<label>… (Ns)" status so a cold-starting server doesn't look frozen. */

@@ -11,6 +11,8 @@
  *  - Token "balance" shown here is read-only display from a public RPC.
  */
 
+import { getTokenApiUrl, bytesToB64 } from "./token";
+
 export interface WalletState {
   connected: boolean;
   address: string | null;
@@ -102,17 +104,43 @@ export class Wallet {
   }
 
   /**
-   * Request a payout of earned rewards. This is intentionally a STUB: a static
-   * client must never move funds. When a backend exists, POST the run's verified
-   * proof here and let the server's treasury sign + send the transfer.
+   * Request a payout of earned rewards. The client NEVER moves funds and never
+   * tells the server an amount — it only proves wallet ownership (a signed
+   * message) and asks. The backend verifies the signature, reads ITS OWN ledger
+   * to decide what (if anything) is owed, and signs the treasury transfer.
    * Returns a human-readable status for the UI.
    */
-  async requestClaim(_amount: number): Promise<{ ok: boolean; message: string }> {
-    if (!this.state.connected) return { ok: false, message: "Connect a wallet first" };
-    // No backend wired yet — be honest in the UI rather than fake a payout.
-    return {
-      ok: false,
-      message: "Claiming goes live once the reward backend + token launch — your balance is saved.",
-    };
+  async requestClaim(): Promise<{ ok: boolean; message: string }> {
+    if (!this.state.connected || !this.state.address) {
+      return { ok: false, message: "Connect a wallet first" };
+    }
+    const api = getTokenApiUrl();
+    if (!api) {
+      return { ok: false, message: "Set your token backend (⚙) — claiming goes live once it's deployed." };
+    }
+    const p = getProvider();
+    if (!p?.signMessage) {
+      return { ok: false, message: "This wallet can't sign messages — try Phantom." };
+    }
+    try {
+      // Sign a fresh, timestamped intent so the backend can verify ownership
+      // and reject replays. The server decides the amount, not us.
+      const message = `Tiny Dead — claim earnings\naddress: ${this.state.address}\nts: ${Date.now()}`;
+      const { signature } = await p.signMessage(new TextEncoder().encode(message), "utf8");
+      const res = await fetch(`${api}/claim`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ address: this.state.address, message, signature: bytesToB64(signature) }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; txid?: string; claimed?: number };
+      if (!res.ok || !j.ok) {
+        return { ok: false, message: j.error || "Claim rejected by the server." };
+      }
+      const amt = typeof j.claimed === "number" ? `${j.claimed} $TOKEN` : "earnings";
+      const tx = j.txid ? ` (tx ${String(j.txid).slice(0, 8)}…)` : "";
+      return { ok: true, message: `Claimed ${amt}!${tx}` };
+    } catch {
+      return { ok: false, message: "Claim failed — backend unreachable or signature declined." };
+    }
   }
 }

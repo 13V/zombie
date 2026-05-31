@@ -1,0 +1,61 @@
+# Tiny Dead — Token Reward Backend (reference skeleton)
+
+The trusted authority that the static game client **cannot** be. It owns the
+earnings ledger and is the **only** thing that signs `$TOKEN` payouts. Stand this
+up and point the game at it (menu → **⚙ next to Claim**) to turn real-token
+earning on.
+
+> ⚠️ This is a **starting skeleton**, not production. It proves the architecture
+> (signature-verified, server-authoritative, replay-safe claims) and does a real
+> on-chain SPL transfer when configured — but several things below MUST be
+> hardened before mainnet/real money. Legal/compliance is out of scope here.
+
+## Why the client can't do this
+The game ships as a static site: `localStorage`, score, gold and loot are all on
+the player's machine and trivially forgeable. If the client could say "I earned
+500 tokens," everyone would drain the treasury immediately. So the client only:
+1. reads `GET /claimable?address=…` (display), and
+2. forwards a **wallet-signed** claim request to `POST /claim`.
+
+The amount is decided **here**, from this server's ledger — never by the client.
+
+## Trust boundary
+| Layer | Responsibility |
+| --- | --- |
+| **Game client** (`src/token.ts`, `src/wallet.ts`) | connect wallet, read claimable, sign + forward claim. No authority over value. |
+| **This backend** | earnings ledger, signature/replay checks, withdrawal caps, signs treasury transfer. |
+| **Solana** | `$TOKEN` mint, treasury wallet, settlement. |
+
+## Endpoints
+- `GET  /health` — liveness.
+- `GET  /claimable?address=…` — server-authoritative claimable balance.
+- `POST /credit` *(admin)* — your **server-authoritative game logic** credits verified earnings (a settled marketplace sale, a box open, a season prize). Guarded by `ADMIN_SECRET`. **Never call this from the game client.**
+- `POST /box/open` *(admin)* — provably-fair (commit-reveal) box outcome decided server-side.
+- `POST /claim` — verifies the wallet signature + freshness + replay, reads claimable, enforces the daily cap, signs the SPL transfer, zeroes the ledger entry, returns `{ ok, claimed, txid }`.
+
+## Run it (dry-run, no real tokens)
+```bash
+cd token-backend
+cp .env.example .env          # leave TREASURY_SECRET / TOKEN_MINT blank for dry-run
+npm install
+npm run dev                   # http://localhost:8787
+```
+Then in the game: **⚙ (next to Claim) → `http://localhost:8787`**. Connect a
+wallet, and use an admin call to seed a balance:
+```bash
+curl -X POST localhost:8787/credit -H 'content-type: application/json' \
+  -H 'x-admin-secret: <ADMIN_SECRET>' \
+  -d '{"address":"<YOUR_WALLET>","amount":25}'
+```
+Claiming will sign your wallet message, verify it, and return a `DRYRUN-…` txid.
+Set `TOKEN_MINT` + `TREASURY_SECRET` (devnet first) to do real transfers.
+
+## Before production — DO NOT SKIP
+- [ ] Replace the JSON-file ledger with a real DB (Postgres/SQLite) + transactions.
+- [ ] Feed `/credit` from **server-authoritative** game logic only (don't trust client score — gate earning on box opens + marketplace, per the design notes).
+- [ ] Anti-Sybil / bot / multi-account + wash-trade detection; per-account + global withdrawal limits; cooldown/vesting on earned credits.
+- [ ] Treasury **hot/cold split** (small hot float, multisig cold reserve) + a global daily-outflow circuit breaker.
+- [ ] Harden box RNG: published per-epoch seed commits, and on-chain VRF (e.g. Switchboard) for high-value tiers.
+- [ ] Use the mint's real **decimals** in `payout()` (skeleton assumes 0).
+- [ ] Restrict CORS to your game origin; rate-limit; add auth/session (Sign-In-With-Solana).
+- [ ] Fund rewards from **real revenue** (box/cosmetic sales → buyback), not emission — otherwise the token death-spirals.

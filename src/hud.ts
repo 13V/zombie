@@ -162,6 +162,11 @@ export class Hud {
           <button class="coop-btn wallet" id="btn-wallet">Connect Wallet</button>
           <span class="wallet-bal" id="wallet-bal"></span>
         </div>
+        <div class="wallet-row claim-row hidden" id="claim-row">
+          <button class="coop-btn" id="btn-claim">Claim $TOKEN</button>
+          <button class="link-btn" id="btn-token-api" title="Token reward backend">⚙</button>
+          <span class="wallet-bal" id="claim-status"></span>
+        </div>
         <button class="link-btn" id="btn-server">⚙ Co-op server</button>
       </div>
 
@@ -501,11 +506,21 @@ export class Hud {
   onWallet(cb: () => void) {
     this.q("#btn-wallet").addEventListener("click", cb);
   }
+  /** Wire the Claim button + the token-backend config gear. */
+  onClaim(onClaim: () => void, onConfig: () => void) {
+    this.q("#btn-claim").addEventListener("click", onClaim);
+    this.q("#btn-token-api").addEventListener("click", onConfig);
+  }
+  setClaimStatus(text: string) {
+    this.q("#claim-status").textContent = text;
+  }
   /** Reflect wallet connection state on the menu button + balance chip. */
   setWallet(connected: boolean, short: string, balanceLabel: string) {
     this.q("#btn-wallet").textContent = connected ? short : "Connect Wallet";
     this.q("#btn-wallet").classList.toggle("connected", connected);
     this.q("#wallet-bal").textContent = connected ? balanceLabel : "";
+    // the claim row only makes sense once a wallet is linked
+    this.q("#claim-row").classList.toggle("hidden", !connected);
   }
   showRoomCode(code: string) {
     this.q("#hud-room-code").textContent = code;

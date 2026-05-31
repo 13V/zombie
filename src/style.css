@@ -119,6 +119,14 @@ body.touch .controls { display: none; }
   font-weight: 700;
   color: #ffd24a;
 }
+.claim-row { margin-top: 6px; }
+.claim-row.hidden { display: none; }
+#btn-claim {
+  background: linear-gradient(135deg, #ffb84a, #ffd24a);
+  border: none; color: #1a1208; font-weight: 800;
+}
+#btn-token-api { font-size: 14px; padding: 2px 6px; opacity: 0.7; }
+#claim-status { font-size: 12px; font-weight: 600; color: #9fe8ff; opacity: 0.9; }
 
 /* ---- Market tab (loot economy) ---- */
 .mkt-head {
