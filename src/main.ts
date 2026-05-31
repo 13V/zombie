@@ -28,7 +28,7 @@ import { Island, IslandZone } from "./island";
 import { IslandNet, makeBubble } from "./islandnet";
 import { EmoteMenu } from "./emotes";
 import type { EmoteId } from "./voxelChar";
-import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, PART_CATS, HOUSE_SWATCHES, starterHouse, sanitizeHouse } from "./house";
+import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, PART_CATS, HOUSE_SWATCHES, TROPHY_TIERS, trophyTierForRound, starterHouse, sanitizeHouse } from "./house";
 import { loadHouse, saveHouse } from "./houses";
 import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";

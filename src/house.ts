@@ -19,7 +19,7 @@ export type PartKind =
   // yard
   | "lamppost" | "bush" | "path"
   // show-off
-  | "banner" | "statue" | "perch";
+  | "banner" | "statue" | "perch" | "trophy";
 
 export interface HousePart {
   kind: PartKind;
@@ -32,6 +32,8 @@ export interface HousePart {
   rot?: 0 | 1 | 2 | 3;
   /** For a "perch": which owned pet to display (pet def id). */
   petId?: string;
+  /** For a "trophy": tier 0..3 = Bronze/Silver/Gold/Diamond. */
+  tier?: 0 | 1 | 2 | 3;
 }
 
 export interface HouseData {
@@ -77,9 +79,25 @@ export const HOUSE_PARTS: { kind: PartKind; label: string; color: number; tall?:
   { kind: "banner", label: "Banner", color: 0xd14b6a, tall: true, cat: "showoff" },
   { kind: "statue", label: "Statue", color: 0xcfd3da, tall: true, cat: "showoff" },
   { kind: "perch", label: "Pet Perch", color: 0xc7a86b, cat: "showoff" },
+  { kind: "trophy", label: "Trophy", color: 0xffcf3f, cat: "showoff" },
 ];
 
 const CELL = 1.2; // world size of a plot grid cell
+
+/** Trophy tiers, gated by best round. Index = tier. */
+export const TROPHY_TIERS: { label: string; color: number; minRound: number }[] = [
+  { label: "Bronze", color: 0xcd7f32, minRound: 1 },
+  { label: "Silver", color: 0xc7ccd6, minRound: 6 },
+  { label: "Gold", color: 0xffcf3f, minRound: 11 },
+  { label: "Diamond", color: 0x7fe3ff, minRound: 16 },
+];
+
+/** Highest trophy tier (0..3) earned for a given best round. */
+export function trophyTierForRound(bestRound: number): 0 | 1 | 2 | 3 {
+  let t: 0 | 1 | 2 | 3 = 0;
+  for (let i = 0; i < TROPHY_TIERS.length; i++) if (bestRound >= TROPHY_TIERS[i].minRound) t = i as 0 | 1 | 2 | 3;
+  return t;
+}
 
 /** A simple starter house so a fresh plot isn't empty when claimed. */
 export function starterHouse(): HouseData {
@@ -283,6 +301,27 @@ export class HouseView {
         mesh = g;
         break;
       }
+      case "trophy": {
+        const g = new THREE.Group();
+        const tier = TROPHY_TIERS[p.tier ?? 0] ?? TROPHY_TIERS[0];
+        const metal = p.color ?? tier.color;
+        const plinth = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.5, 0.3, CELL * 0.5), voxelMaterial(0x3a3d46));
+        plinth.position.y = 0.15;
+        const stem = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.35, 0.12), glowMaterial(metal, 0.6));
+        stem.position.y = 0.47;
+        const cup = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.34), glowMaterial(metal, 0.9));
+        cup.position.y = 0.82;
+        // little handles
+        for (const hx of [-0.32, 0.32]) {
+          const h = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.26, 0.1), glowMaterial(metal, 0.9));
+          h.position.set(hx, 0.82, 0);
+          g.add(h);
+        }
+        g.add(plinth, stem, cup);
+        g.position.set(x, yBase, z);
+        mesh = g;
+        break;
+      }
       case "flower":
       default: {
         const g = new THREE.Group();
@@ -323,12 +362,18 @@ export function sanitizeHouse(raw: unknown): HouseData {
       // petId only meaningful on a perch + must name a real pet def
       const petId =
         o.kind === "perch" && typeof o.petId === "string" && findAnyPet(o.petId) ? o.petId : undefined;
+      const tierN = Number(o.tier);
+      const tier =
+        o.kind === "trophy" && Number.isFinite(tierN)
+          ? (Math.min(3, Math.max(0, Math.floor(tierN))) as 0 | 1 | 2 | 3)
+          : undefined;
       parts.push({
         kind: o.kind as PartKind,
         gx, gy, gz,
         color: typeof o.color === "number" ? o.color : undefined,
         ...(rot ? { rot } : {}),
         ...(petId ? { petId } : {}),
+        ...(tier !== undefined ? { tier } : {}),
       });
     }
   }
