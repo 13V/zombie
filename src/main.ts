@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, PLAYER, SCORE, ZOMBIE } from "./config";
+import { CAMERA, COSTS, PETS_TUNING, PLAYER, SCORE, ZOMBIE } from "./config";
 import { glowMaterial } from "./palette";
 import { Input } from "./input";
 import { Arena } from "./arena";
@@ -1943,11 +1943,23 @@ class Game implements GameApi {
   private spawnPets() {
     for (const p of this.pets) this.scene.remove(p.group);
     this.pets = [];
-    this.save.pets.forEach((id, i) => {
+    // Active-squad cap: bankers/buffers (non-combat) always spawn; combat pets are
+    // limited to the first N owned (in save order) so a huge collection can't blanket
+    // the screen. Owning >N is fine — the rest just stay benched, save.pets is untouched.
+    let combat = 0;
+    const defs: { def: ReturnType<typeof findAnyPet>; lvl: number }[] = [];
+    for (const id of this.save.pets) {
       const def = findAnyPet(id);
-      if (!def) return;
-      const lvl = this.save.petLevels[id] ?? 1;
-      const pet = new Pet(def, (i / Math.max(1, this.save.pets.length)) * Math.PI * 2, lvl);
+      if (!def) continue;
+      const isCombat = def.role !== "banker" && def.role !== "buffer";
+      if (isCombat) {
+        if (combat >= PETS_TUNING.activeSquadCap) continue;
+        combat++;
+      }
+      defs.push({ def, lvl: this.save.petLevels[id] ?? 1 });
+    }
+    defs.forEach((d, i) => {
+      const pet = new Pet(d.def!, (i / Math.max(1, defs.length)) * Math.PI * 2, d.lvl);
       this.scene.add(pet.group);
       this.pets.push(pet);
     });
@@ -1959,11 +1971,14 @@ class Game implements GameApi {
     const px = this.player.pos.x;
     const pz = this.player.pos.z;
     const grid = this.rounds.grid;
-    // Power Totem(s): sum their buff so combat pets hit harder (+roleValue x level).
+    // Power Totem(s): sum their buff so combat pets hit harder (+roleValue x level),
+    // then HARD-CLAMP the total to buffCap. Without the clamp, 3 totems at L20 stack
+    // to ~7x and one-shot the late game (see audit). Stacking still helps, but caps.
     let petBuff = 1;
     for (const p of this.pets) {
       if (p.def.role === "buffer") petBuff += (p.def.roleValue ?? 0) * p.level;
     }
+    petBuff = Math.min(petBuff, PETS_TUNING.buffCap);
     // Pets inherit your whole upgrade tree, exactly like your own gun. Fire Rate
     // (incl. Adrenaline) speeds their cadence the same way it speeds yours.
     const adr = this.mods.adrenaline ? 1 + (1 - this.player.health / this.player.maxHealth) * 0.6 : 1;

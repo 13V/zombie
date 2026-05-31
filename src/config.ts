@@ -58,6 +58,21 @@ export const ROUNDS = {
   swarmEvery: 7, // every Nth round is a fast "swarm/dog" round
 };
 
+export const PETS_TUNING = {
+  /** Max ACTIVE combat pets spawned at once (owning more is fine — see spawnPets).
+   *  Bankers/buffers are non-combat and don't count toward this. */
+  activeSquadCap: 5,
+  /** Hard clamp on the total Power-Totem buffer multiplier applied to pet damage.
+   *  Stops 3 stacked totems at L20 from turning into a 7x one-shot. */
+  buffCap: 2.5,
+  /** Per-kill gold drip so COMBAT is the primary gold faucet (scaled by scoreMul). */
+  killGoldBase: 2,
+  /** Banker gold/sec is flattened: roleValue * (1 + level*this) instead of *level. */
+  bankerLevelScale: 0.08,
+  /** Cap on gold a banker squad can mint per round (idle income, not a firehose). */
+  bankerGoldPerRoundCap: 1500,
+};
+
 export const SCORE = {
   hit: 10,
   kill: 40,
