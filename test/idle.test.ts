@@ -9,8 +9,24 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { offlineGold, prestigeGain, prestigeMultiplier } from "../src/idle.ts";
-import { IDLE, PRESTIGE } from "../src/config.ts";
+import {
+  offlineGold,
+  prestigeGain,
+  prestigeMultiplier,
+  dayUtc,
+  settleStreak,
+  streakReward,
+  rollDaily,
+  applyDailyProgress,
+  settleDaily,
+  dailyRows,
+} from "../src/idle.ts";
+import { IDLE, PRESTIGE, STREAK, DAILY_QUESTS } from "../src/config.ts";
+import type { StreakState, DailyState } from "../src/save.ts";
+
+const DAY = 86_400_000;
+const mkStreak = (count: number, lastDayUtc: number, freezes = 0): StreakState => ({ count, lastDayUtc, freezes });
+const mkDaily = (dayUtc: number, progress: Record<string, number> = {}, claimed: string[] = []): DailyState => ({ dayUtc, progress, claimed });
 
 const HOUR = 60 * 60 * 1000;
 
@@ -102,4 +118,138 @@ test("prestigeMultiplier floors prestige and guards garbage (never < 1)", () => 
   assert.equal(prestigeMultiplier(2.9), 1 + 2 * PRESTIGE.k);
   assert.equal(prestigeMultiplier(-3), 1);
   assert.equal(prestigeMultiplier(Number.NaN), 1);
+});
+
+// ──────────────────────────── dayUtc ────────────────────────────
+
+test("dayUtc buckets ms-epoch into whole UTC days", () => {
+  assert.equal(dayUtc(0), 0);
+  assert.equal(dayUtc(DAY - 1), 0); // still day 0
+  assert.equal(dayUtc(DAY), 1);
+  assert.equal(dayUtc(DAY * 100 + 12345), 100);
+  assert.equal(dayUtc(-5), 0); // garbage/negative -> 0
+  assert.equal(dayUtc(Number.NaN), 0);
+});
+
+// ──────────────────────────── settleStreak ────────────────────────────
+
+test("settleStreak: first ever login starts the streak at 1 and pays", () => {
+  const r = settleStreak(mkStreak(0, 0), 1000);
+  assert.equal(r.advanced, true);
+  assert.equal(r.streak.count, 1);
+  assert.equal(r.streak.lastDayUtc, 1000);
+  assert.equal(r.usedFreeze, false);
+  assert.ok(r.gold > 0);
+});
+
+test("settleStreak: same UTC day is a no-op (no double pay)", () => {
+  const r = settleStreak(mkStreak(3, 1000), 1000);
+  assert.equal(r.advanced, false);
+  assert.equal(r.gold, 0);
+  assert.equal(r.streak.count, 3);
+});
+
+test("settleStreak: a clock that ran backwards is a no-op", () => {
+  const r = settleStreak(mkStreak(3, 1000), 999);
+  assert.equal(r.advanced, false);
+  assert.equal(r.streak.count, 3);
+});
+
+test("settleStreak: consecutive day (yesterday) increments", () => {
+  const r = settleStreak(mkStreak(3, 1000), 1001);
+  assert.equal(r.advanced, true);
+  assert.equal(r.streak.count, 4);
+  assert.equal(r.usedFreeze, false);
+});
+
+test("settleStreak: a 2-day gap with NO freeze resets to 1", () => {
+  const r = settleStreak(mkStreak(5, 1000, 0), 1002); // missed day 1001
+  assert.equal(r.advanced, true);
+  assert.equal(r.streak.count, 1);
+  assert.equal(r.usedFreeze, false);
+});
+
+test("settleStreak: a 2-day gap WITH a freeze forgives the miss (+1, freeze spent)", () => {
+  const r = settleStreak(mkStreak(5, 1000, 1), 1002); // missed one day, 1 freeze banked
+  assert.equal(r.advanced, true);
+  assert.equal(r.usedFreeze, true);
+  assert.equal(r.streak.count, 6);
+  assert.equal(r.streak.freezes, 0); // spent
+});
+
+test("settleStreak: a freeze only forgives ONE day — a 3-day gap still resets", () => {
+  const r = settleStreak(mkStreak(5, 1000, 2), 1003); // 2-day miss, too big for one freeze
+  assert.equal(r.streak.count, 1);
+  assert.equal(r.usedFreeze, false);
+  assert.equal(r.streak.freezes, 2); // not spent on an unforgivable gap
+});
+
+test("settleStreak: a fresh freeze is granted at the milestone length (capped)", () => {
+  // count 4 -> 5 (== freezeGrantEvery) grants one freeze.
+  const r = settleStreak(mkStreak(STREAK.freezeGrantEvery - 1, 1000, 0), 1001);
+  assert.equal(r.streak.count, STREAK.freezeGrantEvery);
+  assert.equal(r.streak.freezes, 1);
+  // never bank more than freezeMax
+  const capped = settleStreak(mkStreak(STREAK.freezeGrantEvery - 1, 1000, STREAK.freezeMax), 1001);
+  assert.equal(capped.streak.freezes, STREAK.freezeMax);
+});
+
+test("streakReward grows with streak then caps", () => {
+  const d1 = streakReward(1);
+  const d10 = streakReward(10);
+  assert.ok(d10.gold > d1.gold);
+  // beyond capDays gold stops growing
+  assert.deepEqual(streakReward(STREAK.capDays), streakReward(STREAK.capDays + 50));
+  assert.ok(streakReward(9999).essence <= STREAK.essenceCap);
+});
+
+// ──────────────────────────── daily quests ────────────────────────────
+
+test("rollDaily clears the board on a new UTC day, no-ops on the same day", () => {
+  const today = mkDaily(100, { kills: 50 }, ["play"]);
+  assert.strictEqual(rollDaily(today, 100), today); // same day -> same ref
+  const rolled = rollDaily(today, 101);
+  assert.equal(rolled.dayUtc, 101);
+  assert.deepEqual(rolled.progress, {});
+  assert.deepEqual(rolled.claimed, []);
+});
+
+test("applyDailyProgress adds run deltas onto the matching quest metrics", () => {
+  const d0 = mkDaily(1);
+  const d1 = applyDailyProgress(d0, { runs: 1, kills: 120, gold: 300 });
+  assert.equal(d1.progress.play, 1); // metric "runs"
+  assert.equal(d1.progress.cull, 120); // metric "kills"
+  assert.equal(d1.progress.earn, 300); // metric "gold"
+  const d2 = applyDailyProgress(d1, { runs: 1, kills: 100, gold: 250 });
+  assert.equal(d2.progress.play, 2);
+  assert.equal(d2.progress.cull, 220);
+  assert.equal(d2.progress.earn, 550);
+  // purity: original untouched
+  assert.equal(d0.progress.play, undefined);
+});
+
+test("settleDaily pays + claims only newly-finished quests, never twice", () => {
+  const d = mkDaily(1, { play: 1, cull: 220, earn: 100 }); // play+cull done, earn not (goal 500)
+  const r = settleDaily(d);
+  assert.deepEqual(r.completed.sort(), ["cull", "play"]);
+  const playQ = DAILY_QUESTS.find((q) => q.id === "play")!;
+  const cullQ = DAILY_QUESTS.find((q) => q.id === "cull")!;
+  assert.equal(r.gold, playQ.gold + cullQ.gold);
+  assert.equal(r.essence, playQ.essence + cullQ.essence);
+  // settling again pays nothing (already claimed)
+  const again = settleDaily(r.daily);
+  assert.equal(again.gold, 0);
+  assert.deepEqual(again.completed, []);
+});
+
+test("dailyRows reports clamped progress, done + claimed flags", () => {
+  const d = mkDaily(1, { play: 5, cull: 50 }, ["play"]);
+  const rows = dailyRows(d);
+  const play = rows.find((r) => r.id === "play")!;
+  const cull = rows.find((r) => r.id === "cull")!;
+  assert.equal(play.progress, play.goal); // clamped to goal
+  assert.equal(play.done, true);
+  assert.equal(play.claimed, true);
+  assert.equal(cull.done, false);
+  assert.equal(cull.claimed, false);
 });

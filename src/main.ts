@@ -35,7 +35,7 @@ import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
-import { offlineGold, prestigeGain, prestigeMultiplier } from "./idle";
+import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
@@ -169,6 +169,7 @@ class Game implements GameApi {
   // total so EVERY gold faucet (kills, jackpot, loot, banker, offline) counts
   // without touching combat code. This marks goldEarned at the last reconcile.
   private _goldEarnedMark = 0;
+  private _runGoldStart = 0; // goldEarned at this run's start (for the "earn gold" daily)
   private _bankerRoundGold = 0; // gold minted by bankers this round (per-round cap)
   private _bankerRound = -1; // round the above was last reset for
   private audio = new Audio();
@@ -356,10 +357,12 @@ class Game implements GameApi {
     this.hud.showStart();
 
     // Idle economy boot: credit offline banker gold (capped, half-rate) and show
-    // the "While You Were Away" screen. Reads wall-clock vs save.lastSeen and
-    // persists; a safe no-op on a brand-new save.
+    // the "While You Were Away" screen, then settle the daily login streak +
+    // roll the daily-quest board. All read wall-clock vs save.lastSeen and
+    // persist; safe no-ops on a brand-new save.
     this.settleOffline();
-    // Anchor the lifetimeGold reconciler at the post-offline goldEarned so only
+    this.settleLogin();
+    // Anchor the lifetimeGold reconciler at the post-boot goldEarned so only
     // NEW gold (this session onward) feeds the prestige basis — migrated saves
     // with a large pre-feature goldEarned don't dump it into prestige at once.
     this._goldEarnedMark = this.save.goldEarned;
@@ -724,6 +727,7 @@ class Game implements GameApi {
     this.resetRun();
     this.hud.hideStart();
     this.hud.hideGameOver();
+    this._runGoldStart = this.save.goldEarned; // baseline for the daily "earn gold" quest
     this.state = "playing";
     this.rounds.start();
     this.audio.startMusic(0);
@@ -761,6 +765,7 @@ class Game implements GameApi {
     const bonus = this.settleChallenges();
     this.foldPetTrials();
     this.checkPetEvolutions();
+    this.settleDailies(); // fold run into daily quests + pay finished ones
 
     // Fold this run's gold into the prestige basis, then refresh the menu chip.
     this.reconcileLifetimeGold();
@@ -2037,6 +2042,60 @@ class Game implements GameApi {
       const durationMs = Math.min(elapsed, IDLE.offlineCapMs);
       this.hud.showWelcomeBack({ gold, essence: 0, durationMs });
     }
+  }
+
+  /** Boot: settle the login streak (UTC day buckets, with freeze) and roll the
+   *  daily-quest board over if the UTC day changed. Pays the streak reward in
+   *  soft gold + essence, surfaces the streak chip, and refreshes the daily board. */
+  private settleLogin() {
+    const today = dayUtc(Date.now());
+    if (today <= 0) return; // unusable clock — leave state untouched
+
+    const r = settleStreak(this.save.streak, today);
+    this.save.streak = r.streak;
+    if (r.advanced) {
+      this.save.gold += r.gold;
+      this.save.goldEarned += r.gold;
+      this.save.essence += r.essence;
+      const freezeNote = r.usedFreeze ? " (streak freeze used)" : "";
+      this.hud.toast(`Day ${r.streak.count} streak${freezeNote}  +${r.gold} 🪙 +${r.essence} ✦`);
+    }
+
+    // Roll the daily board to today (clears progress/claims on a new UTC day).
+    this.save.daily = rollDaily(this.save.daily, today);
+
+    writeSave(this.save);
+    this.renderShop();
+    this.refreshStreakUi();
+    this.refreshDailyUi();
+  }
+
+  private refreshStreakUi() {
+    this.hud.setStreak(this.save.streak.count, this.save.streak.freezes);
+  }
+
+  private refreshDailyUi() {
+    this.hud.showDailies(dailyRows(this.save.daily));
+  }
+
+  /** Run-settle: fold this run's deltas (1 run, kills, gold) into the daily
+   *  board, pay out any newly-finished quests, and refresh the board. */
+  private settleDailies() {
+    const runGold = Math.max(0, this.save.goldEarned - this._runGoldStart);
+    this.save.daily = applyDailyProgress(this.save.daily, {
+      runs: 1,
+      kills: this.runStats.kills,
+      gold: runGold,
+    });
+    const done = settleDaily(this.save.daily);
+    this.save.daily = done.daily;
+    if (done.gold > 0 || done.essence > 0) {
+      this.save.gold += done.gold;
+      this.save.goldEarned += done.gold;
+      this.save.essence += done.essence;
+      this.hud.toast(`Daily complete  +${done.gold} 🪙 +${done.essence} ✦`);
+    }
+    this.refreshDailyUi();
   }
 
   /** Roll any newly-earned gold (goldEarned delta) into lifetimeGold — the

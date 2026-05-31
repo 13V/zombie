@@ -145,6 +145,7 @@ export class Hud {
           <div class="tab hidden" id="tab-market"></div>
           <div class="tab hidden" id="tab-pets"></div>
         </div>
+        <div id="daily-board"></div>
         <div class="controls">
           <span class="k">WASD</span><span>Move</span>
           <span class="k">Mouse</span><span>Aim</span>
@@ -950,5 +951,53 @@ export class Hud {
     }
     (ov.querySelector("#btn-prestige-cancel") as HTMLButtonElement).onclick = close;
     ov.style.display = "flex";
+  }
+
+  /** Login-streak chip: 🔥 N-day count + a tiny ❄ marker per banked freeze. */
+  setStreak(count: number, freezes: number) {
+    this.q("#streak-count").textContent = String(count);
+    const chip = this.q("#streak-chip");
+    chip.title = freezes > 0 ? `${count}-day streak · ${freezes} freeze${freezes > 1 ? "s" : ""} banked` : `${count}-day streak`;
+    chip.style.opacity = count > 0 ? "1" : "0.7";
+    // append freeze markers to the chip label (rebuild the suffix each call)
+    const existing = chip.querySelector(".streak-freezes");
+    if (existing) existing.remove();
+    if (freezes > 0) {
+      const span = document.createElement("span");
+      span.className = "streak-freezes";
+      span.style.marginLeft = "4px";
+      span.textContent = "❄".repeat(Math.min(freezes, 3));
+      chip.appendChild(span);
+    }
+  }
+
+  /** Daily-quest board on the menu: a row per quest with a progress bar and its
+   *  soft gold/essence reward; finished rows are ticked. */
+  showDailies(
+    rows: { id: string; name: string; progress: number; goal: number; gold: number; essence: number; done: boolean; claimed: boolean }[],
+  ) {
+    const board = this.q("#daily-board");
+    const items = rows
+      .map((r) => {
+        const pct = Math.max(0, Math.min(1, r.goal > 0 ? r.progress / r.goal : 0)) * 100;
+        const tick = r.done ? "✓ " : "";
+        const status = r.claimed ? "claimed" : r.done ? "ready" : `${r.progress}/${r.goal}`;
+        return (
+          `<div class="daily-row" style="display:flex;align-items:center;gap:10px;padding:6px 2px;opacity:${r.claimed ? 0.55 : 1};">` +
+          `<div style="flex:1;min-width:0;">` +
+          `<div style="font-weight:700;font-size:13px;">${tick}${r.name}</div>` +
+          `<div style="height:5px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden;margin-top:3px;">` +
+          `<div style="height:100%;width:${pct}%;background:${r.done ? "#8fcf6f" : "#5aa9e0"};"></div></div>` +
+          `</div>` +
+          `<div style="font-size:12px;opacity:0.85;text-align:right;white-space:nowrap;">${status}<br>+${r.gold}🪙 +${r.essence}✦</div>` +
+          `</div>`
+        );
+      })
+      .join("");
+    board.innerHTML =
+      `<div style="margin-top:14px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,0.05);">` +
+      `<div style="font-weight:800;letter-spacing:0.5px;opacity:0.9;margin-bottom:4px;">DAILY QUESTS</div>` +
+      items +
+      `</div>`;
   }
 }
