@@ -10,7 +10,8 @@
     "preview": "vite preview --port 4173",
     "typecheck": "tsc --noEmit",
     "test:rating": "node --test --experimental-strip-types test/houserating.test.ts",
-    "test:save": "node --test --experimental-strip-types test/save.test.ts"
+    "test:save": "node --test --experimental-strip-types test/save.test.ts",
+    "test:house": "node --import ./test/resolve-hook.mjs --test --experimental-transform-types test/house.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
