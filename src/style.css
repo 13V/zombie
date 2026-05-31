@@ -229,6 +229,20 @@ body.touch .controls { display: none; }
   animation: overdrive-pulse 0.5s ease-in-out infinite;
 }
 #overdrive.hidden { display: none; }
+#rampage {
+  position: absolute; top: 92px; right: 16px; z-index: 24;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+  pointer-events: none;
+}
+#rampage.hidden { display: none; }
+#rampage-x {
+  font-weight: 900; font-size: 20px; letter-spacing: 0.04em;
+  color: #ffd24a; text-shadow: 0 0 10px #ff7a3a, 0 2px 4px rgba(0,0,0,0.6);
+  animation: ramp-throb 0.4s ease-in-out infinite;
+}
+.rampage-bar { width: 120px; height: 5px; border-radius: 3px; background: rgba(0,0,0,0.4); overflow: hidden; }
+#rampage-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #ffd24a, #ff5a3a); transition: width 0.1s linear; }
+@keyframes ramp-throb { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
 @keyframes overdrive-pulse { 0%,100% { transform: translateX(-50%) scale(1); } 50% { transform: translateX(-50%) scale(1.08); } }
 .pet-dot { width: 24px; height: 24px; border-radius: 50%; background: var(--pc); box-shadow: 0 0 10px var(--pc); }
 /* Studio "hero" stage: a rounded tinted plinth (in the pet's own rarity colour)

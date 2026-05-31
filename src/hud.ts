@@ -127,6 +127,10 @@ export class Hud {
         <span class="combo-x" id="hud-combo-x">x2</span>
         <div class="combo-bar"><div class="combo-fill" id="hud-combo-fill"></div></div>
       </div>
+      <div id="rampage" class="hidden">
+        <span id="rampage-x">×1.0</span>
+        <div class="rampage-bar"><div id="rampage-fill"></div></div>
+      </div>
       <div class="bossbar hidden" id="hud-boss">
         <div class="boss-name" id="hud-boss-name">BOSS</div>
         <div class="boss-track"><div class="boss-fill" id="hud-boss-fill"></div></div>
@@ -777,6 +781,20 @@ export class Hud {
     if (on === this._cOverdrive) return;
     this._cOverdrive = on;
     this.q("#overdrive").classList.toggle("hidden", !on);
+  }
+  private _cRampMul = -1;
+  /** Player-kill rampage meter: a glowing "×N <TIER>" chip + fill bar. Hidden at ×1. */
+  setRampage(mul: number, frac: number, tier: string) {
+    const el = this.q("#rampage");
+    const show = mul > 1.05;
+    el.classList.toggle("hidden", !show);
+    if (!show) { this._cRampMul = -1; return; }
+    const m = Math.round(mul * 10) / 10;
+    if (m !== this._cRampMul) {
+      this._cRampMul = m;
+      this.q("#rampage-x").textContent = `×${m.toFixed(1)}${tier ? "  " + tier : ""}`;
+    }
+    (this.q("#rampage-fill") as HTMLElement).style.width = `${Math.min(100, frac * 100)}%`;
   }
   setPoints(p: number) {
     if (p === this._cPoints) return;

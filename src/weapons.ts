@@ -208,6 +208,7 @@ export interface SpawnOpts {
   homing?: number; // 0/1: steer toward enemies
   bounces?: number; // ricochets remaining
   knockback?: number; // extra shove force on hit
+  fromPet?: boolean; // true = a pet's bullet (so kills don't feed the player rampage)
 }
 
 export interface Bullet {
@@ -222,6 +223,7 @@ export interface Bullet {
   homing: number;
   bounces: number;
   knockback: number;
+  fromPet: boolean; // pet-fired (excluded from the player rampage meter)
   /** Zombie ids already struck (so a piercing round won't re-hit one). */
   hit: Set<number>;
 }
@@ -257,7 +259,7 @@ export class BulletSystem {
       mesh.castShadow = false;
       b = {
         mesh, vel: new THREE.Vector3(), life: 0, damage: 0, alive: false,
-        pierce: 0, splashRadius: 0, splashDamage: 0, homing: 0, bounces: 0, knockback: 0,
+        pierce: 0, splashRadius: 0, splashDamage: 0, homing: 0, bounces: 0, knockback: 0, fromPet: false,
         hit: new Set<number>(),
       };
     }
@@ -275,6 +277,7 @@ export class BulletSystem {
     b.homing = opts.homing ?? 0;
     b.bounces = opts.bounces ?? 0;
     b.knockback = opts.knockback ?? 0;
+    b.fromPet = opts.fromPet ?? false;
     b.hit.clear();
     b.alive = true;
     b.mesh.visible = true;

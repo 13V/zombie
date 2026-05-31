@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, ELITE, PETS_TUNING, PET_DEPTH, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY } from "./config";
+import { CAMERA, COSTS, ELITE, PETS_TUNING, PET_DEPTH, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY, RAMPAGE } from "./config";
 import { Input } from "./input";
 import { Arena } from "./arena";
 import { Player } from "./player";
@@ -119,6 +119,9 @@ class Game implements GameApi {
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
   private chronosActive = false; // Chronos in the active squad → permanent 2x sim
+  private rampage = 0; // player-kill stacks (decays); drives the rampage multiplier
+  private rampageDecay = 0; // seconds left before the stack starts draining
+  private _rampageTier = ""; // last announced tier name (so we only toast on climb)
   private wallet = new Wallet();
 
   // progression
@@ -234,7 +237,7 @@ class Game implements GameApi {
     this.bullets = new BulletSystem(this.scene);
     if (lowSpec) this.bullets.maxLive = 70; // fewer live tracers on mobile GPUs
     this.rounds = new RoundManager(this.scene, this.assets);
-    if (lowSpec) this.rounds.maxAliveCeiling = 42; // survivable carnage on phones
+    if (lowSpec) this.rounds.maxAliveCeiling = 70; // denser late-game horde, still phone-safe
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene, lowSpec);
     this.floaters = new FloatingText(this.scene);
@@ -398,6 +401,7 @@ class Game implements GameApi {
     this.explosions.clear();
     this.sparks.clear();
     this.hitStop = 0;
+    this.rampage = 0; this.rampageDecay = 0; this._rampageTier = "";
     // NOTE: chronosActive is owned by spawnPets() (called above) — do NOT reset
     // it here or it wipes the flag spawnPets just set, killing OVERDRIVE.
     this.hud.setCombo(0, 0);
@@ -1808,6 +1812,7 @@ class Game implements GameApi {
   private simulate(dt: number) {
     this.powerups.update(dt);
     this.combo.update(dt);
+    this.updateRampage(dt); // player-kill rampage meter (hold + decay + HUD)
     if (this.chillTimer > 0) this.chillTimer -= dt; // glacial affix chill decays
     // Sugar Rush stacks on the Quick perk + upgrades for movement speed.
     // A glacial-affix hit folds in a temporary chill (on-hit affix hook).
@@ -2123,7 +2128,7 @@ class Game implements GameApi {
             this.floaters.spawn(z.pos, "CRIT", "#ffe14a", 1, true);
             this.sparks.burst(z.pos, 0xffe14a, 5, { speed: 9, spread: 2, streak: true });
           }
-          this.damageZombie(z, dmg, sMul, crit);
+          this.damageZombie(z, dmg, sMul, crit, !b.fromPet); // player kills feed the rampage
           // the bullet's own splash, or the Explosive Rounds upgrade
           const splashR = Math.max(b.splashRadius, this.mods.explosiveRadius);
           if (splashR > 0) {
@@ -2628,6 +2633,7 @@ class Game implements GameApi {
           }
           this.hitTmp.set(shot.ox, 1.0, shot.oz);
           this.bullets.spawn(this.hitTmp, this._petDir, {
+            fromPet: true,
             speed: 56, damage: baseDamage, pierce: d.pierce + this.mods.pierceBonus,
             splashRadius, splashDamage, color: d.bulletColor,
             scale: d.bulletScale * this.mods.bulletScaleMul, homing: Math.max(d.homing, this.mods.homing),
@@ -2683,6 +2689,7 @@ class Game implements GameApi {
           this._abilTmp.set(px, 1.0, pz);
           this._petDir.set(Math.cos(a), 0, Math.sin(a));
           this.bullets.spawn(this._abilTmp, this._petDir, {
+            fromPet: true,
             speed: 50, damage: dmg, pierce: 3, splashRadius: ab.radius ?? 0,
             splashDamage: ab.radius ? dmg * 0.5 : 0, color: col, scale: pet.def.bulletScale * 1.25, homing: 0,
           });
@@ -2705,6 +2712,7 @@ class Game implements GameApi {
           this._abilTmp.set(px, 1.0, pz);
           this._petDir.set(dx / len + (Math.random() - 0.5) * 0.5, 0, dz / len + (Math.random() - 0.5) * 0.5).normalize();
           this.bullets.spawn(this._abilTmp, this._petDir, {
+            fromPet: true,
             speed: 66, damage: dmg, pierce: 4, splashRadius: 0, splashDamage: 0, color: col, scale: pet.def.bulletScale, homing: 1,
           });
         }
@@ -2801,6 +2809,7 @@ class Game implements GameApi {
           this._abilTmp.set(px, 1.0, pz);
           this._petDir.set(Math.cos(a), 0, Math.sin(a));
           this.bullets.spawn(this._abilTmp, this._petDir, {
+            fromPet: true,
             speed: 48, damage: dmg, pierce: 2, splashRadius: 0, splashDamage: 0, color: 0xffd24a, scale: 0.8, homing: 0,
           });
         }
@@ -2850,6 +2859,7 @@ class Game implements GameApi {
             this._abilTmp.set(px, 1.0, pz);
             this._petDir.set(Math.cos(a), 0, Math.sin(a));
             this.bullets.spawn(this._abilTmp, this._petDir, {
+            fromPet: true,
               speed: 54, damage: dmg, pierce: 2, splashRadius: rr, splashDamage: dmg * 0.4, color: col, scale: pet.def.bulletScale, homing: 0,
             });
           }
@@ -2891,6 +2901,7 @@ class Game implements GameApi {
           this._abilTmp.set(px, 1.0, pz);
           this._petDir.set(Math.cos(a), 0, Math.sin(a));
           this.bullets.spawn(this._abilTmp, this._petDir, {
+            fromPet: true,
             speed: 52, damage: dmg, pierce: 2 + (pet.engineStacks | 0), splashRadius: 0, splashDamage: 0, color: col, scale: pet.def.bulletScale * 0.9, homing: 0,
           });
         }
@@ -2960,21 +2971,54 @@ class Game implements GameApi {
     return this.rounds.grid.nearest(x, z, range, skip);
   }
 
-  /** Apply damage to one zombie and handle the score/FX if it dies. */
-  private damageZombie(z: Zombie, dmg: number, scoreMul: number, crit = false) {
+  /** Current rampage multiplier (1 → RAMPAGE.maxMul) from the player-kill stack. */
+  private rampageMul(): number {
+    return 1 + (this.rampage / RAMPAGE.max) * (RAMPAGE.maxMul - 1);
+  }
+  /** Tick the rampage stack: hold during the window, then drain. Drives the HUD. */
+  private updateRampage(dt: number) {
+    if (this.rampage > 0) {
+      this.rampageDecay -= dt;
+      if (this.rampageDecay <= 0) this.rampage = Math.max(0, this.rampage - RAMPAGE.decayPerSec * dt);
+    }
+    const mul = this.rampageMul();
+    // announce each tier as it's first crossed (a punchy "CARNAGE!" pop)
+    let tier = "";
+    for (const t of RAMPAGE.tiers) if (mul >= t.at) tier = t.name;
+    if (tier && tier !== this._rampageTier) {
+      this.floaters.spawn(this.player.pos, `${tier}!`, "#ff7a3a", 1.5, true);
+      this.audio.levelUp();
+    }
+    this._rampageTier = tier;
+    this.hud.setRampage(mul, this.rampage / RAMPAGE.max, tier);
+  }
+
+  /** Apply damage to one zombie and handle the score/FX if it dies. `byPlayer`
+   *  is true for YOUR gun (and world effects); false for pet bullets — used to
+   *  feed the Rampage meter so killing with your own gun still matters. */
+  private damageZombie(z: Zombie, dmg: number, scoreMul: number, crit = false, byPlayer = true) {
     const wasBoss = z.isBoss;
     const killed = z.hit(dmg);
     if (killed) {
       this.runStats.kills++;
       if (wasBoss) this.runStats.bossKills++;
       const mult = this.combo.onKill();
+      // ── RAMPAGE: a multiplier that ONLY builds from YOUR gun kills (not pets),
+      // decays over time, and boosts your points + gold. Gives a reason to keep
+      // shooting even when pets are clearing the field. ──
+      let rampMul = 1;
+      if (byPlayer && !z.isBoss) {
+        this.rampage = Math.min(RAMPAGE.max, this.rampage + 1);
+        this.rampageDecay = RAMPAGE.window; // refresh the decay timer
+      }
+      rampMul = this.rampageMul();
       // Curse is opt-in risk→reward: a higher curse boosts both score and gold.
       const cMul = this.rounds.curseRewardMul;
-      const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult * cMul);
+      const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult * cMul * rampMul);
       this.addPoints(pts);
       // Per-kill gold drip: COMBAT is the primary gold faucet (bankers are now
-      // capped). Scales with the zombie's worth + scoreMul (Double Points etc) + curse.
-      const kg = Math.max(1, Math.round(PETS_TUNING.killGoldBase * z.scoreMul * scoreMul * cMul));
+      // capped). Scales with the zombie's worth + scoreMul (Double Points etc) + curse + rampage.
+      const kg = Math.max(1, Math.round(PETS_TUNING.killGoldBase * z.scoreMul * scoreMul * cMul * rampMul));
       this.save.gold += kg;
       this.save.goldEarned += kg;
       // tiered pop: crit > combo > plain (color/size handled by FloatingText)

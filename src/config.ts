@@ -33,7 +33,8 @@ export const ZOMBIE = {
   baseHealth: 60,
   healthPerRound: 22,
   hpInflection: 9, // round after which HP goes multiplicative
-  hpGrowth: 1.1, // per-round HP multiplier past the inflection (1.08–1.12 sweet spot)
+  hpGrowth: 1.16, // per-round HP multiplier past the inflection (was 1.10 — pets
+  //                were one-shotting the horde by R12; steeper so it survives to pressure you)
   baseSpeed: 2.4,
   speedPerRound: 0.1, // nudged up so kiting gets riskier through 10→20
   speedCap: 6.2, // raised from 5.4 — late-game horde can close the gap on a kiter
@@ -46,15 +47,16 @@ export const ROUNDS = {
   baseCount: 6, // zombies in round 1
   countPerRound: 4, // extra zombies per round
   intermission: 4, // breather between rounds (seconds)
-  // The three ceilings are now ROUND-SCALED (the real fix for late-game farming):
+  // The three ceilings are ROUND-SCALED (the real fix for late-game farming):
   // a flat cap lets rising DPS empty the screen; a rising cap + faster spawns
-  // fill it. Difficulty from density + geometry, not just HP.
+  // FILL it. With auto-firing pets the only way to keep pressure is overwhelming
+  // density, so the ramp past the inflection is aggressive.
   maxAliveBase: 32, // cap through the inflection round
-  maxAlivePerRound: 3, // +per round past inflection (keeps ramping past R20 now the cap is higher)
-  maxAliveCap: 100, // desktop ceiling, raised from 60 (mobile uses a lower one — see main.ts)
+  maxAlivePerRound: 6, // +per round past inflection (was 3 — double the density ramp)
+  maxAliveCap: 160, // desktop ceiling (was 100 — late game should be a wall of undead)
   spawnIntervalBase: 0.9, // seconds between spawns through inflection
-  spawnIntervalMin: 0.4, // floor of the spawn-interval ramp
-  spawnIntervalDecay: 0.05, // -per round past inflection
+  spawnIntervalMin: 0.22, // floor of the spawn-interval ramp (was 0.4 — spawn nearly 2x faster late)
+  spawnIntervalDecay: 0.07, // -per round past inflection (was 0.05 — reach the floor sooner)
   swarmEvery: 7, // every Nth round is a fast "swarm/dog" round
 };
 
@@ -79,6 +81,23 @@ export const SCORE = {
   roundBonusBase: 80,
   roundBonusPerRound: 20,
   startingPoints: 500,
+};
+
+/** RAMPAGE: a points+gold multiplier that ONLY builds from the player's OWN gun
+ *  kills (not pets) and decays if you stop. Makes shooting matter when pets are
+ *  auto-clearing — stack kills fast to ride a fat multiplier. */
+export const RAMPAGE = {
+  max: 100, // kill-stack cap (→ maxMul)
+  maxMul: 5, // multiplier at `max` stacks
+  window: 2.5, // seconds since your last gun-kill before it starts draining
+  decayPerSec: 18, // stacks lost per second once the window lapses
+  /** Named tiers shown as the meter climbs (by multiplier). */
+  tiers: [
+    { at: 1.5, name: "Rampage" },
+    { at: 2.2, name: "Carnage" },
+    { at: 3.0, name: "Slaughter" },
+    { at: 4.0, name: "ANNIHILATION" },
+  ],
 };
 
 export const COSTS = {
@@ -254,12 +273,12 @@ export const ELITE = {
   /** Round before which no affixes appear at all. */
   fromRound: 8,
   /** Base fraction of eligible spawns that get an affix at fromRound. */
-  baseFraction: 0.06,
+  baseFraction: 0.1, // was 0.06 — more elites sooner
   /** Extra fraction per round past fromRound (clamped by maxFraction). */
-  fractionPerRound: 0.015,
-  maxFraction: 0.32,
+  fractionPerRound: 0.03, // was 0.015 — ramps to a real elite-heavy horde
+  maxFraction: 0.5, // was 0.32 — by late game half the horde is affixed
   /** Hard cap on simultaneously-alive affixed zombies (perf + readability). */
-  maxAlive: 10,
+  maxAlive: 24, // was 10 — let the late-game elite swarm actually fill out
   /** Difficulty-coeff weight folded into the affix fraction. */
   coeffBoost: 0.12,
   // Per-affix tuning.
