@@ -814,4 +814,41 @@ export class Hud {
   hideGameOver() {
     this.overOverlay.classList.add("hidden");
   }
+
+  /**
+   * Co-op spectator overlay shown to a GUEST whose player has died while the
+   * run continues on the host (the host-only gameOver never fires for them, so
+   * without this they're stuck in "playing" with no UI and no way out).
+   *
+   * Idempotent — safe to call every frame while down; only (re)wires the exit
+   * button on first show. `onExit` should tear down the net session and return
+   * to the menu. Pair with hideGuestDown() when the guest revives or leaves.
+   */
+  showGuestDown(onExit: () => void) {
+    let ov = document.getElementById("guest-down");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "guest-down";
+      ov.style.cssText =
+        "position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;" +
+        "justify-content:center;gap:18px;background:rgba(8,10,16,0.62);z-index:50;" +
+        "font-family:inherit;color:#f4f4f4;text-align:center;pointer-events:auto;";
+      ov.innerHTML =
+        `<div style="font-size:34px;font-weight:800;letter-spacing:1px;">You're down</div>` +
+        `<div style="opacity:0.85;">Spectating your team — hang tight or bail out.</div>` +
+        `<button id="btn-guest-exit" style="margin-top:6px;padding:12px 26px;font:inherit;` +
+        `font-weight:700;cursor:pointer;border:none;border-radius:10px;` +
+        `background:#e06a4a;color:#fff;">Exit to menu</button>`;
+      this.root.appendChild(ov);
+      (ov.querySelector("#btn-guest-exit") as HTMLButtonElement).addEventListener("click", () => {
+        this.hideGuestDown();
+        onExit();
+      });
+    }
+    ov.style.display = "flex";
+  }
+  hideGuestDown() {
+    const ov = document.getElementById("guest-down");
+    if (ov) ov.style.display = "none";
+  }
 }

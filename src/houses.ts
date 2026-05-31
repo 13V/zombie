@@ -10,11 +10,42 @@ import { HouseData, sanitizeHouse } from "./house";
 import { getTokenApiUrl } from "./token";
 
 const LS_KEY = "tinydead.houses"; // { [plotIndex]: HouseData }
+const OWNER_KEY = "tinydead.ownerId"; // stable per-device owner id (see localOwnerId)
+
+/**
+ * A stable, per-device owner id for the housing backend namespace.
+ *
+ * Houses MUST NOT be keyed on the wallet address: building offline keyed under
+ * "local:pN" and then connecting a wallet would change the key, orphaning the
+ * backend copy and (previously) risking local loss. We mint a random id once,
+ * persist it in localStorage, and reuse it forever — so a player's neighbourhood
+ * stays put across connect/disconnect. (A real cross-player claim system can
+ * later associate this id with a wallet server-side without a client key change.)
+ */
+export function localOwnerId(): string {
+  try {
+    let id = localStorage.getItem(OWNER_KEY);
+    if (!id) {
+      id = "u" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      localStorage.setItem(OWNER_KEY, id);
+    }
+    return id;
+  } catch {
+    // storage unavailable — a constant keeps a single session coherent
+    return "local";
+  }
+}
 
 function readLocal(): Record<string, HouseData> {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, HouseData>) : {};
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    // Sanitize on read so a corrupt/hand-edited blob can't poison renders or get
+    // re-persisted verbatim — load/save now always agree on the cleaned shape.
+    const out: Record<string, HouseData> = {};
+    for (const k of Object.keys(parsed)) out[k] = sanitizeHouse(parsed[k]);
+    return out;
   } catch {
     return {};
   }
