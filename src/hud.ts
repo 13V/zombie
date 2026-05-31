@@ -136,6 +136,8 @@ export class Hud {
               <button class="shop-tab" data-tab="pets">Pets</button>
             </div>
             <span class="shop-essence">✦ <span id="essence-bal">0</span></span>
+            <span class="shop-essence" id="prestige-chip" title="Ascension multiplier" style="margin-left:8px;cursor:pointer;">✦✦ <span id="prestige-bal">0</span> <span id="prestige-mul" style="opacity:0.8;">(x1.00)</span></span>
+            <span class="shop-essence" id="streak-chip" title="Login streak" style="margin-left:8px;">🔥 <span id="streak-count">0</span>d</span>
           </div>
           <div class="tab" id="tab-upgrades"></div>
           <div class="tab hidden" id="tab-skins"></div>
@@ -896,6 +898,57 @@ export class Hud {
     (ov.querySelector("#btn-welcomeback-ok") as HTMLButtonElement).onclick = () => {
       ov.style.display = "none";
     };
+    ov.style.display = "flex";
+  }
+
+  /** Wire the menu prestige chip to open the ascension overlay. */
+  onPrestige(cb: () => void) {
+    this.q("#prestige-chip").addEventListener("click", cb);
+  }
+
+  /** Reflect prestige standing on the menu chip (banked points, multiplier, and
+   *  whether any are claimable — chip glows when so). */
+  setPrestige(prestige: number, multiplier: number, available: number) {
+    this.q("#prestige-bal").textContent = String(prestige);
+    this.q("#prestige-mul").textContent = `(x${multiplier.toFixed(2)})`;
+    const chip = this.q("#prestige-chip");
+    chip.style.opacity = available > 0 ? "1" : "0.85";
+    chip.style.textShadow = available > 0 ? "0 0 10px rgba(255,210,74,0.9)" : "none";
+    chip.title = available > 0 ? `Ascend now for +${available} prestige` : "Ascension multiplier";
+  }
+
+  /** Ascension confirmation overlay. `onConfirm` performs the prestige (resets
+   *  the gold economy, banks the points). Disabled when nothing's claimable. */
+  showPrestige(
+    info: { current: number; gain: number; lifetimeGold: number; nextMultiplier: number },
+    onConfirm: () => void,
+  ) {
+    const ov = this.overlayShell("overlay-prestige");
+    const can = info.gain > 0;
+    ov.innerHTML =
+      `<div style="font-size:30px;font-weight:800;letter-spacing:1px;">Ascend</div>` +
+      `<div style="opacity:0.85;max-width:420px;">Bank your lifetime gold into permanent <b>Prestige</b> for a bigger gold &amp; essence multiplier. This <b>resets your gold, gold income upgrades</b> — your pets, skins, essence, bests and streak stay.</div>` +
+      `<div style="font-size:16px;opacity:0.9;">Lifetime gold: ${Math.floor(info.lifetimeGold).toLocaleString()}</div>` +
+      `<div style="font-size:22px;font-weight:700;margin-top:2px;">` +
+      (can ? `+${info.gain} prestige  ·  x${info.nextMultiplier.toFixed(2)} next` : `Keep earning gold to unlock your next prestige`) +
+      `</div>` +
+      `<div style="display:flex;gap:12px;margin-top:8px;">` +
+      `<button id="btn-prestige-go" ${can ? "" : "disabled"} style="padding:12px 28px;font:inherit;font-weight:700;` +
+      `cursor:${can ? "pointer" : "not-allowed"};border:none;border-radius:10px;` +
+      `background:${can ? "#ffd24a" : "#555"};color:${can ? "#2a2208" : "#aaa"};">Ascend</button>` +
+      `<button id="btn-prestige-cancel" style="padding:12px 28px;font:inherit;font-weight:700;cursor:pointer;` +
+      `border:none;border-radius:10px;background:#3a3f4a;color:#f4f4f4;">Cancel</button>` +
+      `</div>`;
+    const close = () => {
+      ov.style.display = "none";
+    };
+    if (can) {
+      (ov.querySelector("#btn-prestige-go") as HTMLButtonElement).onclick = () => {
+        close();
+        onConfirm();
+      };
+    }
+    (ov.querySelector("#btn-prestige-cancel") as HTMLButtonElement).onclick = close;
     ov.style.display = "flex";
   }
 }

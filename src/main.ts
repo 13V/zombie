@@ -35,7 +35,7 @@ import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData } from "./save";
-import { offlineGold, prestigeMultiplier } from "./idle";
+import { offlineGold, prestigeGain, prestigeMultiplier } from "./idle";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
@@ -165,6 +165,10 @@ class Game implements GameApi {
   private _petTgt = { x: 0, z: 0 };
   private _petDir = new THREE.Vector3();
   private _petGold = 0; // fractional gold accumulator for banker pets
+  // lifetimeGold (the prestige basis) is reconciled from the monotonic goldEarned
+  // total so EVERY gold faucet (kills, jackpot, loot, banker, offline) counts
+  // without touching combat code. This marks goldEarned at the last reconcile.
+  private _goldEarnedMark = 0;
   private _bankerRoundGold = 0; // gold minted by bankers this round (per-round cap)
   private _bankerRound = -1; // round the above was last reset for
   private audio = new Audio();
@@ -330,6 +334,7 @@ class Game implements GameApi {
     this.hud.onStart(() => this.startRun());
     this.hud.onRestart(() => this.startRun());
     this.hud.onMenu(() => this.toMenu());
+    this.hud.onPrestige(() => this.openPrestige());
     this.hud.onHost(() => this.hostGame());
     this.hud.onJoin((code) => this.joinGame(code));
     this.hud.onServer(() => this.changeServer());
@@ -354,6 +359,11 @@ class Game implements GameApi {
     // the "While You Were Away" screen. Reads wall-clock vs save.lastSeen and
     // persists; a safe no-op on a brand-new save.
     this.settleOffline();
+    // Anchor the lifetimeGold reconciler at the post-offline goldEarned so only
+    // NEW gold (this session onward) feeds the prestige basis — migrated saves
+    // with a large pre-feature goldEarned don't dump it into prestige at once.
+    this._goldEarnedMark = this.save.goldEarned;
+    this.refreshPrestigeUi();
 
     this.resetRun(); // place player + default weapon so the menu scene looks alive
     requestAnimationFrame(this.loop);
@@ -729,8 +739,10 @@ class Game implements GameApi {
     // Co-op host: let guests know the team wiped (they resume when host replays).
     this.netplay?.hostNotify("Team wiped — waiting for host…");
 
-    // Every run pays out Essence and may set a new personal best.
-    const earned = essenceFor(this.rounds.round, this.points, this.mods.essenceMul);
+    // Every run pays out Essence and may set a new personal best. The prestige
+    // multiplier (1 + prestige*k) boosts the payout — that's the ascension reward.
+    const pMul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
+    const earned = Math.round(essenceFor(this.rounds.round, this.points, this.mods.essenceMul) * pMul);
     this.save.essence += earned;
     const newBest = this.rounds.round > this.save.bestRound || (this.rounds.round === this.save.bestRound && this.points > this.save.bestScore);
     if (newBest) {
@@ -750,8 +762,12 @@ class Game implements GameApi {
     this.foldPetTrials();
     this.checkPetEvolutions();
 
+    // Fold this run's gold into the prestige basis, then refresh the menu chip.
+    this.reconcileLifetimeGold();
+
     writeSave(this.save);
     this.renderShop();
+    this.refreshPrestigeUi();
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
     this.hud.showGameOver(this.rounds.round, this.points, earned + bonus, newBest);
   }
@@ -2015,13 +2031,68 @@ class Game implements GameApi {
     if (gold <= 0) return;
     this.save.gold += gold;
     this.save.goldEarned += gold;
-    this.save.lifetimeGold += gold;
     writeSave(this.save);
     this.renderShop();
     if (gold >= IDLE.welcomeBackMinGold) {
       const durationMs = Math.min(elapsed, IDLE.offlineCapMs);
       this.hud.showWelcomeBack({ gold, essence: 0, durationMs });
     }
+  }
+
+  /** Roll any newly-earned gold (goldEarned delta) into lifetimeGold — the
+   *  prestige basis. Idempotent; called before reading prestige availability. */
+  private reconcileLifetimeGold() {
+    const delta = this.save.goldEarned - this._goldEarnedMark;
+    if (delta > 0) this.save.lifetimeGold += delta;
+    this._goldEarnedMark = this.save.goldEarned;
+  }
+
+  /** Push the current prestige standing to the menu (banked count + multiplier +
+   *  how many points are claimable right now). */
+  private refreshPrestigeUi() {
+    this.reconcileLifetimeGold();
+    const available = prestigeGain(this.save.lifetimeGold, this.save.prestige, PRESTIGE.x);
+    const mul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
+    this.hud.setPrestige(this.save.prestige, mul, available);
+  }
+
+  /**
+   * Open the ascension confirmation. Prestige BANKS the newly-available points
+   * (√ curve over lifetimeGold) for a permanent +k gold/essence multiplier, then
+   * RESETS the run-scoped gold economy.
+   *
+   *  RESETS:    gold, goldEarned, lifetimeGold, owned (essence meta-upgrades).
+   *  PRESERVES: prestige (incremented), essence, pets/petLevels/petProgress,
+   *             skins/skin, stash, bestRound/bestScore, stats, claimed,
+   *             streak, daily, muted.
+   */
+  private openPrestige() {
+    this.reconcileLifetimeGold();
+    const gain = prestigeGain(this.save.lifetimeGold, this.save.prestige, PRESTIGE.x);
+    const afterMul = prestigeMultiplier(this.save.prestige + gain, PRESTIGE.k);
+    this.hud.showPrestige(
+      { current: this.save.prestige, gain, lifetimeGold: this.save.lifetimeGold, nextMultiplier: afterMul },
+      () => this.doPrestige(),
+    );
+  }
+
+  private doPrestige() {
+    this.reconcileLifetimeGold();
+    const gain = prestigeGain(this.save.lifetimeGold, this.save.prestige, PRESTIGE.x);
+    if (gain <= 0) return; // not enough yet — no-op (button is disabled too)
+    this.save.prestige += gain;
+    // Reset the gold economy that fed this ascension; keep the long-arc meta.
+    this.save.gold = 0;
+    this.save.goldEarned = 0;
+    this.save.lifetimeGold = 0;
+    this.save.owned = [];
+    this._goldEarnedMark = 0;
+    this._petGold = 0;
+    writeSave(this.save);
+    this.resetRun(); // rebuild mods from the now-empty owned list + respawn pets
+    this.renderShop();
+    this.refreshPrestigeUi();
+    this.hud.toast(`Ascended! +${gain} ✦✦ prestige`);
   }
 
   /** Rebuild live pets from the owned list (called on run start / purchase). */
@@ -2080,7 +2151,11 @@ class Game implements GameApi {
           this._bankerRound = this.rounds.round;
           this._bankerRoundGold = 0;
         }
-        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale);
+        // Prestige multiplier (1 + prestige*k) couples ascension into the live
+        // banker faucet — same boost the offline accrual gets, so active income
+        // always leads offline at any prestige level.
+        const pMul = prestigeMultiplier(this.save.prestige, PRESTIGE.k);
+        const rate = (pet.def.roleValue ?? 0) * (1 + (pet.level - 1) * PETS_TUNING.bankerLevelScale) * pMul;
         this._petGold += rate * dt;
         if (this._petGold >= 1 && this._bankerRoundGold < PETS_TUNING.bankerGoldPerRoundCap) {
           let g = Math.floor(this._petGold);
