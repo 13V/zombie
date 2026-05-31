@@ -58,9 +58,28 @@ export const ROLE_ICON: Record<CombatRole, string> = {
  * effect on top of its normal fire. Legendary tiers hit harder/wider and Mythic
  * abilities are deliberately overpowered (near board-clears, fountains of gold).
  */
+/**
+ * Ability archetype. Slay-the-Spire-style split:
+ *  - PAYOFF kinds (nova/volley/chain/meteor/smite/execute/jackpot/obliterate)
+ *    are immediate bursts — the classic "spend everything now" moment.
+ *  - ENGINE kinds build a STACKING resource each cast that empowers the pet's
+ *    own fire (or the squad), so they feel like a slow-burn snowball rather than
+ *    a bigger number. Engines stay inside the late-game power envelope via a hard
+ *    stack cap + a small per-stack bonus.
+ */
+export type AbilityKind =
+  | "nova" | "volley" | "chain" | "meteor" | "smite" | "execute" | "jackpot" | "obliterate"
+  // ── engine archetypes ──
+  | "overcharge" // builds charge stacks → +pet damage (capped), discharges a small nova at max
+  | "siphon" // builds stacks → +lifesteal & a trickle heal on cast (drain engine)
+  | "resonance"; // builds stacks → +crit chance/pierce flavor; small shard burst on cast
+
+/** True for the stacking "engine" archetypes. */
+export const ENGINE_KINDS: ReadonlySet<AbilityKind> = new Set<AbilityKind>(["overcharge", "siphon", "resonance"]);
+
 export interface PetAbility {
   name: string;
-  kind: "nova" | "volley" | "chain" | "meteor" | "smite" | "execute" | "jackpot" | "obliterate";
+  kind: AbilityKind;
   cd: number; // seconds between activations
   power: number; // base damage (further scaled by pet level + totem buff)
   count?: number; // projectiles / chain jumps / meteor strikes
@@ -69,6 +88,9 @@ export interface PetAbility {
   heal?: number; // HP restored to the player on proc
   gold?: number; // bonus gold minted on proc (jackpot)
   frac?: number; // execute: instakill zombies under this HP fraction
+  // ── engine archetype fields ──
+  perStack?: number; // engine: bonus per stack (damage frac / lifesteal / etc.)
+  maxStacks?: number; // engine: hard cap on accumulated stacks
 }
 
 /**
@@ -293,30 +315,36 @@ export const PETS: PetDef[] = [
  * roster entries stay readable. Power ramps hard by tier — Mythic moves are
  * meant to feel broken (that's the point of grinding to them).
  */
+// Engine/payoff split (Slay-the-Spire-style): ~40% of Epic+ abilities are ENGINE
+// archetypes (overcharge/siphon/resonance) that build a capped stacking resource
+// to empower the pet's fire — distinct FEEL, not bigger numbers. Engine `power`
+// is intentionally LOWER (the value is in the snowball, not the cast) so total
+// output stays inside the last balance pass's late-game envelope. The rest stay
+// PAYOFF bursts. 8 of 20 Epic+ = 40% engine.
 const PET_ABILITIES: Record<string, PetAbility> = {
   // ── EPIC ──
-  specter: { name: "Soul Nova", kind: "nova", cd: 8, power: 120, count: 10, radius: 1.6 },
-  thunder_orb: { name: "Chain Lightning", kind: "chain", cd: 6, power: 110, count: 8 },
-  inferno_drake: { name: "Meteor Storm", kind: "meteor", cd: 8, power: 220, count: 5, radius: 2.6 },
-  prism_totem: { name: "Prism Nova", kind: "nova", cd: 7, power: 90, count: 12 },
-  heavy_turret: { name: "Barrage", kind: "volley", cd: 7, power: 130, count: 14 },
-  void_eye: { name: "Void Gaze", kind: "smite", cd: 8, power: 260, radius: 4, slow: 0.5 },
-  golden_piggy: { name: "Jackpot", kind: "jackpot", cd: 9, power: 60, count: 8, gold: 250 },
-  seraph_star: { name: "Starfall", kind: "nova", cd: 8, power: 120, count: 12, heal: 8 },
-  crystal_wyrm: { name: "Shard Burst", kind: "nova", cd: 7, power: 140, count: 14 },
-  solar_phoenix: { name: "Flare Nova", kind: "nova", cd: 7, power: 150, count: 12, radius: 1.8 },
+  specter: { name: "Soul Nova", kind: "nova", cd: 8, power: 120, count: 10, radius: 1.6 }, // payoff
+  thunder_orb: { name: "Overcharge", kind: "overcharge", cd: 4, power: 60, perStack: 0.05, maxStacks: 6, radius: 1.4 }, // ENGINE
+  inferno_drake: { name: "Meteor Storm", kind: "meteor", cd: 8, power: 220, count: 5, radius: 2.6 }, // payoff
+  prism_totem: { name: "Prism Resonance", kind: "resonance", cd: 5, power: 70, perStack: 0.06, maxStacks: 5, count: 8 }, // ENGINE
+  heavy_turret: { name: "Barrage", kind: "volley", cd: 7, power: 130, count: 14 }, // payoff
+  void_eye: { name: "Void Siphon", kind: "siphon", cd: 5, power: 90, perStack: 0.05, maxStacks: 5, radius: 3, slow: 0.4 }, // ENGINE
+  golden_piggy: { name: "Jackpot", kind: "jackpot", cd: 9, power: 60, count: 8, gold: 250 }, // payoff
+  seraph_star: { name: "Starfall", kind: "nova", cd: 8, power: 120, count: 12, heal: 8 }, // payoff
+  crystal_wyrm: { name: "Resonant Shards", kind: "resonance", cd: 5, power: 90, perStack: 0.06, maxStacks: 6, count: 10 }, // ENGINE
+  solar_phoenix: { name: "Flare Nova", kind: "nova", cd: 7, power: 150, count: 12, radius: 1.8 }, // payoff
   // ── LEGENDARY ──
-  reaper_lord: { name: "Reap", kind: "execute", cd: 8, power: 240, radius: 6, frac: 0.35 },
-  celestial_dragon: { name: "Starfire Rain", kind: "meteor", cd: 8, power: 380, count: 9, radius: 3 },
-  divine_totem: { name: "Judgment", kind: "smite", cd: 9, power: 360, radius: 7, heal: 15 },
-  omni_cannon: { name: "Mega Barrage", kind: "volley", cd: 8, power: 320, count: 26 },
-  galaxy_orb: { name: "Supernova", kind: "nova", cd: 7, power: 240, count: 24, radius: 1.6 },
-  fortune_dragon: { name: "Gold Rush", kind: "jackpot", cd: 9, power: 200, count: 16, gold: 1200 },
-  eclipse_phoenix: { name: "Eclipse", kind: "smite", cd: 9, power: 420, radius: 8, slow: 0.4 },
-  // ── MYTHIC (overpowered on purpose) ──
-  cosmic_serpent: { name: "Cosmic Storm", kind: "nova", cd: 7, power: 520, count: 36, radius: 1.6, slow: 0.5 },
-  midas_golem: { name: "Midas Touch", kind: "jackpot", cd: 9, power: 600, count: 24, gold: 5000, radius: 9 },
-  void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 1200, radius: 6.5 },
+  reaper_lord: { name: "Soul Siphon", kind: "siphon", cd: 5, power: 160, perStack: 0.06, maxStacks: 6, radius: 4 }, // ENGINE
+  celestial_dragon: { name: "Starfire Rain", kind: "meteor", cd: 8, power: 380, count: 9, radius: 3 }, // payoff
+  divine_totem: { name: "Judgment", kind: "smite", cd: 9, power: 360, radius: 7, heal: 15 }, // payoff
+  omni_cannon: { name: "Mega Barrage", kind: "volley", cd: 8, power: 320, count: 26 }, // payoff
+  galaxy_orb: { name: "Stellar Overcharge", kind: "overcharge", cd: 4, power: 130, perStack: 0.05, maxStacks: 7, radius: 1.6 }, // ENGINE
+  fortune_dragon: { name: "Gold Rush", kind: "jackpot", cd: 9, power: 200, count: 16, gold: 1200 }, // payoff
+  eclipse_phoenix: { name: "Eclipse", kind: "smite", cd: 9, power: 420, radius: 8, slow: 0.4 }, // payoff
+  // ── MYTHIC ──
+  cosmic_serpent: { name: "Cosmic Resonance", kind: "resonance", cd: 5, power: 220, perStack: 0.06, maxStacks: 8, count: 14, slow: 0.4 }, // ENGINE
+  midas_golem: { name: "Midas Touch", kind: "jackpot", cd: 9, power: 600, count: 24, gold: 5000, radius: 9 }, // payoff
+  void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 1200, radius: 6.5 }, // payoff
 };
 for (const p of PETS) {
   const a = PET_ABILITIES[p.id];
@@ -525,6 +553,10 @@ export class Pet {
   private abilityTimer = 0; // counts down to the next signature-ability proc
   level: number;
   private baseScale = 0.7;
+  /** Engine-ability stacks (overcharge/siphon/resonance). Grow on each cast,
+   *  capped by ability.maxStacks; empower the pet's normal fire. Decays slowly
+   *  so the snowball is real but not permanent. */
+  engineStacks = 0;
   /** Tanks orbit a touch wider (they "draw fire" out front of the squad). */
   private readonly orbitScale: number;
   /** Cosmetic shiny/chroma variant (purely visual — sparkle + hue cycle). */
@@ -564,6 +596,13 @@ export class Pet {
   }
   get damageMul(): number {
     return petDamageMul(this.level);
+  }
+  /** Engine archetype: +perStack * stacks to the pet's fire (1 if not an engine).
+   *  Capped implicitly because engineStacks is clamped to ability.maxStacks. */
+  get engineMul(): number {
+    const ab = this.def.ability;
+    if (!ab || !ENGINE_KINDS.has(ab.kind) || !ab.perStack) return 1;
+    return 1 + this.engineStacks * ab.perStack;
   }
 
   /** Visible growth: pet gets bigger + glows brighter with level. */
@@ -911,6 +950,8 @@ export class Pet {
     const oz = playerZ + Math.sin(this.orbitAngle + slot) * r;
     this.bob += dt * 4;
     this.group.position.set(ox, 1.4 + Math.sin(this.bob) * 0.12, oz);
+    // engine stacks bleed off slowly so the snowball must be maintained by casting.
+    if (this.engineStacks > 0) this.engineStacks = Math.max(0, this.engineStacks - dt * 0.25);
 
     // ---- idle animation ----
     this.flap += dt * (this.wingL ? 26 : 8); // bees/dragons flap fast

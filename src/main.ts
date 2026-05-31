@@ -2430,7 +2430,9 @@ class Game implements GameApi {
         // the spawn-time mods your gun gets: pierce, bullet size, ricochet,
         // homing, and Multishot (extra fanned pellets).
         // ── role + star + synergy spawn-time tweaks (all SMALL, no one-shots) ──
-        let dmgMul = pet.damageMul * petBuff * syn.damageMul;
+        // engineMul: pets with an "engine" signature ability snowball their normal
+        // fire as they build stacks (capped by the ability's maxStacks).
+        let dmgMul = pet.damageMul * petBuff * syn.damageMul * pet.engineMul;
         dmgMul *= 1 + stars * PET_DEPTH.stars.dmgPerStar; // dupe→star: flat, capped
         // sniper: crit-on-distant — a modest multiplier when the target is far.
         const dist = shot.dist;
@@ -2495,8 +2497,15 @@ class Game implements GameApi {
     const near = grid.nearest(px, pz, 64);
     // count this cast toward the pet's evolution trial (per-pet, free to attribute)
     this._runCasts[pet.def.id] = (this._runCasts[pet.def.id] ?? 0) + 1;
-    // distinct, power-scaled cast sound per ability kind
-    this.audio.ability(ab.kind, ab.power / 200);
+    // distinct, power-scaled cast sound per ability kind. Engine archetypes reuse
+    // an existing payoff sound (audio.ts is owned elsewhere — no new SFX added):
+    // overcharge→chain, resonance→nova, siphon→smite.
+    const sfxKind =
+      ab.kind === "overcharge" ? "chain"
+      : ab.kind === "resonance" ? "nova"
+      : ab.kind === "siphon" ? "smite"
+      : ab.kind;
+    this.audio.ability(sfxKind, ab.power / 200);
 
     switch (ab.kind) {
       case "nova": {
@@ -2650,6 +2659,78 @@ class Game implements GameApi {
         this.sparks.burst(this._abilTmp, 0xff7aff, 24, { speed: 14, spread: 8, streak: true });
         this.splash(this._abilTmp, r, dmgDirect, -1, sMul);
         this.floaters.spawn(pet.group.position, "ANNIHILATE!", "#ff3aff", 1.7, true);
+        break;
+      }
+      // ── ENGINE archetypes: build a capped stacking resource that empowers the
+      // pet's NORMAL fire (engineMul), plus a small immediate effect on cast so the
+      // build-up feels active. The snowball — not a bigger burst — is the payoff. ──
+      case "overcharge": {
+        // gain a charge stack (capped); discharge a small nova when at max.
+        const max = ab.maxStacks ?? 6;
+        pet.engineStacks = Math.min(max, pet.engineStacks + 1);
+        const atMax = pet.engineStacks >= max;
+        this._abilTmp.set(px, 1.0, pz);
+        this.explosions.flash(this._abilTmp, 1.6 + pet.engineStacks * 0.2, 0x9fe8ff);
+        this.sparks.burst(this._abilTmp, 0xcdefff, 6 + (pet.engineStacks | 0), { speed: 9, spread: 3, streak: true });
+        this.floaters.spawn(pet.group.position, `⚡${pet.engineStacks | 0}`, "#9fe8ff", 1.1, atMax);
+        if (atMax) {
+          // discharge: a modest ring of bolts (power is small — value was the snowball).
+          const n = ab.count ?? 8;
+          const rr = ab.radius ?? 1.4;
+          for (let k = 0; k < n; k++) {
+            const a = (k / n) * Math.PI * 2;
+            this._abilTmp.set(px, 1.0, pz);
+            this._petDir.set(Math.cos(a), 0, Math.sin(a));
+            this.bullets.spawn(this._abilTmp, this._petDir, {
+              speed: 54, damage: dmg, pierce: 2, splashRadius: rr, splashDamage: dmg * 0.4, color: col, scale: pet.def.bulletScale, homing: 0,
+            });
+          }
+          pet.engineStacks = Math.max(0, pet.engineStacks - 2); // partial vent, keep snowball going
+        }
+        break;
+      }
+      case "siphon": {
+        // build siphon stacks (capped) + a small heal trickle on cast (drain engine).
+        const max = ab.maxStacks ?? 5;
+        pet.engineStacks = Math.min(max, pet.engineStacks + 1);
+        const r = ab.radius ?? 3;
+        this._abilTmp.set(px, 0.7, pz);
+        this.explosions.flash(this._abilTmp, r, 0x9a5ad6);
+        this.sparks.burst(this._abilTmp, 0xc0a0ff, 8, { speed: 7, spread: 4, streak: true });
+        this.floaters.spawn(pet.group.position, `🩸${pet.engineStacks | 0}`, "#c0a0ff", 1.1, false);
+        // small nearby drain + heal scaled by stacks (capped via engine cap below).
+        let drained = 0;
+        grid.forNear(px, pz, r, (z) => {
+          if (!z.alive) return;
+          this.damageZombie(z, dmgDirect * 0.5, sMul);
+          if (ab.slow) z.applySlow(ab.slow, 1.5);
+          drained++;
+        });
+        if (drained > 0) {
+          const heal = Math.min(8, 1.5 + pet.engineStacks * 1.2);
+          this.player.heal(heal);
+          this.sparks.burst(this.player.pos, 0x7be08a, 5, { speed: 5, spread: 4, streak: true });
+        }
+        break;
+      }
+      case "resonance": {
+        // build resonance stacks (capped) → empowers fire; cast sprays a few shards.
+        const max = ab.maxStacks ?? 5;
+        pet.engineStacks = Math.min(max, pet.engineStacks + 1);
+        const n = (ab.count ?? 8);
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2 + pet.engineStacks * 0.3;
+          this._abilTmp.set(px, 1.0, pz);
+          this._petDir.set(Math.cos(a), 0, Math.sin(a));
+          this.bullets.spawn(this._abilTmp, this._petDir, {
+            speed: 52, damage: dmg, pierce: 2 + (pet.engineStacks | 0), splashRadius: 0, splashDamage: 0, color: col, scale: pet.def.bulletScale * 0.9, homing: 0,
+          });
+        }
+        this._abilTmp.set(px, 0.6, pz);
+        this.explosions.flash(this._abilTmp, 1.8, col);
+        this.explosions.shockwave(this._abilTmp, 3 + pet.engineStacks * 0.4, col);
+        this.floaters.spawn(pet.group.position, `✦${pet.engineStacks | 0}`, "#9fe8ff", 1.1, false);
+        if (ab.slow) for (const z of this.rounds.zombies) if (z.alive) z.applySlow(ab.slow, 1.5);
         break;
       }
     }
