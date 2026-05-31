@@ -302,3 +302,45 @@ export const CURSE = {
   /** Reward multiplier = 1 + (curse-1) * rewardScale. */
   rewardScale: 1.0,
 };
+
+// ── JUICE & LOOT TUNING ──
+// Feel/feedback constants for the audio + number-pop + pickup + chest/pity
+// systems (audio.ts, feedback.ts, drops.ts, loot.ts). NON-CASHABLE: these only
+// affect cosmetics/soft-currency feedback, never the gold↔token bridge.
+export const JUICE = {
+  // Tiered floating number-pops (feedback.ts).
+  critColor: "#ffe14a", // crits: bright gold
+  comboColor: "#ff8a3a", // combo-scaled hits: hot orange
+  critScale: 1.6, // size multiplier for crits
+  comboScale: 1.25, // size multiplier for combo (xN) hits
+  popPunch: 1.7, // initial punch-out scale, eases to 1
+  popPunchTime: 0.12, // seconds of punch-out ease
+  popArc: 1.3, // horizontal drift speed (sideways arc)
+
+  // Rarity-tiered pickup juice (drops.ts). Glow scale per rarity tier 0..4.
+  glowByRarity: [1.9, 2.1, 2.4, 2.9, 3.4] as const,
+  beamFromTier: 3, // epic+ (tier index ≥3) get a vertical light beam
+  beamHeight: 5.5,
+  beamWidth: 0.7,
+  chimeBaseHz: 523, // C5 — pickup chime root, pitched up per rarity tier
+} as const;
+
+// Cascading multi-item treasure chest (drops.ts + loot.ts). Vampire-Survivors
+// style quantity cascade, Luck-scaled. Probabilities are checked in order.
+export const CHEST = {
+  fiveChance: 0.03, // base p(5 items)
+  threeChance: 0.1, // base p(3 items) if the 5-roll misses
+  luckFiveBonus: 0.04, // +p(5) per luck point (clamped)
+  luckThreeBonus: 0.06, // +p(3) per luck point (clamped)
+  fanSpread: 1.6, // radius items fan out to
+  fanLift: 4.0, // upward pop velocity of the fan
+} as const;
+
+// Pity / bad-luck protection (loot.ts). Raises the luck fed to rollRarity as a
+// rare-less streak grows; resets on rare+. SOFT-CURRENCY/COSMETIC ONLY — never
+// wire pity to anything cashable (see loot.ts token-bridge note).
+export const PITY = {
+  rareThreshold: 2, // rarity index ≥ this counts as "rare+" and resets pity
+  perKillLuck: 0.06, // luck added per dry kill
+  maxLuck: 2.5, // cap so pity can't trivialize legendaries
+} as const;

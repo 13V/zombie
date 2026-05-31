@@ -39,7 +39,7 @@ import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, ro
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
-import { makeItem, rollRarity, rarityColorHex, RARITIES, LootItem } from "./loot";
+import { makeItem, rollRarity, rollRarityPity, resetPity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, warmServer, getServerUrl, setServerUrl } from "./net";
 import { TouchControls, isTouchDevice } from "./touchControls";
@@ -294,7 +294,7 @@ class Game implements GameApi {
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene, lowSpec);
     this.floaters = new FloatingText(this.scene);
-    this.drops = new Drops(this.scene);
+    this.drops = new Drops(this.scene, this.audio);
     this.explosions = new Explosions(this.scene, lowSpec);
     this.sparks = new Sparks(this.scene, lowSpec);
     this.hud = new Hud(ui);
@@ -435,6 +435,7 @@ class Game implements GameApi {
     this.hud.setPowerups([]);
     this.shake = 0;
     this.combo.reset();
+    resetPity(); // fresh bad-luck-protection streak each run (non-cashable)
     this.floaters.clear();
     this.drops.clear();
     this.explosions.clear();
@@ -2011,6 +2012,8 @@ class Game implements GameApi {
           this.addPoints(Math.round(SCORE.hit * sMul * (crit ? 2 : 1)));
           z.knockback(b.mesh.position.x, b.mesh.position.z, Math.max(crit ? 5 : 3, b.knockback));
           if (this.mods.cryoSlow > 0) z.applySlow(this.mods.cryoSlow, 2);
+          // keep the rising-pitch ladder in sync on every connect (0 when no chain)
+          this.audio.comboStep(this.combo.active ? this.combo.count : 0);
           this.audio.hit(crit);
           if (crit) {
             this.runStats.crits++;
@@ -2556,13 +2559,16 @@ class Game implements GameApi {
       const kg = Math.max(1, Math.round(PETS_TUNING.killGoldBase * z.scoreMul * scoreMul));
       this.save.gold += kg;
       this.save.goldEarned += kg;
-      this.floaters.spawn(z.pos, this.floatNum(pts), mult > 1 ? "#ffd24a" : "#ffffff", mult > 1 ? 1.2 : 1);
+      // tiered pop: crit > combo > plain (color/size handled by FloatingText)
+      this.floaters.spawn(z.pos, this.floatNum(pts), "#ffffff", 1, crit ? "crit" : mult > 1 ? "combo" : "normal");
       // beefier, warmer burst on crit / combo kills; ragdoll fling on big hits
       const burstN = crit ? 13 : mult >= 3 ? 11 : 8;
       this.puffs.burst(z.pos, crit ? 0xffe14a : z.puffColor, burstN);
       // crunchy gib sparks flinging off the corpse (streaky, bigger on crit/combo)
       this.sparks.burst(z.pos, crit ? 0xffe14a : z.puffColor, crit || mult >= 3 ? 7 : 4, { speed: 7, spread: 4, streak: true });
       z.flingDeath(crit || mult >= 3 ? 6 : 2);
+      // rising-pitch streak: feed the live combo length so kill/hit tones ascend
+      this.audio.comboStep(this.combo.count);
       this.audio.kill();
       // combo milestone celebration: a big "xN!" pop when the tier climbs
       if (mult > this.lastComboTier && mult >= 2) {
@@ -2592,7 +2598,8 @@ class Game implements GameApi {
       if (wasBoss) {
         this.grantLoot(makeItem(rollRarity(2))); // boss → biased toward rare+
       } else if (Math.random() < 0.03 + this.mods.dropChance * 0.25) {
-        this.grantLoot(makeItem());
+        // pity-aware rarity: dry rare-less streaks self-correct (non-cashable)
+        this.grantLoot(makeItem(rollRarityPity()));
       }
       if (wasBoss) {
         this.hud.hideBoss();
