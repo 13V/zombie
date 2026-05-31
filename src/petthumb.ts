@@ -34,10 +34,13 @@ function ensure(): boolean {
     rim.position.set(-1, 3, -4);
     const amb = new THREE.AmbientLight(0xffffff, 0.75);
     scene.add(key, fill, rim, amb);
-    // tight orthographic framing of the ~1.2-unit-tall pet — fills the canvas
+    // tight orthographic framing of the ~1.2-unit-tall pet — fills the canvas.
+    // Pets build their FACE on +Z, so the camera looks down the -Z axis (from
+    // in front) with a gentle high angle for a cute 3/4 portrait — every pet
+    // faces the lens instead of showing its back/side.
     const half = 0.82;
     camera = new THREE.OrthographicCamera(-half, half, half, -half, 0.1, 100);
-    camera.position.set(2.0, 1.7, 2.6);
+    camera.position.set(0.55, 1.25, 2.7); // mostly head-on +Z, slightly up & right
     camera.lookAt(0, 0.12, 0);
     return true;
   } catch {
@@ -71,7 +74,7 @@ export function petThumbnail(petId: string): string {
   // build the model at level 1, no shiny — a clean catalogue shot
   const pet = new Pet(def, 0, 1, false);
   pet.group.position.set(0, -0.15, 0);
-  pet.group.rotation.y = Math.PI * 0.18; // slight turn so it's not dead-on flat
+  pet.group.rotation.y = -Math.PI * 0.1; // tiny turn toward the camera (face stays to lens)
   scene.add(pet.group);
   let url = "";
   try {

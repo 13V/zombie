@@ -648,16 +648,24 @@ export class Pet {
     // a white shine pixel + blush — every shape gets them.
     const shine = voxelMaterial(0xffffff);
     const blush = glowMaterial(0xff8fb0, 0.55);
+    // Cuter, more readable eyes: a white eyeball backing makes the dark pupil
+    // pop against any body colour, with a bright catch-light for life. One
+    // change here upgrades the face of ALL 20 pet shapes at once.
     const eye = (x: number, y: number, z: number, s = 0.14, into = this.body) => {
+      box(s * 1.18, s * 1.55, 0.04, x, y, z - 0.005, shine, into); // white eyeball backing
       box(s, s * 1.35, 0.05, x, y, z, dark, into); // big round pupil
-      box(s * 0.46, s * 0.5, 0.04, x - s * 0.26, y + s * 0.42, z + 0.02, shine, into); // catch-light sparkle
+      box(s * 0.5, s * 0.55, 0.04, x - s * 0.24, y + s * 0.4, z + 0.02, shine, into); // catch-light sparkle
     };
     const cheeks = (y: number, z: number, dx = 0.21, into = this.body) => {
-      box(0.1, 0.07, 0.04, -dx, y, z, blush, into);
-      box(0.1, 0.07, 0.04, dx, y, z, blush, into);
+      box(0.11, 0.08, 0.04, -dx, y, z, blush, into);
+      box(0.11, 0.08, 0.04, dx, y, z, blush, into);
     };
+    // A little upturned smile: a center bar + two raised corner pips so it reads
+    // as a happy curve rather than a flat dash.
     const smile = (y: number, z: number, w = 0.12, into = this.body) => {
       box(w, 0.04, 0.04, 0, y, z, dark, into);
+      box(0.04, 0.04, 0.04, -(w / 2 + 0.01), y + 0.045, z, dark, into);
+      box(0.04, 0.04, 0.04, (w / 2 + 0.01), y + 0.045, z, dark, into);
     };
     switch (this.def.shape) {
       case "bee":
