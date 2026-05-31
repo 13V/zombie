@@ -9,7 +9,12 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
     "typecheck": "tsc --noEmit",
-    "test:rating": "node --test --experimental-strip-types test/houserating.test.ts"
+    "test:rating": "node --test --experimental-strip-types test/houserating.test.ts",
+    "test:save": "node --test --experimental-strip-types test/save.test.ts",
+    "test:house": "node --import ./test/resolve-hook.mjs --test --experimental-transform-types test/house.test.ts",
+    "test:rounds": "node --test --experimental-strip-types test/rounds.test.ts",
+    "test:island": "node --test --experimental-strip-types test/island.test.ts",
+    "test": "npm run test:rating && npm run test:save && npm run test:house && npm run test:rounds && npm run test:island"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
