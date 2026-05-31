@@ -51,15 +51,30 @@ import { TiltShift } from "./tiltShift";
 /** Tiny pooled "poof" particles for kill feedback. Hard-capped so chaotic
  *  moments (nukes, detonate chains, gibs) can't spawn unbounded meshes. */
 class Puffs {
-  private static readonly MAX_LIVE = 160;
   private pool: { m: THREE.Mesh; vel: THREE.Vector3; life: number }[] = [];
   private active: { m: THREE.Mesh; vel: THREE.Vector3; life: number }[] = [];
-  private geo = new THREE.SphereGeometry(0.18, 6, 6);
-  constructor(private scene: THREE.Scene) {}
+  // lower-poly sphere + tighter cap on weak hardware
+  private geo: THREE.SphereGeometry;
+  private cap: number;
+  private lowSpec: boolean;
+  constructor(private scene: THREE.Scene, lowSpec = false) {
+    this.lowSpec = lowSpec;
+    this.cap = lowSpec ? 70 : 160;
+    this.geo = new THREE.SphereGeometry(0.18, lowSpec ? 4 : 6, lowSpec ? 4 : 6);
+  }
+  // cheaper unlit material on mobile; lit emissive sphere on desktop
+  private makeMat(color: number): THREE.Material {
+    if (this.lowSpec) {
+      return new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false });
+    }
+    return glowMaterial(color, 0.8);
+  }
   burst(pos: THREE.Vector3, color: number, count = 8) {
-    for (let i = 0; i < count; i++) {
+    // thin out puff counts on weak hardware (mirrors Sparks/Explosions)
+    const n = this.lowSpec ? Math.max(2, Math.round(count * 0.55)) : count;
+    for (let i = 0; i < n; i++) {
       // enforce the cap: recycle the oldest live puff instead of growing
-      if (this.active.length >= Puffs.MAX_LIVE) {
+      if (this.active.length >= this.cap) {
         const old = this.active.shift();
         if (old) {
           old.m.visible = false;
@@ -68,10 +83,11 @@ class Puffs {
         }
       }
       let p = this.pool.pop();
-      if (!p) p = { m: new THREE.Mesh(this.geo, glowMaterial(color, 0.8)), vel: new THREE.Vector3(), life: 0 };
+      if (!p) p = { m: new THREE.Mesh(this.geo, this.makeMat(color)), vel: new THREE.Vector3(), life: 0 };
       const m = p.m;
-      (m.material as THREE.MeshStandardMaterial).color.set(color);
-      (m.material as THREE.MeshStandardMaterial).emissive.set(color);
+      const mat = m.material as THREE.MeshStandardMaterial;
+      mat.color.set(color);
+      if (mat.emissive) mat.emissive.set(color);
       m.position.copy(pos);
       m.position.y = 1;
       m.scale.setScalar(1);
@@ -194,6 +210,8 @@ class Game implements GameApi {
   private camTarget = new THREE.Vector3();
   private shake = 0;
   private _v2 = new THREE.Vector3();
+  // reused camera offset (CAMERA.offset is constant) — avoids a per-frame Vector3 alloc
+  private _camOffset = new THREE.Vector3(CAMERA.offset.x, CAMERA.offset.y, CAMERA.offset.z);
   // juice: transient camera punch-zoom (0 = none) + last combo tier shown
   private zoomPunch = 0;
   private lastComboTier = 1;
@@ -266,7 +284,7 @@ class Game implements GameApi {
     this.rounds = new RoundManager(this.scene, this.assets);
     if (lowSpec) this.rounds.maxAliveCeiling = 42; // survivable carnage on phones
     this.interactables = new Interactables(this.scene, this.arena.half);
-    this.puffs = new Puffs(this.scene);
+    this.puffs = new Puffs(this.scene, lowSpec);
     this.floaters = new FloatingText(this.scene);
     this.drops = new Drops(this.scene);
     this.explosions = new Explosions(this.scene, lowSpec);
@@ -2456,9 +2474,7 @@ class Game implements GameApi {
   }
 
   private updateCamera(dt: number) {
-    this._v2.copy(this.player.pos).add(
-      new THREE.Vector3(CAMERA.offset.x, CAMERA.offset.y, CAMERA.offset.z),
-    );
+    this._v2.copy(this.player.pos).add(this._camOffset);
     const k = 1 - Math.exp(-CAMERA.follow * dt);
     this.camera.position.lerp(this._v2, k);
 

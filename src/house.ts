@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { voxelMaterial, toyMaterial, glowMaterial, VOX } from "./palette";
-import { Pet, findAnyPet } from "./pets";
+import { Pet, findAnyPet, SHARED_UNIT_BOX } from "./pets";
 
 /**
  * Player housing on the island. A house is a small, server-persisted layout of
@@ -113,9 +113,35 @@ export function starterHouse(): HouseData {
   return { parts };
 }
 
-/** Renders a HouseData onto a plot anchor; rebuildable when the layout changes. */
+/**
+ * Shared, cached materials for house parts. Many parts/pieces reuse the same
+ * (factory, color, intensity) combo across an entire neighbourhood of plots,
+ * so we cache + share one material per key instead of allocating per piece.
+ *
+ * LIFETIME: process-wide singletons — never disposed (disposeObject skips any
+ * material flagged `userData.shared`). Paint never mutates a shared material's
+ * color (that would recolour every part sharing it); it re-points the mesh at
+ * the cached material for the new color instead.
+ */
+type MatKind = "voxel" | "toy" | "glow";
+const matCache = new Map<string, THREE.Material>();
+function sharedMat(kind: MatKind, color: number, intensity = 0.9): THREE.Material {
+  const key = `${kind}:${color}:${kind === "glow" ? intensity : 0}`;
+  let m = matCache.get(key);
+  if (!m) {
+    m = kind === "voxel" ? voxelMaterial(color) : kind === "toy" ? toyMaterial(color) : glowMaterial(color, intensity);
+    m.userData.shared = true;
+    matCache.set(key, m);
+  }
+  return m;
+}
+
+/** Renders a HouseData onto a plot anchor incrementally (per-part diffing). */
 export class HouseView {
   readonly group = new THREE.Group();
+  // partKey -> the placed Object3D + its current tint color, so render() can
+  // add only new parts, remove only deleted ones, and repaint in place.
+  private placed = new Map<string, { obj: THREE.Object3D; color: number }>();
 
   constructor(scene: THREE.Scene, anchor: THREE.Vector3) {
     this.group.position.copy(anchor);
@@ -123,54 +149,83 @@ export class HouseView {
     scene.add(this.group);
   }
 
-  /** Rebuild all meshes from data (called on load + after each edit). */
+  /**
+   * Reconcile the rendered meshes to `data` (called on load + after each edit).
+   * Incremental: unchanged parts are left untouched, added parts are built,
+   * removed parts are disposed, and a part whose only change is color is
+   * repainted in place — so an edit no longer tears down the whole tree.
+   */
   render(data: HouseData) {
-    for (let i = this.group.children.length - 1; i >= 0; i--) {
-      const c = this.group.children[i];
-      this.group.remove(c);
-      disposeObject(c); // free GPU geometry/materials — render() fires every edit
+    // build the desired key -> part map (key excludes color; color is mutable)
+    const desired = new Map<string, HousePart>();
+    const seen = new Set<string>(); // disambiguate accidental dup keys
+    for (const p of data.parts) {
+      let key = partKey(p);
+      while (seen.has(key)) key += "#"; // unique-ify exact duplicates
+      seen.add(key);
+      desired.set(key, p);
     }
-    for (const p of data.parts) this.addPart(p);
+    // remove parts that are gone
+    for (const [key, entry] of this.placed) {
+      if (!desired.has(key)) {
+        this.group.remove(entry.obj);
+        disposeObject(entry.obj);
+        this.placed.delete(key);
+      }
+    }
+    // add new parts; repaint existing ones whose color changed
+    for (const [key, p] of desired) {
+      const def = HOUSE_PARTS.find((d) => d.kind === p.kind);
+      const color = p.color ?? def?.color ?? 0xcccccc;
+      const existing = this.placed.get(key);
+      if (!existing) {
+        const obj = this.buildPart(p, color);
+        this.group.add(obj);
+        this.placed.set(key, { obj, color });
+      } else if (existing.color !== color) {
+        repaint(existing.obj, color);
+        existing.color = color;
+      }
+    }
   }
 
-  private addPart(p: HousePart) {
+  /** Build one part's Object3D (shared unit geometry, cached materials). */
+  private buildPart(p: HousePart, color: number): THREE.Object3D {
     const x = p.gx * CELL;
     const z = p.gz * CELL;
     const yBase = p.gy * CELL;
-    const def = HOUSE_PARTS.find((d) => d.kind === p.kind);
-    const color = p.color ?? def?.color ?? 0xcccccc;
     let mesh: THREE.Object3D;
     switch (p.kind) {
       case "floor":
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(CELL, 0.2, CELL), voxelMaterial(color));
+        mesh = tintBox(CELL, 0.2, CELL, "voxel", color);
         mesh.position.set(x, yBase + 0.1, z);
         break;
       case "wall":
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(CELL, CELL, 0.2), toyMaterial(color));
+        mesh = tintBox(CELL, CELL, 0.2, "toy", color);
         mesh.position.set(x, yBase + CELL / 2, z);
         break;
       case "roof": {
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(CELL * 1.05, 0.3, CELL * 1.05), voxelMaterial(color));
+        mesh = tintBox(CELL * 1.05, 0.3, CELL * 1.05, "voxel", color);
         mesh.position.set(x, yBase + 0.15, z);
         break;
       }
       case "door":
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.7, CELL, 0.22), toyMaterial(color));
+        mesh = tintBox(CELL * 0.7, CELL, 0.22, "toy", color);
         mesh.position.set(x, yBase + CELL / 2, z);
         break;
       case "window":
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.7, CELL * 0.6, 0.22), glowMaterial(color, 0.5));
+        mesh = tintBox(CELL * 0.7, CELL * 0.6, 0.22, "glow", color, 0.5);
         mesh.position.set(x, yBase + CELL / 2, z);
         break;
       case "fence":
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(CELL, 0.5, 0.12), voxelMaterial(color));
+        mesh = tintBox(CELL, 0.5, 0.12, "voxel", color);
         mesh.position.set(x, yBase + 0.35, z);
         break;
       case "tree": {
         const g = new THREE.Group();
-        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, 0.3), voxelMaterial(0x8a5a32));
+        const tk = plainBox(0.3, 1.0, 0.3, "voxel", 0x8a5a32);
         tk.position.y = 0.5;
-        const top = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.9, 1.0), voxelMaterial(color));
+        const top = tintBox(1.0, 0.9, 1.0, "voxel", color);
         top.position.y = 1.3;
         g.add(tk, top);
         g.position.set(x, yBase, z);
@@ -179,9 +234,9 @@ export class HouseView {
       }
       case "lamp": {
         const g = new THREE.Group();
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.1, 0.16), voxelMaterial(0x444448));
+        const post = plainBox(0.16, 1.1, 0.16, "voxel", 0x444448);
         post.position.y = 0.55;
-        const bulb = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.34), glowMaterial(color, 1.2));
+        const bulb = tintBox(0.34, 0.34, 0.34, "glow", color, 1.2);
         bulb.position.y = 1.2;
         g.add(post, bulb);
         g.position.set(x, yBase, z);
@@ -190,11 +245,11 @@ export class HouseView {
       }
       case "bed": {
         const g = new THREE.Group();
-        const frame = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.9, 0.3, CELL * 0.7), voxelMaterial(0x8a5a32));
+        const frame = plainBox(CELL * 0.9, 0.3, CELL * 0.7, "voxel", 0x8a5a32);
         frame.position.y = 0.15;
-        const quilt = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.86, 0.18, CELL * 0.5), toyMaterial(color));
+        const quilt = tintBox(CELL * 0.86, 0.18, CELL * 0.5, "toy", color);
         quilt.position.set(0, 0.34, 0.08);
-        const pillow = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.7, 0.16, 0.26), toyMaterial(0xffffff));
+        const pillow = plainBox(CELL * 0.7, 0.16, 0.26, "toy", 0xffffff);
         pillow.position.set(0, 0.36, -CELL * 0.28);
         g.add(frame, quilt, pillow);
         g.position.set(x, yBase + 0.2, z);
@@ -203,10 +258,10 @@ export class HouseView {
       }
       case "table": {
         const g = new THREE.Group();
-        const top = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.7, 0.12, CELL * 0.7), voxelMaterial(color));
+        const top = tintBox(CELL * 0.7, 0.12, CELL * 0.7, "voxel", color);
         top.position.y = 0.55;
         for (const [lx, lz] of [[-0.28, -0.28], [0.28, -0.28], [-0.28, 0.28], [0.28, 0.28]] as const) {
-          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), voxelMaterial(0x6b4a2a));
+          const leg = plainBox(0.1, 0.5, 0.1, "voxel", 0x6b4a2a);
           leg.position.set(lx * CELL, 0.25, lz * CELL);
           g.add(leg);
         }
@@ -217,9 +272,9 @@ export class HouseView {
       }
       case "chair": {
         const g = new THREE.Group();
-        const seat = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.4, 0.1, CELL * 0.4), voxelMaterial(color));
+        const seat = tintBox(CELL * 0.4, 0.1, CELL * 0.4, "voxel", color);
         seat.position.y = 0.4;
-        const back = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.4, 0.5, 0.1), voxelMaterial(color));
+        const back = tintBox(CELL * 0.4, 0.5, 0.1, "voxel", color);
         back.position.set(0, 0.65, -CELL * 0.18);
         g.add(seat, back);
         g.position.set(x, yBase + 0.2, z);
@@ -227,18 +282,18 @@ export class HouseView {
         break;
       }
       case "rug":
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.95, 0.06, CELL * 0.95), toyMaterial(color));
+        mesh = tintBox(CELL * 0.95, 0.06, CELL * 0.95, "toy", color);
         mesh.position.set(x, yBase + 0.23, z);
         break;
       case "path":
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.95, 0.1, CELL * 0.95), voxelMaterial(color));
+        mesh = tintBox(CELL * 0.95, 0.1, CELL * 0.95, "voxel", color);
         mesh.position.set(x, yBase + 0.05, z);
         break;
       case "bush": {
         const g = new THREE.Group();
-        const a = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.7), voxelMaterial(color));
+        const a = tintBox(0.7, 0.5, 0.7, "voxel", color);
         a.position.y = 0.25;
-        const b = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), voxelMaterial(color));
+        const b = tintBox(0.4, 0.4, 0.4, "voxel", color);
         b.position.set(0.25, 0.45, 0.1);
         g.add(a, b);
         g.position.set(x, yBase, z);
@@ -247,11 +302,11 @@ export class HouseView {
       }
       case "lamppost": {
         const g = new THREE.Group();
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.8, 0.14), voxelMaterial(0x33363f));
+        const post = plainBox(0.14, 1.8, 0.14, "voxel", 0x33363f);
         post.position.y = 0.9;
-        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.12), voxelMaterial(0x33363f));
+        const arm = plainBox(0.5, 0.12, 0.12, "voxel", 0x33363f);
         arm.position.set(0.2, 1.7, 0);
-        const lant = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.34, 0.26), glowMaterial(color, 1.4));
+        const lant = tintBox(0.26, 0.34, 0.26, "glow", color, 1.4);
         lant.position.set(0.4, 1.55, 0);
         g.add(post, arm, lant);
         g.position.set(x, yBase, z);
@@ -260,9 +315,9 @@ export class HouseView {
       }
       case "banner": {
         const g = new THREE.Group();
-        const pole = new THREE.Mesh(new THREE.BoxGeometry(0.1, CELL * 1.4, 0.1), voxelMaterial(0x6b4a2a));
+        const pole = plainBox(0.1, CELL * 1.4, 0.1, "voxel", 0x6b4a2a);
         pole.position.y = CELL * 0.7;
-        const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.7, CELL * 0.9, 0.06), toyMaterial(color));
+        const cloth = tintBox(0.7, CELL * 0.9, 0.06, "toy", color);
         cloth.position.set(0.4, CELL * 0.85, 0);
         g.add(pole, cloth);
         g.position.set(x, yBase, z);
@@ -271,11 +326,11 @@ export class HouseView {
       }
       case "statue": {
         const g = new THREE.Group();
-        const base = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.6, 0.3, CELL * 0.6), voxelMaterial(0x9aa0ac));
+        const base = plainBox(CELL * 0.6, 0.3, CELL * 0.6, "voxel", 0x9aa0ac);
         base.position.y = 0.15;
-        const body = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.8, 0.3), voxelMaterial(color));
+        const body = tintBox(0.4, 0.8, 0.3, "voxel", color);
         body.position.y = 0.7;
-        const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.34), voxelMaterial(color));
+        const head = tintBox(0.34, 0.34, 0.34, "voxel", color);
         head.position.y = 1.27;
         g.add(base, body, head);
         g.position.set(x, yBase, z);
@@ -285,9 +340,9 @@ export class HouseView {
       case "perch": {
         const g = new THREE.Group();
         // a little plinth…
-        const base = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.7, 0.3, CELL * 0.7), voxelMaterial(color));
+        const base = tintBox(CELL * 0.7, 0.3, CELL * 0.7, "voxel", color);
         base.position.y = 0.15;
-        const top = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.55, 0.12, CELL * 0.55), voxelMaterial(0xffffff));
+        const top = plainBox(CELL * 0.55, 0.12, CELL * 0.55, "voxel", 0xffffff);
         top.position.y = 0.36;
         g.add(base, top);
         // …showing the owned pet's actual voxel model (reuse pets.ts Pet).
@@ -306,15 +361,15 @@ export class HouseView {
         const g = new THREE.Group();
         const tier = TROPHY_TIERS[p.tier ?? 0] ?? TROPHY_TIERS[0];
         const metal = p.color ?? tier.color;
-        const plinth = new THREE.Mesh(new THREE.BoxGeometry(CELL * 0.5, 0.3, CELL * 0.5), voxelMaterial(0x3a3d46));
+        const plinth = plainBox(CELL * 0.5, 0.3, CELL * 0.5, "voxel", 0x3a3d46);
         plinth.position.y = 0.15;
-        const stem = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.35, 0.12), glowMaterial(metal, 0.6));
+        const stem = plainBox(0.12, 0.35, 0.12, "glow", metal, 0.6);
         stem.position.y = 0.47;
-        const cup = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.34), glowMaterial(metal, 0.9));
+        const cup = plainBox(0.5, 0.4, 0.34, "glow", metal, 0.9);
         cup.position.y = 0.82;
         // little handles
         for (const hx of [-0.32, 0.32]) {
-          const h = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.26, 0.1), glowMaterial(metal, 0.9));
+          const h = plainBox(0.1, 0.26, 0.1, "glow", metal, 0.9);
           h.position.set(hx, 0.82, 0);
           g.add(h);
         }
@@ -326,9 +381,9 @@ export class HouseView {
       case "flower":
       default: {
         const g = new THREE.Group();
-        const stem = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.4, 0.1), voxelMaterial(0x5fb04a));
+        const stem = plainBox(0.1, 0.4, 0.1, "voxel", 0x5fb04a);
         stem.position.y = 0.2;
-        const bloom = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), glowMaterial(color, 0.6));
+        const bloom = tintBox(0.3, 0.3, 0.3, "glow", color, 0.6);
         bloom.position.y = 0.5;
         g.add(stem, bloom);
         g.position.set(x, yBase, z);
@@ -338,24 +393,62 @@ export class HouseView {
     }
     // 4-way yaw: rotate the finished mesh in place about its own cell centre.
     if (p.rot) mesh.rotation.y = (p.rot * Math.PI) / 2;
-    this.group.add(mesh);
+    return mesh;
   }
 
   dispose(scene: THREE.Scene) {
     scene.remove(this.group);
     for (let i = this.group.children.length - 1; i >= 0; i--) disposeObject(this.group.children[i]);
     this.group.clear();
+    this.placed.clear();
   }
 }
 
-/** Recursively free a scene object's geometries + materials (incl. perch pets). */
+/**
+ * Stable identity for a placed part, EXCLUDING color (color is mutated in
+ * place by paint). Two parts that differ only in color share this key so a
+ * recolour is detected as a paint, not an add+remove.
+ */
+function partKey(p: HousePart): string {
+  return `${p.kind}|${p.gx}|${p.gy}|${p.gz}|${p.rot ?? 0}|${p.petId ?? ""}|${p.tier ?? ""}`;
+}
+
+/** A color-driven mesh (shared unit box scaled to size, cached material). The
+ *  mesh remembers its material factory so paint can swap to the cached material
+ *  for the new color. */
+function tintBox(w: number, h: number, d: number, kind: MatKind, color: number, intensity = 0.9): THREE.Mesh {
+  const m = new THREE.Mesh(SHARED_UNIT_BOX, sharedMat(kind, color, intensity));
+  m.scale.set(w, h, d);
+  m.userData.tint = kind; // marks a paintable mesh + records its factory
+  m.userData.tintI = intensity;
+  return m;
+}
+
+/** A fixed-color piece (trunk, leg, pillow…) — never repainted. */
+function plainBox(w: number, h: number, d: number, kind: MatKind, color: number, intensity = 0.9): THREE.Mesh {
+  const m = new THREE.Mesh(SHARED_UNIT_BOX, sharedMat(kind, color, intensity));
+  m.scale.set(w, h, d);
+  return m;
+}
+
+/** Repaint a part in place: re-point its tint meshes at the cached material
+ *  for the new color (no shared-material mutation). */
+function repaint(obj: THREE.Object3D, color: number) {
+  obj.traverse((o) => {
+    const kind = o.userData.tint as MatKind | undefined;
+    if (kind) (o as THREE.Mesh).material = sharedMat(kind, color, o.userData.tintI ?? 0.9);
+  });
+}
+
+/** Recursively free a scene object's geometry/materials, but NEVER the shared
+ *  singletons (unit box + cached materials, flagged userData.shared). */
 function disposeObject(obj: THREE.Object3D) {
   obj.traverse((o) => {
     const mesh = o as THREE.Mesh;
-    if (mesh.geometry) mesh.geometry.dispose();
+    if (mesh.geometry && !mesh.geometry.userData.shared) mesh.geometry.dispose();
     const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
-    if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-    else mat?.dispose();
+    if (Array.isArray(mat)) mat.forEach((m) => { if (!m.userData.shared) m.dispose(); });
+    else if (mat && !mat.userData.shared) mat.dispose();
   });
 }
 

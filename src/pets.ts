@@ -2,6 +2,19 @@ import * as THREE from "three";
 import { voxelMaterial, glowMaterial } from "./palette";
 
 /**
+ * One shared unit (1×1×1) BoxGeometry reused by every voxel `box()` in this
+ * file AND by HouseView (house.ts) — each mesh scales it to its size instead
+ * of allocating its own BoxGeometry. This is the single biggest avoidable
+ * draw-call/allocation source for pets + house parts.
+ *
+ * LIFETIME: it is a process-wide singleton and must NEVER be disposed — code
+ * that frees meshes (disposeObject in house.ts) checks `userData.shared` and
+ * skips it, so removing a pet/part never frees the buffer other meshes share.
+ */
+export const SHARED_UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+SHARED_UNIT_BOX.userData.shared = true;
+
+/**
  * Companion pets bought with gold. Each is a small floating voxel critter that
  * orbits the player, auto-targets the nearest zombie, and fires real bullets
  * through the shared BulletSystem (so all collision / damage / FX come free).
@@ -494,7 +507,14 @@ export class Pet {
     const glow = glowMaterial(col, 0.9);
     const dark = voxelMaterial(0x141414);
     const box = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, into = this.body) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      // Reuse the shared unit box and encode size via mesh.scale (no per-voxel
+      // BoxGeometry alloc). Meshes whose scale is later animated (muzzle/aura)
+      // remember their base size in userData so the animation can multiply it.
+      const m = new THREE.Mesh(SHARED_UNIT_BOX, mat);
+      m.scale.set(w, h, d);
+      m.userData.bw = w;
+      m.userData.bh = h;
+      m.userData.bd = d;
       m.position.set(x, y, z);
       into.add(m);
       return m;
@@ -766,7 +786,13 @@ export class Pet {
       default:
         box(0.5, 0.5, 0.5, 0, 0, 0, body);
     }
-    if (this.muzzle) this.muzzle.scale.setScalar(0.01); // hidden until firing
+    if (this.muzzle) this.setMuzzleScale(0.01); // hidden until firing
+  }
+
+  /** Scale the muzzle mesh by `f`, preserving its base box dimensions. */
+  private setMuzzleScale(f: number) {
+    const m = this.muzzle!;
+    m.scale.set(m.userData.bw * f, m.userData.bh * f, m.userData.bd * f);
   }
 
   /** Tick the signature-ability cooldown; returns true on the frame it fires. */
@@ -810,8 +836,9 @@ export class Pet {
     }
     if (this.aura) {
       const p = 1 + Math.sin(this.bob * 1.3) * 0.12;
-      this.aura.scale.setScalar(p);
-      (this.aura.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.4 + (Math.sin(this.bob * 2) + 1) * 0.2;
+      const a = this.aura;
+      a.scale.set(a.userData.bw * p, a.userData.bh * p, a.userData.bd * p);
+      (a.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.4 + (Math.sin(this.bob * 2) + 1) * 0.2;
     }
     // breathe + recoil: body squashes back when it just fired
     this.recoil = Math.max(0, this.recoil - dt * 5);
@@ -822,7 +849,7 @@ export class Pet {
     if (this.muzzle) {
       this.flashLife = Math.max(0, this.flashLife - dt);
       const f = this.flashLife / 0.12;
-      this.muzzle.scale.setScalar(0.01 + f * 1.1);
+      this.setMuzzleScale(0.01 + f * 1.1);
     }
 
     // face + fire at target
