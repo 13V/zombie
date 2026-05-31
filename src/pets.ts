@@ -320,7 +320,7 @@ export const PETS: PetDef[] = [
   // ─────────────────────── ✦ CELESTIAL ✦ ───────────────────────
   // The single pet above Mythic. Its signature bends time itself: OVERDRIVE
   // runs the whole game at 2x for a few seconds. Radiant, one-of-a-kind.
-  mk({ id: "chronos", name: "Chronos, the Eternal", desc: "Bends time — OVERDRIVE runs the whole game at 2× speed", cost: 0, rarity: "celestial", color: 0x9af7ff, accent: 0xfff6c8,
+  mk({ id: "chronos", name: "Chronos, the Eternal", desc: "Bends time — the whole game runs at 2× speed while equipped", cost: 0, rarity: "celestial", color: 0x9af7ff, accent: 0xfff6c8,
     damage: 600, interval: 0.32, bulletColor: 0xeaffff, bulletScale: 1.4, pierce: 6, splashRadius: 2.4, splashDamage: 220, homing: 1, shape: "chronos", range: 30 }),
   mk({ id: "oracle", name: "The Oracle of Fate", desc: "Foresight — auto-grants the BEST perk at the end of every round", cost: 0, rarity: "celestial", color: 0xc89bff, accent: 0xffe89a,
     damage: 560, interval: 0.34, bulletColor: 0xe6ccff, bulletScale: 1.4, pierce: 5, splashRadius: 2.4, splashDamage: 210, homing: 1, shape: "oracle", range: 30 }),
@@ -362,7 +362,7 @@ const PET_ABILITIES: Record<string, PetAbility> = {
   midas_golem: { name: "Midas Touch", kind: "jackpot", cd: 9, power: 600, count: 24, gold: 5000, radius: 9 }, // payoff
   void_sovereign: { name: "Annihilation", kind: "obliterate", cd: 10, power: 1200, radius: 6.5 }, // payoff
   // ── CELESTIAL ──
-  chronos: { name: "OVERDRIVE", kind: "timewarp", cd: 16, power: 0, dur: 6 }, // whole game at 2x for `dur`s
+  chronos: { name: "OVERDRIVE", kind: "timewarp", cd: 999, power: 0 }, // PASSIVE: permanent 2x while in the squad (driven by chronosActive, not a timed cast)
   oracle: { name: "FORESIGHT", kind: "autoperk", cd: 999, power: 0 }, // passive: best perk each round (handled at intermission, not on a timer)
 };
 for (const p of PETS) {

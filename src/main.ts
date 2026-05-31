@@ -118,7 +118,7 @@ class Game implements GameApi {
   private audio = new Audio();
   private combo = new Combo();
   private hitStop = 0; // seconds of remaining sim freeze (game feel)
-  private timeWarp = 0; // seconds remaining of Chronos OVERDRIVE (whole sim at 2x)
+  private chronosActive = false; // Chronos in the active squad → permanent 2x sim
   private wallet = new Wallet();
 
   // progression
@@ -398,7 +398,7 @@ class Game implements GameApi {
     this.explosions.clear();
     this.sparks.clear();
     this.hitStop = 0;
-    this.timeWarp = 0; // clear any leftover Chronos overdrive between runs
+    this.chronosActive = false; // recomputed by spawnPets from the active squad
     this.hud.setCombo(0, 0);
     this.hud.hideBoss();
     this.hud.hideLevelUp();
@@ -1296,16 +1296,12 @@ class Game implements GameApi {
       dt = 0;
     }
 
-    // Chronos OVERDRIVE: run the ENTIRE sim at 2x while the time-warp is active.
-    // Drained on real (unwarped) time so the buff length is honest. Only affects
-    // live gameplay (state "playing"); menus/island tick normally.
-    const warpActive = this.timeWarp > 0 && this.state === "playing";
-    if (this.timeWarp > 0) {
-      this.timeWarp -= dt; // bleed in real seconds
-      if (this.state === "playing") dt *= 2;
-      this.zoomPunch = Math.max(this.zoomPunch, 0.25); // subtle lens push while warped
-    }
-    this.hud.setOverdrive(warpActive); // on-screen "2× OVERDRIVE" confirmation
+    // Chronos OVERDRIVE: PERMANENT 2x. While Chronos is in the active squad the
+    // ENTIRE sim runs at double speed for the whole run (the only pet that does
+    // this) — not a timed proc, so it never flickers on/off. Live play only.
+    const warpActive = this.state === "playing" && this.chronosActive;
+    if (warpActive) dt *= 2;
+    this.hud.setOverdrive(warpActive); // persistent "2× OVERDRIVE" banner
 
     this.touch?.setActive(this.state === "playing" || this.state === "paused" || this.state === "island");
     this.player.showAimGuide(this.state === "playing");
@@ -2356,6 +2352,8 @@ class Game implements GameApi {
     });
     // Squad changed → recompute synergy lazily next frame.
     this._petSynergyKey = "";
+    // Chronos in the active squad = permanent 2x OVERDRIVE for the whole run.
+    this.chronosActive = this.pets.some((p) => p.def.id === "chronos");
   }
 
   /** Stars a pet has earned via dupe-ascension (petProgress[id]._stars). */
@@ -2647,9 +2645,10 @@ class Game implements GameApi {
   private firePetAbility(pet: Pet, petBuff: number) {
     const ab = pet.def.ability;
     if (!ab) return;
-    // The Oracle's "autoperk" isn't a timed cast — it auto-resolves the level-up
-    // pick at round end (offerLevelUp). Nothing to fire here.
-    if (ab.kind === "autoperk") return;
+    // Celestial passives aren't timed casts: Oracle "autoperk" auto-resolves the
+    // level-up at round end (offerLevelUp); Chronos "timewarp" is a PERMANENT 2x
+    // driven by squad presence (chronosActive). Neither fires here.
+    if (ab.kind === "autoperk" || ab.kind === "timewarp") return;
     const grid = this.rounds.grid;
     const px = pet.group.position.x;
     const pz = pet.group.position.z;
@@ -2670,9 +2669,8 @@ class Game implements GameApi {
       ab.kind === "overcharge" ? "chain"
       : ab.kind === "resonance" ? "nova"
       : ab.kind === "siphon" ? "smite"
-      : ab.kind === "timewarp" ? "obliterate" // big dramatic boom for OVERDRIVE
       : ab.kind;
-    this.audio.ability(sfxKind, ab.kind === "timewarp" ? 1.6 : ab.power / 200);
+    this.audio.ability(sfxKind, ab.power / 200);
 
     switch (ab.kind) {
       case "nova": {
@@ -2826,19 +2824,6 @@ class Game implements GameApi {
         this.sparks.burst(this._abilTmp, 0xff7aff, 24, { speed: 14, spread: 8, streak: true });
         this.splash(this._abilTmp, r, dmgDirect, -1, sMul);
         this.floaters.spawn(pet.group.position, "ANNIHILATE!", "#ff3aff", 1.7, true);
-        break;
-      }
-      case "timewarp": {
-        // ✦ CELESTIAL ✦ Chronos OVERDRIVE: the whole game runs at 2x for `dur`
-        // seconds. Refreshes (doesn't stack) so it's a sustained burst, not a
-        // permanent doubling. Pure tempo — does no damage itself.
-        this.timeWarp = Math.max(this.timeWarp, ab.dur ?? 6);
-        this.explosions.beam(pet.group.position, 14, 0x9af7ff);
-        this.explosions.shockwave(pet.group.position, 10, 0xeaffff);
-        this.sparks.burst(pet.group.position, 0x9af7ff, 26, { speed: 13, spread: 7, streak: true });
-        this.shake = Math.min(0.7, this.shake + 0.45);
-        this.zoomPunch = 1;
-        this.floaters.spawn(this.player.pos, "OVERDRIVE! 2×", "#9af7ff", 1.9, true);
         break;
       }
       // ── ENGINE archetypes: build a capped stacking resource that empowers the
