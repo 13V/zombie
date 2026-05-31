@@ -200,6 +200,14 @@ function isValidSnap(msg: SnapMsg): boolean {
   for (const z of msg.zombies) {
     if (!z || typeof z !== "object") return false;
     if (!Number.isFinite(z.id) || z.id < 1) return false;
+    // Clamp the elite-affix code to the known range at ingress so a hostile or
+    // garbage host value can't reach the render path (which indexes per-affix
+    // materials). Anything outside [0, AFFIX_CODE_MAX] — incl. NaN/undefined —
+    // is normalized to "none" rather than dropping the whole (otherwise valid)
+    // frame. The ZombieView keeps its own clamp as defense-in-depth.
+    if (!Number.isInteger(z.affix) || (z.affix as number) < 0 || (z.affix as number) > AFFIX_CODE_MAX) {
+      z.affix = AffixCode.None;
+    }
   }
   return true;
 }
