@@ -47,6 +47,8 @@ export interface PetRow {
   shiny?: boolean; // cosmetic chroma variant
   canStar?: boolean; starCost?: number; // a dupe is available to convert into a star
   active?: boolean; // currently in the live combat squad
+  canSquad?: boolean; // an owned combat pet that can be deployed/benched
+  benched?: boolean; // owned but sat out of the squad
 }
 
 /** Active-squad role tally + synergy bonuses for the Pets tab header. */
@@ -56,6 +58,8 @@ export interface PetSquadInfo {
   collected: number;
   total: number;
   nextMilestone?: { own: number; essence: number };
+  members?: { id: string; name: string; icon: string; color: string }[]; // the active squad
+  cap?: number; // max active combat pets
 }
 
 /** One level-up card as the HUD renders it (view-model built by the game). */
@@ -546,6 +550,7 @@ export class Hud {
     onAction: (id: string) => void,
     squad?: PetSquadInfo,
     onStar?: (id: string) => void,
+    onToggleSquad?: (id: string) => void,
   ) {
     const order = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "celestial"];
     const label = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
@@ -580,6 +585,10 @@ export class Hud {
       const starBtn = r.canStar
         ? `<span class="pet-starbuy" data-star="${r.id}" title="Convert a dupe into a star" style="display:block;margin-top:3px;padding:2px 6px;border-radius:6px;font-size:10px;cursor:pointer;background:rgba(255,210,74,0.18);color:#ffd24a;text-align:center;">★+ ⛀ ${r.starCost ?? 0}</span>`
         : "";
+      // Deploy/bench toggle for owned combat pets (the squad picker).
+      const squadBtn = r.canSquad
+        ? `<span class="pet-squadtoggle" data-squad="${r.id}" style="display:block;margin-top:3px;padding:2px 6px;border-radius:6px;font-size:10px;cursor:pointer;text-align:center;${r.benched ? "background:rgba(120,230,140,0.18);color:#7be08a;" : "background:rgba(255,255,255,0.1);color:#cfe;"}">${r.benched ? "＋ Deploy" : "− Bench"}</span>`
+        : "";
       // Big "studio" hero shot of the actual voxel model on a tinted plinth so
       // the pet is the focus of the card; colour dot is the no-WebGL fallback.
       const stage = r.thumb
@@ -595,7 +604,7 @@ export class Hud {
         ${abilityTag}
         <span class="pet-cost">${action}</span>
         ${trialBlock}
-      </button>${starBtn}</div>`;
+      </button>${squadBtn}${starBtn}</div>`;
     };
     // Group into rarity sections so a deep roster stays browsable.
     const ownedCount = rows.filter((r) => r.owned).length;
@@ -620,6 +629,15 @@ export class Hud {
     if (onStar) {
       this.q("#tab-pets").querySelectorAll<HTMLElement>(".pet-starbuy").forEach((el) => {
         el.addEventListener("click", (e) => { e.stopPropagation(); onStar(el.dataset.star!); });
+      });
+    }
+    if (onToggleSquad) {
+      // kick from the squad panel + deploy/bench toggle on owned-pet cards
+      this.q("#tab-pets").querySelectorAll<HTMLElement>(".squad-slot[data-kick]").forEach((el) => {
+        el.addEventListener("click", (e) => { e.stopPropagation(); onToggleSquad(el.dataset.kick!); });
+      });
+      this.q("#tab-pets").querySelectorAll<HTMLElement>(".pet-squadtoggle").forEach((el) => {
+        el.addEventListener("click", (e) => { e.stopPropagation(); onToggleSquad(el.dataset.squad!); });
       });
     }
   }
@@ -1164,11 +1182,6 @@ export class Hud {
   private petSquadPanel(squad?: PetSquadInfo): string {
     if (!squad) return "";
     const C = Hud.CHIP;
-    const roleChips = squad.roles.length
-      ? squad.roles
-          .map((r) => `<span title="${r.label}" style="${C}background:rgba(120,200,255,0.16);">${r.icon} ${r.label}${r.count > 1 ? ` ×${r.count}` : ""}</span>`)
-          .join("")
-      : `<span style="${C}opacity:0.6;">No combat pets equipped</span>`;
     const bonusChips = squad.bonuses.length
       ? squad.bonuses.map((b) => `<span style="${C}background:rgba(199,146,234,0.22);color:#e9d6ff;">✦ ${b}</span>`).join("")
       : `<span style="${C}opacity:0.6;">Pair up roles for squad synergies</span>`;
@@ -1176,8 +1189,24 @@ export class Hud {
     const next = squad.nextMilestone
       ? `<span style="font-size:10px;opacity:0.8;margin-left:8px;">Next: own ${squad.nextMilestone.own} → +${squad.nextMilestone.essence} ✦</span>`
       : `<span style="font-size:10px;opacity:0.8;margin-left:8px;">Collection complete ✦</span>`;
+    // The actual squad as filled + empty SLOTS. Each filled slot is a clickable
+    // chip with a ✕ that benches that pet; empty slots prompt to add one.
+    const cap = squad.cap ?? 5;
+    const members = squad.members ?? [];
+    const slots: string[] = [];
+    for (let i = 0; i < cap; i++) {
+      const m = members[i];
+      if (m) {
+        slots.push(
+          `<span class="squad-slot" data-kick="${m.id}" title="Bench ${m.name}" style="display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;cursor:pointer;background:color-mix(in srgb, ${m.color} 22%, rgba(0,0,0,0.3));border:1px solid color-mix(in srgb, ${m.color} 60%, transparent);font-size:11px;font-weight:700;">${m.icon} ${m.name}<span style="opacity:0.7;font-weight:900;margin-left:2px;">✕</span></span>`,
+        );
+      } else {
+        slots.push(`<span style="display:inline-flex;align-items:center;justify-content:center;padding:3px 10px;border-radius:999px;border:1px dashed rgba(255,255,255,0.22);font-size:11px;opacity:0.5;">+ empty</span>`);
+      }
+    }
     return `<div style="margin:6px 0 10px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);">
-      <div style="margin-bottom:4px;"><span style="font-weight:700;font-size:11px;opacity:0.85;margin-right:6px;">Active Squad</span>${roleChips}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><span style="font-weight:700;font-size:11px;opacity:0.85;">Active Squad</span><span style="font-size:10px;opacity:0.6;">${members.length}/${cap} · tap ✕ to bench</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">${slots.join("")}</div>
       <div style="margin-bottom:4px;">${bonusChips}</div>
       <div style="display:flex;align-items:center;gap:6px;">
         <span style="flex:0 0 90px;height:6px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden;display:inline-block;"><span style="display:block;height:100%;width:${pct}%;background:#ffd24a;"></span></span>

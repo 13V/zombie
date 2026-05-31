@@ -53,6 +53,7 @@ export interface SaveData {
   pets: string[]; // owned companion pet ids (bought with gold)
   petLevels: Record<string, number>; // pet id -> level (1+), leveled with gold
   petProgress: Record<string, Record<string, number>>; // pet id -> evolution-trial counters
+  benchedPets: string[]; // combat pet ids the player has manually benched (not in the active squad)
   stats: LifetimeStats;
   muted: boolean;
 }
@@ -92,6 +93,7 @@ function blank(): SaveData {
     pets: [],
     petLevels: {},
     petProgress: {},
+    benchedPets: [],
     stats: blankStats(),
     muted: false,
   };
@@ -208,6 +210,7 @@ export function loadSave(): SaveData {
       pets: strArray(data.pets),
       petLevels: sanitizeLevels(data.petLevels),
       petProgress: sanitizePetProgress(data.petProgress),
+      benchedPets: strArray(data.benchedPets),
       stats: {
         kills: num(data.stats?.kills),
         crits: num(data.stats?.crits),

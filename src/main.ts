@@ -498,11 +498,15 @@ class Game implements GameApi {
           stars, maxStars, shiny,
           canStar, starCost: canStar ? starCost : undefined,
           active: activeIds.has(ownId),
+          // owned COMBAT pets can be deployed/benched (bankers/buffers always active)
+          canSquad: owned && p.role !== "banker" && p.role !== "buffer",
+          benched: this.save.benchedPets.includes(ownId),
         };
       }),
       (id) => this.buyOrLevelPet(id),
       this.petCollectionInfo(),
       (id) => this.convertDupeToStar(id),
+      (id) => this.toggleSquad(id),
     );
   }
 
@@ -517,7 +521,7 @@ class Game implements GameApi {
     const collected = this.petCollectedCount();
     const total = PETS.length;
     const next = PET_DEPTH.cosmetic.milestones.find((m) => collected < m.own);
-    return { roles: sq.roles, bonuses: sq.bonuses, collected, total, nextMilestone: next };
+    return { roles: sq.roles, bonuses: sq.bonuses, collected, total, nextMilestone: next, members: sq.members, cap: sq.cap };
   }
 
   /** Buy a companion pet with gold; it joins you on the next run (and this one). */
@@ -2309,6 +2313,8 @@ class Game implements GameApi {
       if (!def) continue;
       const isCombat = def.role !== "banker" && def.role !== "buffer";
       if (isCombat) {
+        // Player-benched combat pets sit out; the rest fill the squad up to the cap.
+        if (this.save.benchedPets.includes(id)) continue;
         if (combat >= PETS_TUNING.activeSquadCap) continue;
         combat++;
       }
@@ -2376,7 +2382,7 @@ class Game implements GameApi {
   }
 
   /** Snapshot of the active squad's synergy for the HUD pets tab. */
-  petSquadInfo(): { roles: { role: CombatRole; icon: string; label: string; count: number }[]; bonuses: string[] } {
+  petSquadInfo(): { roles: { role: CombatRole; icon: string; label: string; count: number }[]; bonuses: string[]; members: { id: string; name: string; icon: string; color: string }[]; cap: number } {
     this.computePetSynergy();
     const counts = new Map<CombatRole, number>();
     for (const p of this.pets) {
@@ -2387,7 +2393,39 @@ class Game implements GameApi {
     const roles = [...counts.entries()].map(([role, count]) => ({
       role, icon: ROLE_ICON[role], label: ROLE_LABEL[role], count,
     }));
-    return { roles, bonuses: this._petSynergy.pairs };
+    // the actual active combat squad, in orbit order (bankers/buffers excluded —
+    // they aren't squad-capped and don't take a slot).
+    const members = this.pets
+      .filter((p) => p.def.role !== "banker" && p.def.role !== "buffer")
+      .map((p) => ({
+        id: p.def.id,
+        name: p.def.name,
+        icon: p.def.combatRole ? ROLE_ICON[p.def.combatRole] : "✦",
+        color: `#${p.def.color.toString(16).padStart(6, "0")}`,
+      }));
+    return { roles, bonuses: this._petSynergy.pairs, members, cap: PETS_TUNING.activeSquadCap };
+  }
+
+  /** Deploy/bench a combat pet (the squad picker). Owned only; respects the cap. */
+  private toggleSquad(id: string) {
+    if (!this.save.pets.includes(id)) return;
+    const def = findAnyPet(id);
+    if (!def || def.role === "banker" || def.role === "buffer") return; // non-combat: always active
+    const benched = this.save.benchedPets;
+    const i = benched.indexOf(id);
+    if (i >= 0) {
+      // deploy — but only if there's room under the cap
+      const active = this.pets.filter((p) => p.def.role !== "banker" && p.def.role !== "buffer").length;
+      if (active >= PETS_TUNING.activeSquadCap) { this.hud.toast(`Squad full (${PETS_TUNING.activeSquadCap}) — bench one first`); this.audio.deny(); return; }
+      benched.splice(i, 1);
+      this.audio.ui();
+    } else {
+      benched.push(id); // bench it
+      this.audio.ui();
+    }
+    writeSave(this.save);
+    this.spawnPets();
+    this.renderShop();
   }
 
   /** Tick companion pets: orbit the player, auto-target, fire real bullets. */
