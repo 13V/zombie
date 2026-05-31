@@ -267,6 +267,7 @@ export const SPECIAL_ROUNDS = {
   houndEvery: 5, // every Nth round is a Hound Round (fastest type only)
   showcaseEvery: 4, // every Mth round is a rotating themed showcase
   showcaseOffset: 2, // phase offset so showcases dodge hound/boss rounds
+  mutationEvery: 6, // every Nth round is a MUTATION round (global horde rule)
   /** Hound Round tint (CSS color) for the screen/fog wash. */
   houndTint: "#b53a2a",
   /** Rotating showcase themes, picked round-robin by showcase index. */
@@ -275,6 +276,22 @@ export const SPECIAL_ROUNDS = {
     { id: "summonerSiege", name: "SUMMONER SIEGE", tint: "#3a6a4a", roles: ["summon"] },
     { id: "splitterSwarm", name: "SPLITTER SWARM", tint: "#2f8a60", roles: ["split"] },
   ] as { id: string; name: string; tint: string; roles: ("flying" | "summon" | "split")[] }[],
+  /**
+   * Rotating MUTATION rounds — a single global rule applied to the WHOLE horde,
+   * so the round PLAYS differently instead of just looking different. Each pays a
+   * reward bump (you're earning the extra risk) and drops a chest on clear. The
+   * `mutator` drives spawn-time stat/behavior changes in rounds.ts applyMutator().
+   *   frenzy   — Blood Moon: fast + fragile glass horde, double rewards.
+   *   volatile — every zombie explodes on death (chain-reaction chaos).
+   *   inferno  — every zombie is Blazing (fire trails everywhere).
+   *   armored  — Juggernaut wave: slow but very tanky wall.
+   */
+  mutations: [
+    { id: "bloodMoon", name: "BLOOD MOON", tint: "#7a0e1e", mutator: "frenzy", rewardMul: 2.0 },
+    { id: "volatile", name: "VOLATILE HORDE", tint: "#c2531a", mutator: "volatile", rewardMul: 1.6 },
+    { id: "inferno", name: "INFERNO", tint: "#d23a16", mutator: "inferno", rewardMul: 1.6 },
+    { id: "juggernaut", name: "JUGGERNAUT WAVE", tint: "#34507a", mutator: "armored", rewardMul: 1.7 },
+  ] as { id: string; name: string; tint: string; mutator: "frenzy" | "volatile" | "inferno" | "armored"; rewardMul: number }[],
 };
 
 /** Elite affix layer: late-game zombies get a behavior affix + colored tell. */

@@ -3013,7 +3013,8 @@ class Game implements GameApi {
       }
       rampMul = this.rampageMul();
       // Curse is opt-in risk→reward: a higher curse boosts both score and gold.
-      const cMul = this.rounds.curseRewardMul;
+      // Mutation rounds (Blood Moon etc.) pay their own bonus on top.
+      const cMul = this.rounds.curseRewardMul * this.rounds.specialRewardMul;
       const pts = Math.round(SCORE.kill * z.scoreMul * scoreMul * mult * cMul * rampMul);
       this.addPoints(pts);
       // Per-kill gold drip: COMBAT is the primary gold faucet (bankers are now

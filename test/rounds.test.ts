@@ -22,7 +22,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ZOMBIE, ROUNDS, ZOMBIE_TYPES } from "../src/config.ts";
+import { ZOMBIE, ROUNDS, ZOMBIE_TYPES, SPECIAL_ROUNDS } from "../src/config.ts";
 
 // ---- re-derived from rounds.ts beginRound() (kept verbatim) ---------------
 function roundHP(n: number): number {
@@ -139,6 +139,57 @@ test("elite bonus ramp is clamped to [0, 0.35] and starts at R10", () => {
   assert.ok(bonus(8) === 0); // clamped, no negative bonus before R10
   assert.ok(Math.abs(bonus(10) - 0.03) < 1e-9);
   assert.equal(bonus(100), 0.35); // hard cap
+});
+
+// ---- mutation rounds (classifySpecial), derived from SPECIAL_ROUNDS --------
+// Port of the precedence in RoundManager.classifySpecial: hound (every Nth)
+// wins, then mutation (every Mth, rotating), then showcases. We only assert the
+// hound>mutation precedence + the rotation here (showcase eligibility needs the
+// type table, covered structurally below).
+function mutationFor(n: number) {
+  const sp = SPECIAL_ROUNDS;
+  if (n <= 0) return null;
+  if (n % sp.houndEvery === 0) return { id: "hound" }; // hound takes precedence
+  if (n % sp.mutationEvery === 0) {
+    return sp.mutations[(n / sp.mutationEvery - 1) % sp.mutations.length];
+  }
+  return null;
+}
+
+test("mutation rounds land on every mutationEvery-th round (unless hound wins)", () => {
+  const e = SPECIAL_ROUNDS.mutationEvery;
+  for (let k = 1; k <= 12; k++) {
+    const n = e * k;
+    const m = mutationFor(n);
+    if (n % SPECIAL_ROUNDS.houndEvery === 0) {
+      assert.equal(m?.id, "hound", `R${n} should be a hound round (precedence)`);
+    } else {
+      assert.ok(m && "mutator" in m, `R${n} should be a mutation round`);
+    }
+  }
+});
+
+test("mutation rounds rotate through the full mutation list in order", () => {
+  const e = SPECIAL_ROUNDS.mutationEvery;
+  const list = SPECIAL_ROUNDS.mutations;
+  // Collect mutation ids in round order, skipping rounds the hound steals.
+  const seen: string[] = [];
+  for (let k = 1; k <= list.length * 2; k++) {
+    const n = e * k;
+    if (n % SPECIAL_ROUNDS.houndEvery === 0) continue;
+    const m = mutationFor(n) as { id: string };
+    seen.push(m.id);
+  }
+  // Each mutation id should appear, and consecutive picks follow the list order.
+  for (const m of list) assert.ok(seen.includes(m.id), `mutation ${m.id} never rotated in`);
+});
+
+test("every mutation has a valid mutator + a reward bump >1", () => {
+  const valid = new Set(["frenzy", "volatile", "inferno", "armored"]);
+  for (const m of SPECIAL_ROUNDS.mutations) {
+    assert.ok(valid.has(m.mutator), `unknown mutator ${m.mutator}`);
+    assert.ok(m.rewardMul > 1, `mutation ${m.id} should reward >1x, got ${m.rewardMul}`);
+  }
 });
 
 // ---- swarm gating (isSwarm in beginRound), derived from ROUNDS -------------

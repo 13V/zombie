@@ -24,6 +24,12 @@ export interface SpecialRound {
   biasTo?: string[];
   /** Signal to main.ts: drop something good when the round clears. */
   guaranteedDrop?: boolean;
+  /** MUTATION rounds: a global rule stamped onto every zombie as it spawns
+   *  (see applyMutator). null/undefined on non-mutation rounds. */
+  mutator?: "frenzy" | "volatile" | "inferno" | "armored";
+  /** Score + gold multiplier this round pays out (mutation rounds reward risk).
+   *  main folds it into points/gold alongside the Curse + Rampage multipliers. */
+  rewardMul?: number;
 }
 
 /**
@@ -115,6 +121,12 @@ export class RoundManager {
     return 1 + (this.curse - 1) * CURSE.rewardScale;
   }
 
+  /** Bonus score/gold multiplier from the active MUTATION round (1 on a plain
+   *  round). main multiplies this into kill rewards. */
+  get specialRewardMul(): number {
+    return this.special?.rewardMul ?? 1;
+  }
+
   /** Nudge the Curse up/down by `dir` steps, clamped to [min,max]. Returns the
    *  new value. Intended for the between-rounds HUD slider. */
   adjustCurse(dir: number): number {
@@ -148,6 +160,21 @@ export class RoundManager {
         name: "HOUND ROUND",
         tint: sp.houndTint,
         restrictTo: [fastest],
+        guaranteedDrop: true,
+      };
+    }
+    // Mutation rounds: a global horde rule (Blood Moon / Volatile / Inferno /
+    // Juggernaut) that changes how the round PLAYS, with bonus rewards + a chest
+    // on clear. Checked before showcases so it wins ties; hound (above) still
+    // takes precedence on the rare LCM collision.
+    if (n % sp.mutationEvery === 0) {
+      const m = sp.mutations[(n / sp.mutationEvery - 1) % sp.mutations.length];
+      return {
+        id: m.id,
+        name: m.name,
+        tint: m.tint,
+        mutator: m.mutator,
+        rewardMul: m.rewardMul,
         guaranteedDrop: true,
       };
     }
@@ -322,8 +349,37 @@ export class RoundManager {
     } else {
       z.spawn(this.edge, this.curHealth, this.curSpeed, this.pickType());
     }
-    this.maybeAffix(z);
+    // MUTATION rounds stamp a global rule onto each zombie. Inferno forces the
+    // Blazing affix itself, so it skips the normal affix roll; the rest still
+    // roll elites on top of the mutation.
+    const mut = this.special?.mutator;
+    if (mut) this.applyMutator(z, mut);
+    if (mut !== "inferno") this.maybeAffix(z);
     this.toSpawn--;
+  }
+
+  /** Stamp a mutation round's global rule onto a freshly-spawned zombie. */
+  private applyMutator(z: Zombie, mut: NonNullable<SpecialRound["mutator"]>) {
+    switch (mut) {
+      case "frenzy": // Blood Moon: a fast, fragile glass horde that floods you.
+        z.speed *= 1.35;
+        z.health *= 0.6;
+        z.maxHealth = z.health;
+        break;
+      case "volatile": // every corpse detonates (main reads z.explodes on death).
+        z.explodes = true;
+        z.blastRadius = Math.max(z.blastRadius, 2.4);
+        z.blastDamage = Math.max(z.blastDamage, this.curHealth * 0.5);
+        break;
+      case "inferno": // the whole horde is on fire — burn trails everywhere.
+        z.applyAffix("blazing");
+        break;
+      case "armored": // Juggernaut wave: a slow, very tanky wall.
+        z.speed *= 0.78;
+        z.health *= 2.0;
+        z.maxHealth = z.health;
+        break;
+    }
   }
 
   /** Count of currently-alive affixed zombies (cap + HUD use). */
