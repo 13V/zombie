@@ -822,17 +822,30 @@ body.touch .controls { display: none; }
   justify-content: center;
   gap: 14px;
   text-align: center;
+  /* Scroll when the content is taller than the viewport so the Play/Host
+     buttons are never trapped below the fold (start menu can get tall). */
+  overflow-y: auto;
+  padding: 24px 16px;
   /* Warm, soft scrim so the cozy scene glows through gently. */
   background: radial-gradient(ellipse at 50% 38%, rgba(58, 44, 30, 0.42), rgba(34, 26, 18, 0.62));
   backdrop-filter: blur(3px);
   pointer-events: auto;
   animation: overlay-in 0.4s ease both;
 }
+/* The start menu is the tall one (intro + shop + controls + buttons). Anchor it
+   to the top so it scrolls cleanly and the Play/Host buttons stay reachable —
+   centering an overflowing flex column hides the overflow above the scroll top. */
+#overlay-start { justify-content: flex-start; }
 @keyframes overlay-in {
   from { opacity: 0; backdrop-filter: blur(0px); }
   to   { opacity: 1; backdrop-filter: blur(3px); }
 }
 .overlay.hidden { display: none; }
+.overlay .tagline { font-size: 14px; max-width: 460px; opacity: 0.85; margin: 4px 0 2px; }
+.controls-fold { margin-top: 6px; color: #fff7e6; opacity: 0.8; }
+.controls-fold > summary { cursor: pointer; font-size: 13px; opacity: 0.7; list-style: none; }
+.controls-fold > summary::-webkit-details-marker { display: none; }
+.controls-fold > summary::before { content: "⌨ "; }
 .overlay h1 {
   font-size: clamp(40px, 8vw, 84px);
   margin: 0;

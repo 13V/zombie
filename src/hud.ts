@@ -144,11 +144,19 @@ export class Hud {
 
       <div class="overlay" id="overlay-start">
         <h1>TINY <span class="dead">DEAD</span></h1>
-        <p>A cozy little world. Ten flavors of undead — from shamblers to
-           armored hulks and the Abomination. Clear rubble, spin for wild guns,
-           chew Bubblegum, and grab the loot the dead drop. Every run earns
-           <b>Essence</b> — spend it below to come back stronger.</p>
+        <p class="tagline">A cozy little world overrun by ten flavors of undead. Survive, loot, spin for wild guns — every run earns <b>Essence</b>.</p>
         <div class="bestline" id="best-line"></div>
+        <!-- Primary actions FIRST so they're always visible without scrolling past the shop. -->
+        <button class="play" id="btn-start">Play Solo</button>
+        <button class="play secondary" id="btn-island">🏝️ Enter Island</button>
+        <div class="coop">
+          <button class="coop-btn" id="btn-host">Host Co-op</button>
+          <div class="join-row">
+            <input id="join-code" maxlength="4" placeholder="CODE" autocomplete="off" />
+            <button class="coop-btn" id="btn-join">Join</button>
+          </div>
+        </div>
+        <div class="lobby-status" id="lobby-status"></div>
         <div class="shop">
           <div class="shop-bar">
             <div class="shop-tabs">
@@ -169,30 +177,23 @@ export class Hud {
           <div class="tab hidden" id="tab-pets"></div>
         </div>
         <div id="daily-board"></div>
-        <div class="controls">
-          <span class="k">WASD</span><span>Move</span>
-          <span class="k">Mouse</span><span>Aim</span>
-          <span class="k">Click</span><span>Fire</span>
-          <span class="k">R</span><span>Reload</span>
-          <span class="k">E</span><span>Buy / interact</span>
-          <span class="k">Q</span><span>Swap weapon</span>
-          <span class="k">P</span><span>Pause</span>
-          <span class="k">M</span><span>Mute</span>
-          <span class="k">F</span><span>Nuke (when charged)</span>
-          <span class="k">T</span><span>Emote (island)</span>
-          <span class="k">R</span><span>Rotate part (build)</span>
-          <span class="k">Z</span><span>Undo (build)</span>
-        </div>
-        <button class="play" id="btn-island">🏝️ Enter Island</button>
-        <button class="play secondary" id="btn-start">Play Solo</button>
-        <div class="coop">
-          <button class="coop-btn" id="btn-host">Host Co-op</button>
-          <div class="join-row">
-            <input id="join-code" maxlength="4" placeholder="CODE" autocomplete="off" />
-            <button class="coop-btn" id="btn-join">Join</button>
+        <details class="controls-fold">
+          <summary>Controls</summary>
+          <div class="controls">
+            <span class="k">WASD</span><span>Move</span>
+            <span class="k">Mouse</span><span>Aim</span>
+            <span class="k">Click</span><span>Fire</span>
+            <span class="k">R</span><span>Reload</span>
+            <span class="k">E</span><span>Buy / interact</span>
+            <span class="k">Q</span><span>Swap weapon</span>
+            <span class="k">P</span><span>Pause</span>
+            <span class="k">M</span><span>Mute</span>
+            <span class="k">F</span><span>Nuke (when charged)</span>
+            <span class="k">T</span><span>Emote (island)</span>
+            <span class="k">R</span><span>Rotate part (build)</span>
+            <span class="k">Z</span><span>Undo (build)</span>
           </div>
-        </div>
-        <div class="lobby-status" id="lobby-status"></div>
+        </details>
         <div class="wallet-row">
           <button class="coop-btn wallet" id="btn-wallet">Connect Wallet</button>
           <span class="wallet-bal" id="wallet-bal"></span>
