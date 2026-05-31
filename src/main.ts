@@ -192,6 +192,8 @@ class Game implements GameApi {
   private camTarget = new THREE.Vector3();
   private shake = 0;
   private _v2 = new THREE.Vector3();
+  // reused camera offset (CAMERA.offset is constant) — avoids a per-frame Vector3 alloc
+  private _camOffset = new THREE.Vector3(CAMERA.offset.x, CAMERA.offset.y, CAMERA.offset.z);
   // juice: transient camera punch-zoom (0 = none) + last combo tier shown
   private zoomPunch = 0;
   private lastComboTier = 1;
@@ -2434,9 +2436,7 @@ class Game implements GameApi {
   }
 
   private updateCamera(dt: number) {
-    this._v2.copy(this.player.pos).add(
-      new THREE.Vector3(CAMERA.offset.x, CAMERA.offset.y, CAMERA.offset.z),
-    );
+    this._v2.copy(this.player.pos).add(this._camOffset);
     const k = 1 - Math.exp(-CAMERA.follow * dt);
     this.camera.position.lerp(this._v2, k);
 
