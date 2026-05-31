@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import { voxelMaterial, glowMaterial, toyMaterial, VOX, COLORS } from "./palette";
+import { VoxelChar } from "./voxelChar";
+import { makeBubble, makeLabel } from "./islandnet";
 
 /**
  * The Island — a persistent social hub / lobby the player spawns into (think a
@@ -34,6 +36,11 @@ export class Island {
   private water?: THREE.Mesh;
   private beacons: THREE.Mesh[] = [];
   private t = 0;
+  // interactive pads, tracked so they can bounce-scale + brighten when stood on
+  private pads: { id: string; group: THREE.Group; ring: THREE.Mesh; pos: THREE.Vector3; lit: number }[] = [];
+  // greeter NPC (static voxel figure near spawn) + the floating "go here" arrow
+  private greeter?: VoxelChar;
+  private arrow?: THREE.Mesh;
   /** Plot anchor points so houses can be (re)built onto them by main. */
   readonly plots: { index: number; pos: THREE.Vector3 }[] = [];
 
@@ -44,6 +51,7 @@ export class Island {
     this.buildPlaza();
     this.buildZones();
     this.buildPlots();
+    this.buildGreeter();
     scene.add(this.group);
     this.group.visible = false; // shown only while in the island state
   }
@@ -88,6 +96,42 @@ export class Island {
       m.emissiveIntensity = 0.8 + (Math.sin(this.t * 2.4) + 1) * 0.5;
       b.rotation.y += dt * 1.2;
     }
+    // greeter waves on a loop (re-trigger the one-shot when it finishes)
+    if (this.greeter) {
+      if (!this.greeter.emoting) this.greeter.emote("wave");
+      this.greeter.update(dt);
+    }
+    if (this.arrow) {
+      this.arrow.position.y = 3.1 + Math.sin(this.t * 2.2) * 0.18;
+      this.arrow.rotation.y += dt * 1.5;
+    }
+  }
+
+  /**
+   * A friendly static greeter NPC near spawn with a welcome speech bubble + name
+   * label, plus a floating arrow over the host pad pointing players at the action.
+   */
+  private buildGreeter() {
+    const npc = new VoxelChar({ body: 0x6e4a9e, head: COLORS.playerAccent, eye: 0x222222, hat: 0xffd24a, gun: false });
+    npc.root.position.set(2.6, 0, 6.2); // beside the spawn point, facing the plaza
+    npc.root.rotation.y = Math.PI; // look south toward arriving players
+    npc.play("idle");
+    npc.emote("wave"); // perpetual friendly wave (sit/wave loop handled by emote)
+    this.greeter = npc;
+    const label = makeLabel("Guide");
+    npc.root.add(label);
+    const bubble = makeBubble("Walk to the red portal to fight — or hang out! Press T to wave 👋");
+    bubble.scale.set(4.2, 1.4, 1);
+    bubble.position.set(0, 3.1, 0);
+    npc.root.add(bubble);
+    this.group.add(npc.root);
+
+    // floating arrow over the host pad (host pad sits at z = -5.5)
+    const cone = new THREE.ConeGeometry(0.5, 1.0, 4);
+    cone.rotateX(Math.PI); // point down
+    this.arrow = new THREE.Mesh(cone, glowMaterial(0xff5a3a, 1.2));
+    this.arrow.position.set(0, 3.1, -5.5);
+    this.group.add(this.arrow);
   }
 
   // ---- world building -----------------------------------------------------
@@ -198,7 +242,26 @@ export class Island {
     pad.add(ring, beacon);
     pad.position.copy(pos);
     this.group.add(pad);
+    this.pads.push({ id, group: pad, ring, pos: pos.clone(), lit: 0 });
     this.zones.push({ id, kind, pos: pos.clone(), radius: 2.2, label });
+  }
+
+  /**
+   * Reactive pads — the pad nearest the player bounce-scales up + brightens its
+   * ring while stood on, easing back to rest otherwise. Cheap (a few pads).
+   */
+  reactPads(playerPos: THREE.Vector3, dt: number) {
+    for (const p of this.pads) {
+      const dx = p.pos.x - playerPos.x;
+      const dz = p.pos.z - playerPos.z;
+      const on = dx * dx + dz * dz < 2.2 * 2.2;
+      // ease the "lit" amount toward the target (1 when stood on, else 0)
+      p.lit += ((on ? 1 : 0) - p.lit) * Math.min(1, dt * 8);
+      const s = 1 + p.lit * 0.18 + (on ? Math.sin(this.t * 8) * 0.04 : 0);
+      p.group.scale.set(s, 1 + p.lit * 0.12, s);
+      const m = p.ring.material as THREE.MeshStandardMaterial;
+      m.emissiveIntensity = 0.9 + p.lit * 1.6;
+    }
   }
 
   /** Lay out house plots in a ring behind the plaza; main fills them with houses. */

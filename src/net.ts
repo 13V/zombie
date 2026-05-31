@@ -179,9 +179,30 @@ export interface PresenceMsg {
   skin: number; // body color so peers look right
   /** Optional short display name shown above the head. */
   name?: string;
+  /** Head color (cosmetic skin) so peers render the right head, not a default. */
+  head?: number;
+  /** True while this player has the emote wheel / quick-chat menu open (shows a
+   *  "…" thinking bubble to peers, like a typing indicator). */
+  menuOpen?: boolean;
 }
 
-export type NetMsg = SnapMsg | ShotMsg | InputMsg | ToastMsg | PresenceMsg;
+/** Island social — a played emote (wave/dance/sit/cheer). Broadcast once on
+ *  selection; peers play the matching VoxelChar emote on the sender's figure. */
+export interface EmoteMsg {
+  t: "emote";
+  /** Emote id (see emotes.ts EMOTES) — e.g. "wave" | "dance" | "sit" | "cheer". */
+  id: string;
+}
+
+/** Island social — a preset safe-phrase quick-chat. Broadcast once; peers show
+ *  it as a speech bubble above the sender's head for a few seconds. NO free text. */
+export interface ChatMsg {
+  t: "chat";
+  /** Preset phrase text (chosen from a fixed list — never user-typed). */
+  text: string;
+}
+
+export type NetMsg = SnapMsg | ShotMsg | InputMsg | ToastMsg | PresenceMsg | EmoteMsg | ChatMsg;
 
 // ---- transport envelopes (to/from the relay server) ----
 
