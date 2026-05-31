@@ -4,7 +4,16 @@
  * letter grade, and a per-criterion breakdown so the results panel can explain
  * it. No Three.js / DOM here — keep it pure so it's unit-testable.
  */
-import { HouseData, HOUSE_PARTS, PartCat } from "./house";
+import type { HouseData, PartCat, PartKind } from "./house";
+
+// Category lookup kept local (type-only import above) so this module stays a
+// pure, dependency-free, unit-testable rater — no Three.js pulled in.
+const KIND_CAT: Partial<Record<PartKind, PartCat>> = {
+  floor: "structure", wall: "structure", roof: "structure", door: "structure", window: "structure", fence: "structure",
+  bed: "furniture", table: "furniture", chair: "furniture", rug: "furniture",
+  tree: "yard", lamp: "yard", flower: "yard", lamppost: "yard", bush: "yard", path: "yard",
+  banner: "showoff", statue: "showoff", perch: "showoff", trophy: "showoff",
+};
 
 export interface RatingLine {
   label: string;
@@ -18,7 +27,7 @@ export interface HouseRating {
   breakdown: RatingLine[];
 }
 
-const catOf = (kind: string): PartCat | undefined => HOUSE_PARTS.find((d) => d.kind === kind)?.cat;
+const catOf = (kind: PartKind): PartCat | undefined => KIND_CAT[kind];
 
 /** Rate a house. Pure + deterministic. */
 export function rateHouse(data: HouseData): HouseRating {
