@@ -9,8 +9,14 @@
 
 import type { WebSocket } from 'ws';
 
-/** Maximum number of members allowed in a single room (host + up to 3 guests). */
+/** Maximum number of members allowed in a co-op run room (host + up to 3 guests). */
 export const MAX_MEMBERS = 4;
+
+/** Capacity of a social island instance (Roblox-style shared lobby). */
+export const ISLAND_CAP = 16;
+
+/** Fixed code prefix for island instances; numbered instances spill over. */
+export const ISLAND_PREFIX = 'ISLE';
 
 /** The host is always assigned this id within a room. */
 export const HOST_ID = 1;
@@ -40,6 +46,10 @@ export interface Room {
   members: Map<number, Member>;
   /** Monotonic id counter; ids are assigned and never reused within a room. */
   nextId: number;
+  /** Member capacity (co-op runs are small; island instances are larger). */
+  cap: number;
+  /** True for social island instances (no single authoritative host). */
+  isIsland: boolean;
 }
 
 /**
@@ -73,9 +83,41 @@ export class RoomManager {
       code,
       members: new Map([[HOST_ID, host]]),
       nextId: HOST_ID + 1,
+      cap: MAX_MEMBERS,
+      isIsland: false,
     };
     this.rooms.set(code, room);
     return { room, member: host };
+  }
+
+  /**
+   * Join (or auto-create) a social island instance. Instances are filled in
+   * order; once one reaches {@link ISLAND_CAP} a new numbered instance opens, so
+   * strangers always land somewhere with room — Roblox-style server hopping.
+   */
+  joinIsland(socket: WebSocket): { room: Room; member: Member } {
+    // find an existing island instance with space
+    for (const room of this.rooms.values()) {
+      if (room.isIsland && room.members.size < room.cap) {
+        const member: Member = { id: room.nextId++, socket, isAlive: true };
+        room.members.set(member.id, member);
+        return { room, member };
+      }
+    }
+    // none with space: open the next numbered instance
+    let n = 1;
+    while (this.rooms.has(`${ISLAND_PREFIX}${n}`)) n++;
+    const code = `${ISLAND_PREFIX}${n}`;
+    const member: Member = { id: HOST_ID, socket, isAlive: true };
+    const room: Room = {
+      code,
+      members: new Map([[HOST_ID, member]]),
+      nextId: HOST_ID + 1,
+      cap: ISLAND_CAP,
+      isIsland: true,
+    };
+    this.rooms.set(code, room);
+    return { room, member };
   }
 
   /** Look up a room by code. Codes are normalized to uppercase. */
@@ -96,7 +138,7 @@ export class RoomManager {
   ): { ok: true; room: Room; member: Member } | { ok: false; reason: 'not-found' | 'full' } {
     const room = this.getRoom(code);
     if (!room) return { ok: false, reason: 'not-found' };
-    if (room.members.size >= MAX_MEMBERS) return { ok: false, reason: 'full' };
+    if (room.members.size >= room.cap) return { ok: false, reason: 'full' };
 
     const member: Member = { id: room.nextId++, socket, isAlive: true };
     room.members.set(member.id, member);

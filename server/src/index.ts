@@ -145,6 +145,8 @@ function handleMessage(socket: WebSocket, msg: { t: string; [k: string]: unknown
       return onHost(socket);
     case 'join':
       return onJoin(socket, msg);
+    case 'island':
+      return onIsland(socket);
     case 'relay':
       return onRelay(socket, msg);
     default:
@@ -196,6 +198,26 @@ function onJoin(socket: WebSocket, msg: { [k: string]: unknown }): void {
   send(socket, { t: 'joined', room: room.code, id: member.id, host: false });
 
   // Notify every existing member (everyone except the joiner) of the new peer.
+  for (const other of rooms.others(room, member.id)) {
+    send(other.socket, { t: 'peer-join', id: member.id });
+  }
+}
+
+/** Handle `{ t: 'island' }` — join (or open) a shared social island instance. */
+function onIsland(socket: WebSocket): void {
+  const s = state.get(socket);
+  if (!s) return;
+  if (s.room) {
+    sendError(socket, 'already in a room');
+    return;
+  }
+  const { room, member } = rooms.joinIsland(socket);
+  s.room = room;
+  s.member = member;
+  // Reply with the instance code + the joiner's id + who's already here, so the
+  // client can spawn existing peers immediately (not just future joiners).
+  const peers = rooms.others(room, member.id).map((m) => m.id);
+  send(socket, { t: 'island-joined', room: room.code, id: member.id, peers });
   for (const other of rooms.others(room, member.id)) {
     send(other.socket, { t: 'peer-join', id: member.id });
   }

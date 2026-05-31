@@ -25,6 +25,7 @@ import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
 import { Island, IslandZone } from "./island";
+import { IslandNet } from "./islandnet";
 import { Sparks } from "./particles";
 import { Pet, PETS, findAnyPet, petLevelCost, isTrialComplete, RARITY_COLOR, type Rarity, type PetDef } from "./pets";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
@@ -109,6 +110,7 @@ class Game implements GameApi {
   private touch?: TouchControls;
   private arena: Arena;
   private island!: Island;
+  private islandNet?: IslandNet;
   private player: Player;
   private bullets: BulletSystem;
   private rounds: RoundManager;
@@ -817,6 +819,7 @@ class Game implements GameApi {
   }
 
   private async hostGame() {
+    this.disconnectIslandPresence(); // free the island socket before co-op
     warmServer(); // poke the dyno in case it's cold-starting
     const stop = this.connectingTicker("Connecting");
     try {
@@ -844,6 +847,7 @@ class Game implements GameApi {
       this.hud.setLobbyStatus("Enter a room code");
       return;
     }
+    this.disconnectIslandPresence(); // free the island socket before co-op
     warmServer();
     const stop = this.connectingTicker("Joining");
     try {
@@ -1126,10 +1130,38 @@ class Game implements GameApi {
     this.player.pos.set(0, 0, 6); // stand just south of the plaza
     this.player.group.position.copy(this.player.pos);
     this.hud.setIslandMode(true);
+    this.connectIslandPresence();
+  }
+
+  /** Join the shared island instance so other players appear (best-effort). */
+  private async connectIslandPresence() {
+    if (this.islandNet || this.net) return; // already social, or in a co-op room
+    warmServer();
+    try {
+      this.net = new NetClient();
+      this.net.onClose = () => this.disconnectIslandPresence();
+      await this.net.island();
+      const skin = findSkin(this.save.skin);
+      this.islandNet = new IslandNet(this.net, this.scene, skin.body);
+      this.hud.toast("Island: you'll see other players here");
+    } catch {
+      // presence is optional — the hub still works solo if the relay is asleep
+      this.net?.close();
+      this.net = undefined;
+      this.hud.setLobbyStatus("Island presence offline (relay asleep) — hub still works.");
+    }
+  }
+
+  private disconnectIslandPresence() {
+    this.islandNet?.dispose();
+    this.islandNet = undefined;
+    this.net?.close();
+    this.net = undefined;
   }
 
   /** Leave the island back to the classic menu (arena visible behind it). */
   private leaveIsland() {
+    this.disconnectIslandPresence();
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.hud.setIslandMode(false);
@@ -1145,6 +1177,12 @@ class Game implements GameApi {
     this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, false);
     this.island.clamp(this.player.pos);
     this.player.group.position.copy(this.player.pos);
+
+    // broadcast my pose + render other players on this island instance
+    this.islandNet?.update(dt, {
+      x: this.player.pos.x, z: this.player.pos.z,
+      ry: this.player.group.rotation.y, moving: axis.x !== 0 || axis.y !== 0,
+    });
 
     // proximity prompt for the nearest interactive pad / plot
     const near = this.island.nearestZone(this.player.pos);

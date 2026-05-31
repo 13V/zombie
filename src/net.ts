@@ -169,7 +169,19 @@ export interface InputMsg {
   interact: boolean;
 }
 
-export type NetMsg = SnapMsg | ShotMsg | InputMsg | ToastMsg;
+/** Island presence — broadcast each tick so peers can render this player. */
+export interface PresenceMsg {
+  t: "presence";
+  x: number;
+  z: number;
+  ry: number; // facing (yaw)
+  moving: boolean;
+  skin: number; // body color so peers look right
+  /** Optional short display name shown above the head. */
+  name?: string;
+}
+
+export type NetMsg = SnapMsg | ShotMsg | InputMsg | ToastMsg | PresenceMsg;
 
 // ---- transport envelopes (to/from the relay server) ----
 
@@ -179,7 +191,8 @@ interface SrvPeerJoin { t: "peer-join"; id: number; }
 interface SrvPeerLeave { t: "peer-leave"; id: number; }
 interface SrvRelay { t: "relay"; from: number; data: NetMsg; }
 interface SrvError { t: "error"; msg: string; }
-type SrvMsg = SrvHosted | SrvJoined | SrvPeerJoin | SrvPeerLeave | SrvRelay | SrvError;
+interface SrvIslandJoined { t: "island-joined"; room: string; id: number; peers: number[]; }
+type SrvMsg = SrvHosted | SrvJoined | SrvPeerJoin | SrvPeerLeave | SrvRelay | SrvError | SrvIslandJoined;
 
 export type NetRole = "host" | "guest";
 
@@ -194,6 +207,8 @@ export class NetClient {
   room = "";
   readonly peers = new Set<number>();
   connected = false;
+  /** True when connected to a shared social island instance (no single host). */
+  isIsland = false;
 
   // callbacks (assigned by the game layer)
   onPeerJoin?: (id: number) => void;
@@ -245,6 +260,30 @@ export class NetClient {
         }
       };
       ws.send(JSON.stringify({ t: "join", room }));
+    });
+  }
+
+  /** Join (or auto-open) a shared social island instance. Resolves with my id +
+   *  the ids of peers already present, so we can spawn them immediately. */
+  island(): Promise<{ id: number; peers: number[] }> {
+    return this.open((ws, resolve, reject) => {
+      ws.onmessage = (ev) => {
+        const m = this.parse(ev.data);
+        if (!m) return;
+        if (m.t === "island-joined") {
+          this.id = m.id;
+          this.role = "guest";
+          this.room = m.room;
+          this.isIsland = true;
+          this.connected = true;
+          for (const p of m.peers) this.peers.add(p);
+          this.ws!.onmessage = (e) => this.handle(e);
+          resolve({ id: m.id, peers: m.peers });
+        } else if (m.t === "error") {
+          reject(new Error(m.msg));
+        }
+      };
+      ws.send(JSON.stringify({ t: "island" }));
     });
   }
 
@@ -309,8 +348,8 @@ export class NetClient {
       case "peer-leave":
         this.peers.delete(m.id);
         this.onPeerLeave?.(m.id);
-        if (m.id === 1 && this.role === "guest") {
-          // host left → room is gone
+        if (m.id === 1 && this.role === "guest" && !this.isIsland) {
+          // host left → co-op room is gone (island instances have no host)
           this.connected = false;
           this.onClose?.("Host left");
         }
