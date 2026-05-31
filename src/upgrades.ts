@@ -73,6 +73,13 @@ export const RUN_UPGRADES: RunUpgrade[] = [
   { id: "annihilator", name: "Annihilator", desc: "+80% dmg, +40% crit dmg, +1 pierce", icon: "☄️", color: "#ff5a3a", tier: "legendary", apply: (m) => { m.damageMul += 0.8; m.critMul += 0.4; m.pierceBonus += 1; } },
   { id: "tempest", name: "Tempest", desc: "+3 projectiles, +30% fire rate", icon: "🌪️", color: "#9fe8ff", tier: "legendary", apply: (m) => { m.bonusPellets += 3; m.fireRateMul += 0.3; } },
   { id: "vampirelord", name: "Vampire Lord", desc: "+10 lifesteal, +25 heal nova, +40 HP", icon: "🧛", color: "#ff4a6a", tier: "legendary", apply: (m) => { m.lifeSteal += 10; m.healNova += 25; m.maxHealthBonus += 40; } },
+
+  // ---- build-defining "transform" picks: change the run's whole identity ----
+  // The flag marks the build; the bumps below give the effect a guaranteed FLOOR
+  // (re-asserted at pick-time in main.ts applyUpgrade, idempotent). Kept inside
+  // the late-game envelope: +1 pierce / modest splash / +1 chain, not a stack.
+  { id: "tf_apex", name: "Apex Munitions", desc: "TRANSFORM: every shot pierces AND explodes", icon: "💥", color: "#ff7a3a", tier: "legendary", apply: (m) => { m.pierceExplode = 1; m.pierceBonus = Math.max(m.pierceBonus, 1) + 1; m.explosiveRadius = Math.max(m.explosiveRadius, 1.4); } },
+  { id: "tf_tesla", name: "Tesla Conversion", desc: "TRANSFORM: crits arc chain-lightning", icon: "⚡", color: "#9fe8ff", tier: "legendary", apply: (m) => { m.critChain = 1; m.critChance = Math.min(1, m.critChance + 0.15); m.chainCount = Math.max(m.chainCount, 1) + 1; } },
 ];
 
 /**

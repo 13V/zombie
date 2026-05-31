@@ -743,6 +743,18 @@ class Game implements GameApi {
     if (!u) return;
     this.levelPicking = true;
     u.apply(this.mods);
+    // ── TRANSFORM picks (ADD): re-assert the pierce+explode / crit+chain floors
+    // in the mod-apply path so the build identity holds even if later cards leave
+    // a field at 0. Capped to the late-game envelope (+1 pierce / modest splash /
+    // +1 chain) — never a runaway stack. Idempotent. ──
+    if (this.mods.pierceExplode > 0) {
+      this.mods.pierceBonus = Math.max(this.mods.pierceBonus, 1);
+      this.mods.explosiveRadius = Math.max(this.mods.explosiveRadius, 1.4);
+    }
+    if (this.mods.critChain > 0) {
+      this.mods.chainCount = Math.max(this.mods.chainCount, 1);
+      this.mods.critChance = Math.max(this.mods.critChance, 0.15);
+    }
     // a few upgrades change live state immediately
     this.player.maxHealth = PLAYER.maxHealth + this.mods.maxHealthBonus;
     this.player.heal(25); // small reward heal on every pick
