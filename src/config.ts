@@ -48,17 +48,23 @@ export const ROUNDS = {
   countPerRound: 4, // extra zombies per round
   // Per-round zombie COUNT is CAPPED so high rounds stay short (the key to
   // reaching R100-200 in an hour or two). Past the cap, difficulty comes from
-  // HP + elites + speed, NOT from ever-more bodies — otherwise R200 would spawn
+  // HP + elites + speed, NOT from infinite bodies — otherwise R200 would spawn
   // 800 zombies and take minutes. count = min(countCap, base + (n-1)*perRound).
-  countCap: 50, // max zombies a round will spawn (reached ~R12)
+  //
+  // KEY: countCap is set ABOVE the alive ceiling on purpose. That's what makes
+  // late game a real WALL of zombies — as you mow the front rank down, the spawn
+  // queue refills the screen back to curMaxAlive instantly, so the horde never
+  // thins until the round's whole budget is spent. (A countCap *below* the alive
+  // cap would starve it — the screen could never fill.)
+  countCap: 200, // max zombies a round will spawn (reached ~R50) — feeds a packed screen
   intermission: 2.2, // breather between rounds (seconds) — was 4, snappier pacing
   // The three ceilings are ROUND-SCALED: a rising alive-cap + faster spawns keep
-  // the screen full even as pets clear. Aggressive so late game stays a wall.
-  maxAliveBase: 32, // cap through the inflection round
-  maxAlivePerRound: 6, // +per round past inflection
-  maxAliveCap: 160, // desktop ceiling (mobile uses a lower one — see main.ts)
+  // the screen FULL even as pets clear. Aggressive so late game stays a wall.
+  maxAliveBase: 40, // on-screen cap through the inflection round (was 32 — busier mid-game)
+  maxAlivePerRound: 9, // +per round past inflection (was 6 — reach the ceiling by ~R22, not R30)
+  maxAliveCap: 170, // desktop ceiling — a genuinely packed screen (mobile uses a lower one, main.ts)
   spawnIntervalBase: 0.7, // seconds between spawns through inflection (was 0.9 — faster early too)
-  spawnIntervalMin: 0.14, // floor of the spawn-interval ramp (was 0.22 — a near-firehose late)
+  spawnIntervalMin: 0.11, // floor of the spawn-interval ramp — a firehose that keeps the wall topped up
   spawnIntervalDecay: 0.08, // -per round past inflection (reach the floor by ~R16)
   swarmEvery: 7, // every Nth round is a fast "swarm/dog" round
 };
