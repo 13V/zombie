@@ -218,25 +218,36 @@ export class RoundManager {
    * elites get a small ramp from R10.
    */
   private pickType(): ZombieType {
+    // Themed showcase rounds bias the pick hard toward the theme's type ids
+    // (still allowing a thin spread of others so the horde reads as a horde).
+    const bias = this.special?.biasTo;
     const eliteBonus = Math.max(0, Math.min(0.35, (this.round - 9) * 0.03));
     // Shambler always keeps a baseline slice that shrinks as rounds climb but
-    // never vanishes, so basics are always part of the horde.
-    const shamblerWeight = Math.max(0.25, 0.9 - (this.round - 1) * 0.04);
+    // never vanishes, so basics are always part of the horde. On a biased round
+    // the shambler share is cut right down so the theme dominates.
+    const shamblerWeight = bias ? 0.06 : Math.max(0.25, 0.9 - (this.round - 1) * 0.04);
     let total = shamblerWeight;
     for (let i = 1; i < ZOMBIE_TYPES.length; i++) {
       const t = ZOMBIE_TYPES[i];
       if (this.round < t.from) continue;
-      total += t.weight * (RoundManager.ELITE_IDS.has(t.id) ? 1 + eliteBonus : 1);
+      total += this.typeWeight(t, eliteBonus, bias);
     }
     let r = Math.random() * total;
     if ((r -= shamblerWeight) < 0) return ZOMBIE_TYPES[0];
     for (let i = 1; i < ZOMBIE_TYPES.length; i++) {
       const t = ZOMBIE_TYPES[i];
       if (this.round < t.from) continue;
-      const w = t.weight * (RoundManager.ELITE_IDS.has(t.id) ? 1 + eliteBonus : 1);
+      const w = this.typeWeight(t, eliteBonus, bias);
       if ((r -= w) < 0) return t;
     }
     return ZOMBIE_TYPES[0];
+  }
+
+  /** Sampling weight for a type, folding in the elite ramp + any showcase bias. */
+  private typeWeight(t: ZombieType, eliteBonus: number, bias: string[] | undefined): number {
+    let w = t.weight * (RoundManager.ELITE_IDS.has(t.id) ? 1 + eliteBonus : 1);
+    if (bias) w *= bias.includes(t.id) ? 8 : 0.15; // heavy thumb on the scale
+    return w;
   }
 
   private spawnOne(arena: Arena) {
@@ -248,7 +259,14 @@ export class RoundManager {
       this.zombies.push(z);
     }
     arena.randomEdgePoint(this.edge);
-    if (this.isSwarm) {
+    const restrict = this.special?.restrictTo;
+    if (restrict && restrict.length) {
+      // Hound Round: roster locked to the fastest type — lean HP, extra pace, so
+      // it reads as a relentless pack rather than a damage wall.
+      const id = restrict[(Math.random() * restrict.length) | 0];
+      const t = ZOMBIE_TYPES.find((q) => q.id === id) ?? ZOMBIE_TYPES[0];
+      z.spawn(this.edge, this.curHealth * 0.55, this.curSpeed * 1.25, t);
+    } else if (this.isSwarm) {
       // swarm round: weak + fast, from anywhere (full surround)
       z.spawn(this.edge, this.curHealth * 0.5, this.curSpeed * 1.35, ZOMBIE_TYPES[0]);
     } else {
