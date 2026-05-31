@@ -309,6 +309,16 @@ class Game implements GameApi {
         const tag = this.rounds.isBossRound ? " — BOSS" : this.rounds.isSwarmRound ? " — SWARM!" : "";
         this.hud.toast(`Round ${n}${tag}`);
       }
+      // Special round: loud banner + screen tint + a sting; plain rounds clear it.
+      const sp = this.rounds.specialRound;
+      if (sp) {
+        this.hud.showRoundBanner(sp.name, sp.tint ?? "#ffd24a");
+        this.hud.setScreenTint(sp.tint ?? null);
+        this.audio.roundStart(); // reuse the existing round sting (no new audio API)
+        this.shake = Math.min(0.5, this.shake + 0.25);
+      } else {
+        this.hud.setScreenTint(null);
+      }
       this.audio.roundStart();
       this.audio.setIntensity(n / 20);
     };

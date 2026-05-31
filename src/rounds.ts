@@ -1,11 +1,30 @@
 import * as THREE from "three";
-import { ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
+import { ROUNDS, SPECIAL_ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
 import { Zombie } from "./zombie";
 import { Arena } from "./arena";
 import { AssetManager } from "./assets";
 import { SpatialGrid } from "./grid";
 
 type Phase = "pre" | "active" | "intermission";
+
+/**
+ * A "special" round flavoring. `id` is stable for logic, `name` drives the loud
+ * HUD banner, `tint` (CSS color) recolors the screen/fog while it's live, and
+ * `restrictTo`/`biasTo` reshape the roster (see pickType). `guaranteedDrop`
+ * tells the integrator to grant a good drop on clear (drops are another agent's
+ * domain — we only raise the flag).
+ */
+export interface SpecialRound {
+  id: string;
+  name: string;
+  tint?: string;
+  /** Only spawn these type ids (the whole roster for this round). */
+  restrictTo?: string[];
+  /** Heavily favor these type ids in the weighted pick (but still allow others). */
+  biasTo?: string[];
+  /** Signal to main.ts: drop something good when the round clears. */
+  guaranteedDrop?: boolean;
+}
 
 /**
  * Owns the zombie pool and drives the round loop: spawn a budget of zombies,
@@ -32,6 +51,9 @@ export class RoundManager {
   maxAliveCeiling = ROUNDS.maxAliveCap;
 
   private bossPending = false;
+
+  /** The active round's special flavoring (null on a plain round). */
+  private special: SpecialRound | null = null;
 
   onRoundStart?: (round: number) => void;
   onIntermission?: (nextRound: number) => void;
@@ -60,6 +82,69 @@ export class RoundManager {
     return this.isSwarm;
   }
 
+  /**
+   * The active special round's surfaced descriptor (id/name/tint), or null on a
+   * plain round. main.ts shows the banner + screen tint off this and reads
+   * `guaranteedDrop` to gate the hound-round reward.
+   */
+  get specialRound(): SpecialRound | null {
+    return this.special;
+  }
+
+  /**
+   * Classify a round number into its special flavoring (or null). Pure so it can
+   * be unit-tested and previewed. Boss rounds (every 5th) take precedence as
+   * Hound Rounds; showcases rotate on their own offset cadence and skip any
+   * round that's already a boss/hound round.
+   */
+  static classifySpecial(n: number): SpecialRound | null {
+    if (n <= 0) return null;
+    const sp = SPECIAL_ROUNDS;
+    // Hound Round: fastest existing type only, themed tint, guaranteed drop.
+    if (n % sp.houndEvery === 0) {
+      const fastest = RoundManager.fastestTypeId();
+      return {
+        id: "hound",
+        name: "HOUND ROUND",
+        tint: sp.houndTint,
+        restrictTo: [fastest],
+        guaranteedDrop: true,
+      };
+    }
+    // Showcase rounds: rotate Sky Terror / Summoner Siege / Splitter Swarm.
+    if ((n + sp.showcaseOffset) % sp.showcaseEvery === 0) {
+      const idx = Math.floor((n + sp.showcaseOffset) / sp.showcaseEvery) % sp.showcases.length;
+      const sc = sp.showcases[idx];
+      const ids = RoundManager.typeIdsForRoles(sc.roles, n);
+      if (ids.length === 0) return null; // nothing eligible yet — stay plain
+      return { id: sc.id, name: sc.name, tint: sc.tint, biasTo: ids };
+    }
+    return null;
+  }
+
+  /** Id of the single fastest non-boss roster type (Hound Round roster). */
+  private static fastestTypeId(): string {
+    let best = ZOMBIE_TYPES[0];
+    for (const t of ZOMBIE_TYPES) {
+      if (t.from >= 999) continue; // skip non-spawnable internal types (splitling)
+      if (t.speedMul > best.speedMul) best = t;
+    }
+    return best.id;
+  }
+
+  /** Type ids matching a showcase's roles that are eligible by round `n`. */
+  private static typeIdsForRoles(roles: ("flying" | "summon" | "split")[], n: number): string[] {
+    return ZOMBIE_TYPES.filter((t) => {
+      if (t.from > n) return false;
+      for (const r of roles) {
+        if (r === "flying" && t.flying) return true;
+        if (r === "summon" && (t.summonInterval ?? 0) > 0) return true;
+        if (r === "split" && t.splitInto) return true;
+      }
+      return false;
+    }).map((t) => t.id);
+  }
+
   /** Kick off round 1. */
   start() {
     this.beginRound(1);
@@ -67,6 +152,9 @@ export class RoundManager {
 
   private beginRound(n: number) {
     this.round = n;
+    // Tag this round's special flavoring (null on a plain round). Surfaced to
+    // main.ts via `specialRound` for the banner + screen tint + drop flag.
+    this.special = RoundManager.classifySpecial(n);
     const inflect = ZOMBIE.hpInflection;
     const past = Math.max(0, n - inflect); // rounds past the inflection point
 
@@ -270,5 +358,6 @@ export class RoundManager {
     this.round = 0;
     this.phase = "pre";
     this.toSpawn = 0;
+    this.special = null;
   }
 }

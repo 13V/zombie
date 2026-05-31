@@ -166,3 +166,79 @@ export const GUMS: GumDef[] = [
   { id: "sugarRush", name: "Sugar Rush", short: "SPEED", duration: 25, color: 0x8fcf6f },
   { id: "fullPockets", name: "Full Pockets", short: "AMMO", duration: 0, color: 0xc792ea },
 ];
+
+// ── SPECIAL ROUNDS & DIFFICULTY ──
+// Knobs for the special-round system (rounds.ts), the elite-affix layer
+// (zombie.ts), the difficulty director, and the opt-in Curse multiplier. Added
+// as a self-contained block so the integrator can tune without touching the
+// combat/economy exports above.
+
+/** Cadence + theming for special rounds. Hound every Nth; showcases every Mth,
+ *  offset so they never collide with a hound or boss round. */
+export const SPECIAL_ROUNDS = {
+  houndEvery: 5, // every Nth round is a Hound Round (fastest type only)
+  showcaseEvery: 4, // every Mth round is a rotating themed showcase
+  showcaseOffset: 2, // phase offset so showcases dodge hound/boss rounds
+  /** Hound Round tint (CSS color) for the screen/fog wash. */
+  houndTint: "#b53a2a",
+  /** Rotating showcase themes, picked round-robin by showcase index. */
+  showcases: [
+    { id: "skyTerror", name: "SKY TERROR", tint: "#5a3a8a", roles: ["flying"] },
+    { id: "summonerSiege", name: "SUMMONER SIEGE", tint: "#3a6a4a", roles: ["summon"] },
+    { id: "splitterSwarm", name: "SPLITTER SWARM", tint: "#2f8a60", roles: ["split"] },
+  ] as { id: string; name: string; tint: string; roles: ("flying" | "summon" | "split")[] }[],
+};
+
+/** Elite affix layer: late-game zombies get a behavior affix + colored tell. */
+export const ELITE = {
+  /** Round before which no affixes appear at all. */
+  fromRound: 8,
+  /** Base fraction of eligible spawns that get an affix at fromRound. */
+  baseFraction: 0.06,
+  /** Extra fraction per round past fromRound (clamped by maxFraction). */
+  fractionPerRound: 0.015,
+  maxFraction: 0.32,
+  /** Hard cap on simultaneously-alive affixed zombies (perf + readability). */
+  maxAlive: 10,
+  /** Difficulty-coeff weight folded into the affix fraction. */
+  coeffBoost: 0.12,
+  // Per-affix tuning.
+  blazingBurnDps: 10, // burn-trail DPS to the player standing in it
+  glacialSlow: 0.45, // player slow fraction on hit
+  glacialSlowDur: 1.6,
+  glacialShatterRadius: 3.2, // freeze AoE on death
+  overloadShield: 0.5, // fraction of an extra healthbar as shield
+  overloadAoeRadius: 4.0,
+  overloadAoeDamage: 30,
+} as const;
+
+/** Continuous difficulty director: a coefficient that climbs with round + time,
+ *  surfaced as escalating zombie-themed tier names on the HUD banner. */
+export const DIFFICULTY = {
+  /** Coeff contribution per round. */
+  perRound: 0.05,
+  /** Coeff contribution per minute of run time. */
+  perMinute: 0.08,
+  /** Tiers (ascending). `at` is the coeff threshold the tier unlocks at. */
+  tiers: [
+    { at: 0.0, name: "RESTLESS", color: "#8fcf6f" },
+    { at: 0.6, name: "HUNGRY", color: "#ffd24a" },
+    { at: 1.1, name: "RAVENOUS", color: "#e8923a" },
+    { at: 1.7, name: "FERAL", color: "#ff5d8f" },
+    { at: 2.4, name: "APOCALYPSE", color: "#c0452f" },
+  ] as { at: number; name: string; color: string }[],
+};
+
+/** Opt-in Curse multiplier (risk → reward). Raising it makes enemies faster /
+ *  tankier / spawn quicker AND lifts score+loot by the same proportion. */
+export const CURSE = {
+  min: 1.0,
+  max: 3.0,
+  step: 0.25,
+  /** How much of the curse delta feeds each stat (1 = full proportional). */
+  hpScale: 1.0,
+  speedScale: 0.5, // speed is touchier — half-weight so it stays playable
+  spawnScale: 0.6, // faster spawns, but not punishingly so
+  /** Reward multiplier = 1 + (curse-1) * rewardScale. */
+  rewardScale: 1.0,
+};
