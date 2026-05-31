@@ -189,6 +189,54 @@ test("muted coerces to a strict boolean", () => {
   assert.equal(load({ muted: undefined }).muted, false);
 });
 
+// ---- v1 idle/prestige fields (migration defaults + sanitization) ----------
+
+test("missing idle fields default cleanly (version 1, zeroed currencies, blank streak/daily)", () => {
+  const s = load({ essence: 5 }); // legacy save with no idle fields
+  assert.equal(s.version, 1);
+  assert.equal(s.lastSeen, 0);
+  assert.equal(s.prestige, 0);
+  assert.equal(s.lifetimeGold, 0);
+  assert.deepEqual(s.streak, { count: 0, lastDayUtc: 0, freezes: 0 });
+  assert.deepEqual(s.daily, { dayUtc: 0, progress: {}, claimed: [] });
+});
+
+test("version clamps to >=1 even when corrupt/zero/negative", () => {
+  assert.equal(load({ version: 0 }).version, 1);
+  assert.equal(load({ version: -3 }).version, 1);
+  assert.equal(load({ version: "bad" }).version, 1);
+  assert.equal(load({ version: 2 }).version, 2);
+  assert.equal(load({ version: 3.9 }).version, 3); // floored
+});
+
+test("prestige/lifetimeGold/lastSeen coerce like other numerics (NaN/neg/string -> 0)", () => {
+  const s = load({ prestige: -5, lifetimeGold: "abc", lastSeen: Number.NaN });
+  assert.equal(s.prestige, 0);
+  assert.equal(s.lifetimeGold, 0);
+  assert.equal(s.lastSeen, 0);
+  const t = load({ prestige: 4.7, lifetimeGold: 12345, lastSeen: 1700000000000 });
+  assert.equal(t.prestige, 4); // floored
+  assert.equal(t.lifetimeGold, 12345);
+  assert.equal(t.lastSeen, 1700000000000);
+});
+
+test("streak: corrupt members floor/zero; non-object -> blank", () => {
+  assert.deepEqual(load({ streak: "nope" }).streak, { count: 0, lastDayUtc: 0, freezes: 0 });
+  const s = load({ streak: { count: 6.9, lastDayUtc: -2, freezes: "x" } });
+  assert.deepEqual(s.streak, { count: 6, lastDayUtc: 0, freezes: 0 });
+});
+
+test("daily: progress keeps finite non-negative; claimed drops non-strings; non-object -> blank", () => {
+  assert.deepEqual(load({ daily: 99 }).daily, { dayUtc: 0, progress: {}, claimed: [] });
+  const s = load({
+    daily: { dayUtc: 20000.5, progress: { runs: 1, kills: -3, bad: "x", ok: 0 }, claimed: ["runs", 5, null] },
+  });
+  assert.equal(s.daily.dayUtc, 20000); // floored
+  assert.deepEqual(s.daily.progress, { runs: 1, ok: 0 }); // negatives/NaN dropped
+  assert.deepEqual(s.daily.claimed, ["runs"]); // non-strings dropped
+  assert.equal(Array.isArray(s.daily.progress), false);
+});
+
 test("a fully-forged adversarial blob still yields a structurally valid save", () => {
   const s = load({
     essence: "9e999", // -> Number("9e999") === Infinity -> not finite -> 0
@@ -201,7 +249,18 @@ test("a fully-forged adversarial blob still yields a structurally valid save", (
     petProgress: { a: [1] }, // inner array typeof object
     stats: [],
     muted: [],
+    version: [],
+    prestige: "lots",
+    lifetimeGold: -1,
+    streak: 42,
+    daily: [1, 2],
   });
+  // idle fields safe
+  assert.equal(s.version, 1);
+  assert.equal(s.prestige, 0);
+  assert.equal(s.lifetimeGold, 0);
+  assert.deepEqual(s.streak, { count: 0, lastDayUtc: 0, freezes: 0 });
+  assert.deepEqual(s.daily, { dayUtc: 0, progress: {}, claimed: [] });
   // economy fields safe
   assert.equal(Number.isFinite(s.essence), true);
   assert.equal(s.essence, 0);
