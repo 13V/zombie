@@ -615,6 +615,7 @@ class Game implements GameApi {
     this.state = "menu";
     this.resetRun();
     this.hud.hideGameOver();
+    this.hud.hideGuestDown(); // clear the co-op spectator overlay if it was up
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
     this.renderShop();
     this.hud.showStart();
@@ -910,6 +911,7 @@ class Game implements GameApi {
   private onNetClose(reason: string) {
     this.teardownNet();
     this.state = "menu";
+    this.hud.hideGuestDown(); // a downed guest forced out (e.g. host left) clears the overlay
     this.hud.showStart();
     this.hud.setLobbyStatus(reason);
   }
@@ -1380,9 +1382,13 @@ class Game implements GameApi {
   private static readonly CELL = 1.2; // plot grid cell size (matches house.ts)
 
   // v1: all 8 plots are YOURS to build on, each persisted independently under
-  // your id (build a little neighbourhood). Visiting OTHER players' houses
-  // (enterVisitMode + like) is wired and ready, gated on a real cross-player
-  // plot-claim system with shared identities — a backend follow-up.
+  // your id (build a little neighbourhood). isOwnPlot() ALWAYS returns true ON
+  // PURPOSE for v1 — this is not a bug. The consequence is that the visit-mode
+  // path (enterVisitMode + likeCurrentHouse, reached only when isOwnPlot is
+  // false at main.ts ~activateIslandZone) is intentionally DORMANT: it is fully
+  // wired and ready but unreachable until a real cross-player plot-claim system
+  // with shared identities lands (a backend follow-up). Do NOT remove that code
+  // as "dead" — flipping this to a real ownership check activates it.
   private isOwnPlot(_plotIndex: number): boolean {
     return true;
   }
@@ -1872,6 +1878,18 @@ class Game implements GameApi {
     this.player.setWeaponModel(styleForWeaponName(this.netplay!.myWeapon));
     const sp = spreadForWeaponName(this.netplay!.myWeapon);
     this.player.setAimSpread(sp.spread, sp.pellets);
+
+    // Co-op death: gameOver only fires for the host/solo (in simulate), so a
+    // downed guest would otherwise be stuck in "playing" with no UI and no exit.
+    // Show a spectator overlay driven by myAlive; its button bails to the menu
+    // (tearing down the net session via toMenu). Suppress the buy prompt while
+    // down. Hidden again automatically if the host revives them (myAlive true).
+    if (!this.netplay!.myAlive) {
+      this.hud.showGuestDown(() => this.toMenu());
+      this.hud.hidePrompt();
+      return;
+    }
+    this.hud.hideGuestDown();
 
     // Local buy prompt: interactables sit at fixed positions, so the guest can
     // compute its own prompt from the snapshot-driven position + shared points.
