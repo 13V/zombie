@@ -318,7 +318,7 @@ export const PETS: PetDef[] = [
   // ─────────────────────── ✦ CELESTIAL ✦ ───────────────────────
   // The single pet above Mythic. Its signature bends time itself: OVERDRIVE
   // runs the whole game at 2x for a few seconds. Radiant, one-of-a-kind.
-  mk({ id: "chronos", name: "Chronos, the Eternal", desc: "Bends time — OVERDRIVE runs the whole game at 2× speed", cost: 100000, rarity: "celestial", color: 0x9af7ff, accent: 0xfff6c8,
+  mk({ id: "chronos", name: "Chronos, the Eternal", desc: "Bends time — OVERDRIVE runs the whole game at 2× speed", cost: 0, rarity: "celestial", color: 0x9af7ff, accent: 0xfff6c8,
     damage: 600, interval: 0.32, bulletColor: 0xeaffff, bulletScale: 1.4, pierce: 6, splashRadius: 2.4, splashDamage: 220, homing: 1, shape: "chronos", range: 30 }),
 ];
 
@@ -561,6 +561,8 @@ export class Pet {
   private wingR?: THREE.Mesh;
   private aura?: THREE.Mesh; // pulsing glow (wisp/ghost)
   private muzzle?: THREE.Mesh; // fire-flash node
+  private halo?: THREE.Group; // counter-rotating clockwork rings (Chronos)
+  private halo2?: THREE.Group;
   private cd: number;
   private bob: number;
   private flap = 0;
@@ -628,7 +630,9 @@ export class Pet {
   }
   private applyLevelVisuals() {
     // grows ~6%/level up to ~+60%; emissive ramps so high pets glow hot.
-    this.baseScale = 0.7 * (1 + Math.min(0.6, (this.level - 1) * 0.06));
+    // Chronos (Celestial) is built bigger so it towers over the roster.
+    const baseSize = this.def.shape === "chronos" ? 0.92 : 0.7;
+    this.baseScale = baseSize * (1 + Math.min(0.6, (this.level - 1) * 0.06));
     this.group.scale.setScalar(this.baseScale);
     const glowBoost = Math.min(1.6, 0.9 + (this.level - 1) * 0.12);
     this.group.traverse((o) => {
@@ -932,32 +936,62 @@ export class Pet {
         this.muzzle = box(0.14, 0.14, 0.14, 0, 0, 0.3, glowMaterial(0xffffff, 1.4));
         break;
       case "chronos": {
-        // The Celestial time-spirit: a radiant orb core haloed by a slow
-        // clockwork gear-ring, a little gold crown, ethereal wings, and the
-        // cutest face in the game. `acc` is gold; body is radiant cyan-white.
-        const goldGlow = glowMaterial(acc, 1.2);
-        this.aura = box(0.78, 0.78, 0.5, 0, 0, 0, auraMaterial(col, 0.55)); // big radiant halo
-        box(0.46, 0.5, 0.46, 0, 0, 0, glowMaterial(col, 1.0)); // glowing core body
-        // clockwork gear-ring (the time motif): 8 gold teeth around the core
-        for (let i = 0; i < 8; i++) {
-          const a = (i / 8) * Math.PI * 2;
-          box(0.1, 0.1, 0.08, Math.cos(a) * 0.5, Math.sin(a) * 0.5, 0, goldGlow);
+        // ✦ The Celestial time-god. Built for PRESENCE: a large luminous core,
+        // TWO counter-rotating clockwork halo-rings, a tall five-point crown,
+        // big sweeping seraph wings, and a wide radiant aura — keeping the cute
+        // face. `acc` is gold; body is radiant cyan-white. (The whole thing is
+        // scaled up in build() so it reads bigger than any other pet.)
+        const goldGlow = glowMaterial(acc, 1.3);
+        const goldBright = glowMaterial(0xfff2b0, 1.6);
+        const white = glowMaterial(0xffffff, 1.6);
+        // wide layered aura (two shells for a soft corona)
+        this.aura = box(1.15, 1.15, 0.7, 0, 0.05, 0, auraMaterial(col, 0.6));
+        box(0.85, 0.85, 0.5, 0, 0.05, -0.02, auraMaterial(0xeaffff, 0.4));
+        // big glowing core body
+        box(0.6, 0.64, 0.58, 0, 0.05, 0, glowMaterial(col, 1.1));
+        box(0.46, 0.5, 0.46, 0, 0.05, 0.08, glowMaterial(0xeaffff, 0.9)); // bright inner face plate
+        // ── outer clockwork ring (12 teeth) — lives in `halo`, spins one way ──
+        this.halo = new THREE.Group();
+        this.halo.position.set(0, 0.05, -0.02);
+        for (let i = 0; i < 12; i++) {
+          const a = (i / 12) * Math.PI * 2;
+          box(0.1, 0.1, 0.08, Math.cos(a) * 0.78, Math.sin(a) * 0.78, 0, goldGlow, this.halo);
         }
-        box(0.66, 0.1, 0.06, 0, 0, 0, goldGlow); // clock hands
-        box(0.1, 0.46, 0.06, 0, 0, 0, goldGlow);
-        // floating crown of three points
-        box(0.07, 0.16, 0.07, 0, 0.48, 0, goldGlow);
-        box(0.07, 0.12, 0.07, -0.13, 0.42, 0, goldGlow);
-        box(0.07, 0.12, 0.07, 0.13, 0.42, 0, goldGlow);
-        box(0.08, 0.08, 0.08, 0, 0.6, 0, glowMaterial(0xffffff, 1.4)); // crown gem
-        // ethereal wings
-        this.wingL = box(0.34, 0.05, 0.4, -0.5, 0.06, -0.06, auraMaterial(0xeaffff, 0.7));
-        this.wingR = box(0.34, 0.05, 0.4, 0.5, 0.06, -0.06, auraMaterial(0xeaffff, 0.7));
-        eye(-0.12, 0.04, 0.25, 0.13); // big sparkly eyes
-        eye(0.12, 0.04, 0.25, 0.13);
-        cheeks(-0.06, 0.26);
-        smile(-0.09, 0.26, 0.12);
-        this.muzzle = box(0.14, 0.14, 0.14, 0, 0.02, 0.34, glowMaterial(0xffffff, 1.5));
+        // four cardinal markers (12/3/6/9 o'clock) brighter
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * Math.PI * 2;
+          box(0.13, 0.13, 0.1, Math.cos(a) * 0.78, Math.sin(a) * 0.78, 0, goldBright, this.halo);
+        }
+        this.body.add(this.halo);
+        // ── inner ring (8 teeth) — lives in `halo2`, counter-rotates ──
+        this.halo2 = new THREE.Group();
+        this.halo2.position.set(0, 0.05, 0.0);
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8 + 0.06) * Math.PI * 2;
+          box(0.08, 0.08, 0.07, Math.cos(a) * 0.6, Math.sin(a) * 0.6, 0, white, this.halo2);
+        }
+        box(0.84, 0.09, 0.06, 0, 0.05, 0, goldBright); // clock hands across the core
+        box(0.09, 0.6, 0.06, 0, 0.05, 0, goldBright);
+        // ── tall five-point crown ──
+        box(0.08, 0.28, 0.08, 0, 0.66, 0, goldGlow); // center spire
+        box(0.07, 0.2, 0.07, -0.17, 0.58, 0, goldGlow);
+        box(0.07, 0.2, 0.07, 0.17, 0.58, 0, goldGlow);
+        box(0.06, 0.13, 0.06, -0.31, 0.5, 0, goldGlow);
+        box(0.06, 0.13, 0.06, 0.31, 0.5, 0, goldGlow);
+        box(0.1, 0.1, 0.1, 0, 0.83, 0, white); // crown gem
+        box(0.06, 0.06, 0.06, -0.17, 0.7, 0, white); // side gems
+        box(0.06, 0.06, 0.06, 0.17, 0.7, 0, white);
+        // ── big sweeping seraph wings (two feathers each side) ──
+        this.wingL = box(0.6, 0.06, 0.5, -0.78, 0.12, -0.12, auraMaterial(0xeaffff, 0.8));
+        box(0.4, 0.05, 0.34, -0.72, -0.18, -0.16, auraMaterial(col, 0.6));
+        this.wingR = box(0.6, 0.06, 0.5, 0.78, 0.12, -0.12, auraMaterial(0xeaffff, 0.8));
+        box(0.4, 0.05, 0.34, 0.72, -0.18, -0.16, auraMaterial(col, 0.6));
+        // cute face (kept), nudged onto the bright face plate
+        eye(-0.13, 0.06, 0.3, 0.14);
+        eye(0.13, 0.06, 0.3, 0.14);
+        cheeks(-0.04, 0.3);
+        smile(-0.1, 0.3, 0.13);
+        this.muzzle = box(0.16, 0.16, 0.16, 0, 0.05, 0.4, glowMaterial(0xffffff, 1.6));
         break;
       }
       default:
@@ -1022,6 +1056,9 @@ export class Pet {
       a.scale.set(a.userData.bw * p, a.userData.bh * p, a.userData.bd * p);
       (a.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.4 + (Math.sin(this.bob * 2) + 1) * 0.2;
     }
+    // Chronos: the two clockwork halo-rings counter-rotate (the time motif).
+    if (this.halo) this.halo.rotation.z += dt * 0.6;
+    if (this.halo2) this.halo2.rotation.z -= dt * 1.1;
     // breathe + recoil: body squashes back when it just fired
     this.recoil = Math.max(0, this.recoil - dt * 5);
     const breathe = 1 + Math.sin(this.bob * 0.8) * 0.04;
