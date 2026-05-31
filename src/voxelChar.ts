@@ -3,6 +3,11 @@ import { voxelMaterial } from "./palette";
 import { AnimState, CharacterRig } from "./assets";
 import { GunStyle, buildGun } from "./gunModels";
 
+/** The cute social emotes a voxel figure can play in the island hub. */
+export type EmoteId = "wave" | "dance" | "sit" | "cheer";
+/** Default play length (seconds) per emote; "sit" loops until movement clears it. */
+const EMOTE_DUR: Record<EmoteId, number> = { wave: 2.2, dance: 3.2, sit: 0, cheer: 2.0 };
+
 export interface VoxelCharOpts {
   body: number;
   head: number;
@@ -31,6 +36,10 @@ export class VoxelChar implements CharacterRig {
   private state: AnimState = "idle";
   private t = 0;
   private deathT = 0;
+  // ---- island emotes (procedural; layered over idle, not an AnimState) ----
+  private emoteId: EmoteId | null = null;
+  private emoteT = 0; // seconds elapsed in the current emote
+  private emoteDur = 0; // 0 = loop until cleared (sit), >0 = one-shot
   private deathTilt = (Math.random() - 0.5) * 0.6;
   private gait: number;
   private reach: number;
@@ -150,6 +159,9 @@ export class VoxelChar implements CharacterRig {
   play(state: AnimState, _opts: { once?: boolean } = {}) {
     if (state === this.state) return;
     this.state = state;
+    // walking cancels any emote (you can't dance while running); idle does not,
+    // so wave/cheer keep playing while you stand still.
+    if (state === "walk") this.emoteId = null;
     if (state === "death") {
       this.deathT = 0;
     } else {
@@ -159,8 +171,85 @@ export class VoxelChar implements CharacterRig {
     }
   }
 
+  /** Start a social emote (island hub). Plays over idle; one-shot emotes auto-clear. */
+  emote(id: EmoteId) {
+    this.emoteId = id;
+    this.emoteT = 0;
+    this.emoteDur = EMOTE_DUR[id];
+  }
+
+  /** True while a non-looping emote is still playing (so callers can gate input). */
+  get emoting(): boolean {
+    return this.emoteId !== null;
+  }
+
+  // Procedural emote poses — simple, cute, voxel-style limb/torso animation.
+  private applyEmote(id: EmoteId) {
+    const et = this.emoteT;
+    // reset legs/torso to a neutral stand each frame (poses set what they need)
+    this.legL.rotation.x = 0;
+    this.legR.rotation.x = 0;
+    this.root.position.y = 0;
+    this.root.rotation.set(0, 0, 0);
+    this.upper.rotation.z = 0;
+    switch (id) {
+      case "wave": {
+        // raise the right arm overhead and swish it side to side
+        const s = Math.sin(et * 9);
+        this.armR.rotation.x = -2.6;
+        this.armR.rotation.z = 0.35 + s * 0.35;
+        this.armL.rotation.x = this.reach;
+        this.upper.position.y = 0.02 + Math.abs(s) * 0.02;
+        break;
+      }
+      case "dance": {
+        // bouncy hip-sway with alternating arm pumps + a little spin
+        const b = Math.sin(et * 7);
+        this.armL.rotation.x = -1.4 + b * 0.9;
+        this.armR.rotation.x = -1.4 - b * 0.9;
+        this.upper.rotation.z = b * 0.25;
+        this.upper.position.y = Math.abs(Math.sin(et * 14)) * 0.12;
+        this.root.rotation.y = Math.sin(et * 3.5) * 0.4;
+        this.legL.rotation.x = b * 0.3;
+        this.legR.rotation.x = -b * 0.3;
+        break;
+      }
+      case "sit": {
+        // lower the whole figure + bend legs forward like sitting cross-legged
+        this.root.position.y = -0.5;
+        this.legL.rotation.x = 1.4;
+        this.legR.rotation.x = 1.4;
+        this.armL.rotation.x = 0.5;
+        this.armR.rotation.x = 0.5;
+        this.upper.position.y = Math.sin(et * 2) * 0.02; // gentle breathing
+        break;
+      }
+      case "cheer": {
+        // both arms thrown up with little hops of excitement
+        const hop = Math.abs(Math.sin(et * 8));
+        this.armL.rotation.x = -2.7;
+        this.armR.rotation.x = -2.7;
+        this.armL.rotation.z = -0.3;
+        this.armR.rotation.z = 0.3;
+        this.root.position.y = hop * 0.18;
+        this.upper.position.y = 0.02;
+        break;
+      }
+    }
+  }
+
   update(dt: number) {
     this.t += dt;
+    // Emotes layer over idle (never over walk/death). One-shots auto-expire.
+    if (this.emoteId && this.state !== "walk" && this.state !== "death") {
+      this.emoteT += dt;
+      if (this.emoteDur > 0 && this.emoteT >= this.emoteDur) {
+        this.emoteId = null;
+      } else {
+        this.applyEmote(this.emoteId);
+        return;
+      }
+    }
     switch (this.state) {
       case "death": {
         this.deathT += dt;
@@ -176,6 +265,8 @@ export class VoxelChar implements CharacterRig {
         this.legR.rotation.x = -a;
         this.armL.rotation.x = this.reach - a * 0.6;
         this.armR.rotation.x = this.reach + a * 0.6;
+        this.armL.rotation.z = 0;
+        this.armR.rotation.z = 0;
         this.upper.position.y = Math.abs(Math.sin(this.t * this.gait)) * 0.06;
         this.upper.rotation.z = Math.sin(this.t * this.gait) * 0.05;
         break;
@@ -187,6 +278,8 @@ export class VoxelChar implements CharacterRig {
         this.legR.rotation.x = 0;
         this.armL.rotation.x = this.reach + b * 0.04;
         this.armR.rotation.x = this.reach - b * 0.04;
+        this.armL.rotation.z = 0;
+        this.armR.rotation.z = 0;
         this.upper.position.y = b * 0.025;
         this.upper.rotation.z = 0;
       }

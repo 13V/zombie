@@ -877,3 +877,106 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
   font-weight: bold;
   justify-self: end;
 }
+
+/* ---- island social: population chip, emote wheel + quick-chat ---- */
+.island-pop {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(20, 22, 30, 0.78);
+  color: #eafce0;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  z-index: 41;
+  pointer-events: none;
+  display: none;
+}
+
+/* on-screen "Express" button (touch + desktop), shown only on the island */
+.emote-fab {
+  position: absolute;
+  right: 18px;
+  bottom: 150px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(30, 33, 44, 0.9);
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  z-index: 42;
+  pointer-events: auto;
+}
+.emote-fab:active { transform: scale(0.94); }
+
+/* full-screen dim backdrop holding the radial wheel + quick-chat strip */
+.emote-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  background: rgba(10, 12, 18, 0.45);
+  z-index: 60;
+  pointer-events: auto;
+}
+
+.emote-wheel {
+  position: relative;
+  width: 260px;
+  height: 260px;
+}
+.emote-slot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(34, 38, 50, 0.95);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+.emote-slot:active { transform: translate(-50%, -50%) scale(0.92); }
+.emote-slot .emo-ico { font-size: 30px; line-height: 1; }
+.emote-slot .emo-lbl { font-size: 11px; font-weight: 700; opacity: 0.85; }
+
+.quick-chat {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  max-width: 380px;
+  padding: 0 16px;
+}
+.qc-btn {
+  padding: 9px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(40, 44, 58, 0.95);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+.qc-btn:active { transform: scale(0.95); }

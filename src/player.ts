@@ -137,6 +137,11 @@ export class Player {
     if (this.char instanceof VoxelChar) this.char.setGun(style);
   }
 
+  /** The underlying voxel rig (for island emotes), or undefined for a GLB rig. */
+  get voxelRig(): VoxelChar | undefined {
+    return this.char instanceof VoxelChar ? this.char : undefined;
+  }
+
   damage(amount: number) {
     if (!this.alive) return;
     this.health = Math.max(0, this.health - amount);

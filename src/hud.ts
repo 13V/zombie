@@ -652,6 +652,22 @@ export class Hud {
     this.promptEl.classList.remove("show");
   }
 
+  private popEl?: HTMLElement;
+  /** "N players here" social chip on the island; pass <= 0 to hide it. */
+  setIslandPopulation(n: number) {
+    if (!this.popEl) {
+      this.popEl = document.createElement("div");
+      this.popEl.className = "island-pop";
+      this.root.appendChild(this.popEl);
+    }
+    if (n <= 0) {
+      this.popEl.style.display = "none";
+      return;
+    }
+    this.popEl.style.display = "block";
+    this.popEl.textContent = `🟢 ${n} ${n === 1 ? "player" : "players"} here`;
+  }
+
   toast(msg: string) {
     this.toastEl.textContent = msg;
     this.toastEl.classList.add("show");

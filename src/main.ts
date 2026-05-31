@@ -25,7 +25,9 @@ import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
 import { Island, IslandZone } from "./island";
-import { IslandNet } from "./islandnet";
+import { IslandNet, makeBubble } from "./islandnet";
+import { EmoteMenu } from "./emotes";
+import type { EmoteId } from "./voxelChar";
 import { HouseView, HouseData, HousePart, PartKind, HOUSE_PARTS, starterHouse, sanitizeHouse } from "./house";
 import { loadHouse, saveHouse } from "./houses";
 import { Sparks } from "./particles";
@@ -113,6 +115,11 @@ class Game implements GameApi {
   private arena: Arena;
   private island!: Island;
   private islandNet?: IslandNet;
+  private emoteMenu?: EmoteMenu;
+  private footstepAcc = 0; // throttles island footstep puffs
+  private islandPop = -1; // last-rendered "N players here" count (-1 = unset)
+  private selfBubble?: THREE.Sprite; // my own speech bubble above my head
+  private selfBubbleT = 0; // seconds remaining on my speech bubble
   private houseViews = new Map<number, HouseView>();
   private editingPlot = -1; // plot index currently in build mode (-1 = none)
   private editData: HouseData = { parts: [] };
@@ -297,6 +304,12 @@ class Game implements GameApi {
     this.hud.onServer(() => this.changeServer());
     this.hud.onIsland(() => this.enterIsland());
     this.hud.onLeaveIsland(() => this.leaveIsland());
+    // Island social: emote wheel + preset quick-chat (T key or on-screen button).
+    this.emoteMenu = new EmoteMenu(ui, {
+      onEmote: (id) => this.playSelfEmote(id),
+      onChat: (text) => this.saySelf(text),
+      onOpenChange: (open) => this.islandNet?.setMenuOpen(open),
+    });
     this.hud.onWallet(() => this.toggleWallet());
     this.hud.onClaim(() => this.claimTokens(), () => this.changeTokenApi());
     this.wallet.onChange = () => this.syncWallet();
@@ -1136,6 +1149,10 @@ class Game implements GameApi {
     this.player.pos.set(0, 0, 6); // stand just south of the plaza
     this.player.group.position.copy(this.player.pos);
     this.hud.setIslandMode(true);
+    this.emoteMenu?.setAvailable(true);
+    this.islandPop = -1; // force the population indicator to refresh
+    // spawn burst: a friendly arrival pop so dropping in feels like an event
+    this.portalBurst(this.player.pos);
     this.connectIslandPresence();
     this.loadIslandHouses();
   }
@@ -1164,8 +1181,9 @@ class Game implements GameApi {
       this.net.onClose = () => this.disconnectIslandPresence();
       await this.net.island();
       const skin = findSkin(this.save.skin);
-      this.islandNet = new IslandNet(this.net, this.scene, skin.body);
-      this.hud.toast("Island: you'll see other players here");
+      this.islandNet = new IslandNet(this.net, this.scene, skin.body, skin.head);
+      this.islandNet.setMenuOpen(this.emoteMenu?.isOpen ?? false);
+      this.hud.toast("Island: press T to emote 👋");
     } catch {
       // presence is optional — the hub still works solo if the relay is asleep
       this.net?.close();
@@ -1191,6 +1209,9 @@ class Game implements GameApi {
     this.arena.group.visible = true;
     this.hud.setIslandMode(false);
     this.hud.hidePrompt();
+    this.emoteMenu?.setAvailable(false); // also closes the menu if open
+    this.hud.setIslandPopulation(-1); // hide the "N players here" chip
+    this.updateSelfBubble(999); // drop any lingering speech bubble
     this.state = "menu";
     this.hud.showStart();
   }
@@ -1198,16 +1219,42 @@ class Game implements GameApi {
   /** Free-roam the island: walk the character, clamp to shore, drive prompts. */
   private simulateIsland(dt: number) {
     const axis = this.input.moveAxis(this._axis);
+    const moving = axis.x !== 0 || axis.y !== 0;
     // aiming=false → the character faces where it walks (no gun aim in the hub)
     this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, false);
     this.island.clamp(this.player.pos);
     this.player.group.position.copy(this.player.pos);
 
+    // open the emote wheel + quick-chat with "T" (touch uses the on-screen button)
+    if (this.input.pressed("KeyT")) this.emoteMenu?.toggle();
+
+    // footstep puff under the chibi while walking (throttled + pooled)
+    if (moving) {
+      this.footstepAcc += dt;
+      if (this.footstepAcc >= 0.18) {
+        this.footstepAcc = 0;
+        this.sparks.burst(this.player.pos, 0xe6d9a8, 3, { speed: 1.6, spread: 0.8, gravity: 10 });
+      }
+    } else {
+      this.footstepAcc = 0.18; // puff immediately on the next step
+    }
+
+    // my own speech bubble lifetime + reactive pads (bounce/brighten on stand)
+    this.updateSelfBubble(dt);
+    this.island.reactPads(this.player.pos, dt);
+
     // broadcast my pose + render other players on this island instance
     this.islandNet?.update(dt, {
       x: this.player.pos.x, z: this.player.pos.z,
-      ry: this.player.group.rotation.y, moving: axis.x !== 0 || axis.y !== 0,
+      ry: this.player.group.rotation.y, moving,
     });
+
+    // "N players here" social presence chip (only refresh on change)
+    const pop = (this.islandNet?.peerCount ?? 0) + 1; // +1 = me
+    if (pop !== this.islandPop) {
+      this.islandPop = pop;
+      this.hud.setIslandPopulation(pop);
+    }
 
     // ---- build mode: clicks place/remove parts; E exits + saves ----
     if (this.editingPlot >= 0) {
@@ -1230,6 +1277,8 @@ class Game implements GameApi {
 
   /** Act on the pad the player triggered. */
   private activateIslandZone(zone: IslandZone) {
+    // co-op pads warp you to the zombie world — give the launch a portal burst.
+    if (zone.kind === "host" || zone.kind === "join") this.portalBurst(zone.pos);
     switch (zone.kind) {
       case "host":
         this.hostGame();
@@ -1248,6 +1297,50 @@ class Game implements GameApi {
       case "play":
         this.startRun();
         break;
+    }
+  }
+
+  /** A juicy warp/portal pop at a pad (flash + pillar + sparks + sfx). */
+  private portalBurst(pos: THREE.Vector3) {
+    this.explosions.flash(pos, 3.2, 0xbfe0ff);
+    this.explosions.beam(pos, 6, 0x8fd0ff);
+    this.explosions.shockwave(pos, 4, 0xffffff);
+    this.sparks.burst(pos, 0xbfe0ff, 18, { speed: 8, spread: 5, streak: true });
+    this.audio.powerup();
+    this.shake = Math.min(0.6, this.shake + 0.25);
+  }
+
+  // ---- island social: emote + quick-chat on MY figure ----
+  /** Play an emote on my own voxel figure + broadcast it to peers. */
+  private playSelfEmote(id: EmoteId) {
+    this.player.voxelRig?.emote(id);
+    this.islandNet?.sendEmote(id);
+    this.audio.ui();
+  }
+
+  /** Show a speech bubble above MY head + broadcast the preset phrase. */
+  private saySelf(text: string) {
+    if (this.selfBubble) {
+      this.player.group.remove(this.selfBubble);
+      (this.selfBubble.material as THREE.SpriteMaterial).map?.dispose();
+      (this.selfBubble.material as THREE.SpriteMaterial).dispose();
+    }
+    this.selfBubble = makeBubble(text);
+    this.player.group.add(this.selfBubble);
+    this.selfBubbleT = 3.0;
+    this.islandNet?.sendChat(text);
+    this.audio.ui();
+  }
+
+  /** Tick my own speech bubble lifetime (called from simulateIsland + on leave). */
+  private updateSelfBubble(dt: number) {
+    if (!this.selfBubble) return;
+    this.selfBubbleT -= dt;
+    if (this.selfBubbleT <= 0) {
+      this.player.group.remove(this.selfBubble);
+      (this.selfBubble.material as THREE.SpriteMaterial).map?.dispose();
+      (this.selfBubble.material as THREE.SpriteMaterial).dispose();
+      this.selfBubble = undefined;
     }
   }
 
