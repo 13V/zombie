@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { CURSE, DIFFICULTY, ELITE, ROUNDS, SPECIAL_ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
+import { CURSE, DIFFICULTY, ELITE, GOBLIN, ROUNDS, SPECIAL_ROUNDS, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
 import { Affix, Zombie } from "./zombie";
 import { Arena } from "./arena";
 import { AssetManager } from "./assets";
@@ -82,6 +82,13 @@ export class RoundManager {
   onRoundStart?: (round: number) => void;
   onIntermission?: (nextRound: number) => void;
   onBossSpawn?: (boss: Zombie) => void;
+  /** Fires when a Loot Goblin appears (toast/audio) and when it escapes uncaught. */
+  onGoblinSpawn?: () => void;
+  onGoblinEscape?: () => void;
+
+  /** Live Loot Goblin (a fleeing bounty mob) + its escape countdown, if any. */
+  private goblin: Zombie | null = null;
+  private goblinTimer = 0;
 
   constructor(private scene: THREE.Scene, private assets: AssetManager) {}
 
@@ -262,7 +269,38 @@ export class RoundManager {
     this.spawnTimer = 0;
     this.phase = "active";
     this.bossPending = n % 5 === 0;
+    // Loot Goblin: a rare fleeing bounty mob. Rolls per round (not on boss
+    // rounds — the boss already owns the spotlight). Spawned a moment in so it
+    // doesn't get lost in the opening rush; see update()'s goblinTimer arm.
+    this.goblin = null;
+    this.goblinTimer = 0;
+    if (n >= GOBLIN.fromRound && !this.bossPending && Math.random() < GOBLIN.chance) {
+      this.goblinTimer = -1; // sentinel: "pending spawn" — armed in update()
+    }
     this.onRoundStart?.(n);
+  }
+
+  /** Spawn the Loot Goblin: a fast, fleeing, golden bounty mob. */
+  private spawnGoblin(arena: Arena) {
+    const z = this.freeZombie();
+    arena.randomEdgePoint(this.edge);
+    const goblin = ZOMBIE_TYPES.find((t) => t.id === "goblin") ?? ZOMBIE_TYPES[0];
+    z.spawn(this.edge, Math.max(this.curHealth, ZOMBIE.baseHealth * 2), this.curSpeed, goblin);
+    z.fleer = true;
+    z.bounty = true;
+    this.goblin = z;
+    this.goblinTimer = GOBLIN.lifespan;
+    this.onGoblinSpawn?.();
+  }
+
+  /** True while a live Loot Goblin is on the field (HUD marker / objective). */
+  get goblinAlive(): boolean {
+    return !!this.goblin && this.goblin.alive;
+  }
+
+  /** The live Loot Goblin's world position, if one is fleeing right now. */
+  get goblinPos(): THREE.Vector3 | null {
+    return this.goblin && this.goblin.alive ? this.goblin.pos : null;
   }
 
   private spawnBoss(arena: Arena) {
@@ -470,6 +508,32 @@ export class RoundManager {
       if (this.round > 0) this.onDifficultyTier?.(t.name, t.color);
     }
 
+    // Loot Goblin lifecycle: arm a pending spawn a few seconds into the round,
+    // then count down its escape timer. If it survives the timer it flees the
+    // map (despawn, no reward); catching it is handled in main via z.bounty.
+    if (this.phase === "active" && this.goblinTimer !== 0) {
+      if (this.goblinTimer < 0) {
+        // pending: hold until the opening rush settles, then drop it in
+        this.goblinTimer -= dt;
+        if (this.goblinTimer <= -2.5) this.spawnGoblin(arena);
+      } else if (this.goblin) {
+        if (!this.goblin.alive) {
+          this.goblin = null; // caught (main spawned the chest) — clear the slot
+          this.goblinTimer = 0;
+        } else {
+          this.goblinTimer -= dt;
+          if (this.goblinTimer <= 0) {
+            // escaped: spirit it away with no payout
+            this.goblin.alive = false;
+            this.goblin.dying = false;
+            this.goblin.group.visible = false;
+            this.goblin = null;
+            this.onGoblinEscape?.();
+          }
+        }
+      }
+    }
+
     // Rebuild the spatial grid once per frame; zombies + combat systems query it.
     this.grid.rebuild(this.zombies);
     if (this.phase === "active") {
@@ -544,6 +608,8 @@ export class RoundManager {
     this.phase = "pre";
     this.toSpawn = 0;
     this.special = null;
+    this.goblin = null;
+    this.goblinTimer = 0;
     this.runTime = 0;
     this.difficultyCoeff = 0;
     this.lastTier = -1;

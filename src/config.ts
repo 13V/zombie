@@ -69,6 +69,15 @@ export const ROUNDS = {
   swarmEvery: 7, // every Nth round is a fast "swarm/dog" round
 };
 
+/** The Loot Goblin: a rare fleeing bounty mob that drops a jackpot if you catch
+ *  it before it escapes. A mid-round objective that breaks the kill-wave rhythm. */
+export const GOBLIN = {
+  fromRound: 4, // earliest round one can appear
+  chance: 0.25, // per-round chance one shows up (skipped on boss rounds)
+  lifespan: 16, // seconds it stays on the field before escaping (no reward)
+  chestLuck: 0.6, // bonus drop-luck folded into its jackpot chest
+};
+
 export const PETS_TUNING = {
   /** Max ACTIVE combat pets spawned at once (owning more is fine — see spawnPets).
    *  Bankers/buffers are non-combat and don't count toward this. */
@@ -176,6 +185,10 @@ export const ZOMBIE_TYPES: ZombieType[] = [
   { id: "splitter", name: "Splitter", from: 9, weight: 0.12, healthMul: 2.2, speedMul: 0.9, scale: 1.2, touchDamage: 16, scoreMul: 2.4, body: 0x4ec98f, head: 0x2f8a60, splitInto: "splitling", splitCount: 2 },
   { id: "splitling", name: "Splitling", from: 999, weight: 0, healthMul: 0.6, speedMul: 1.4, scale: 0.7, touchDamage: 9, scoreMul: 0.8, body: 0x4ec98f, head: 0x2f8a60 },
   { id: "necro", name: "Necromancer", from: 12, weight: 0.1, healthMul: 2.6, speedMul: 0.7, scale: 1.15, touchDamage: 14, scoreMul: 3.5, body: 0x6e4a9e, head: 0x3a2456, summonInterval: 5, summonCount: 3 },
+  // ---- bounty mob: the Loot Goblin. Never spawns via the normal weighted pick
+  // (from:999, weight:0) — rounds.ts spawns it explicitly as a fleeing target
+  // that drops a jackpot chest when caught. Golden, fast, lean HP. ----
+  { id: "goblin", name: "Loot Goblin", from: 999, weight: 0, healthMul: 1.4, speedMul: 1.7, scale: 0.95, touchDamage: 6, scoreMul: 5.0, body: 0xffd24a, head: 0xffb13a },
 ];
 
 /** Gobblegum-style power-ups from the bubblegum machine. `duration` 0 = instant. */

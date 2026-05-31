@@ -7,7 +7,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { CAMERA, COSTS, ELITE, PETS_TUNING, PET_DEPTH, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY, RAMPAGE } from "./config";
+import { CAMERA, COSTS, ELITE, PETS_TUNING, PET_DEPTH, PLAYER, SCORE, ZOMBIE, IDLE, PRESTIGE, SYNERGY, RAMPAGE, GOBLIN } from "./config";
 import { Input } from "./input";
 import { Arena } from "./arena";
 import { Player } from "./player";
@@ -301,6 +301,15 @@ class Game implements GameApi {
       this.audio.roundStart();
       this.hud.toast("A BOSS APPROACHES");
       this.shake = Math.min(0.6, this.shake + 0.4);
+    };
+    // Loot Goblin: a fleeing bounty mob. Loud call-out on arrival; a wry note if
+    // it gets away. Catching it pays a jackpot (see damageZombie z.bounty).
+    this.rounds.onGoblinSpawn = () => {
+      this.hud.toast("💰 A LOOT GOBLIN! Catch it before it escapes!");
+      this.audio.roundStart();
+    };
+    this.rounds.onGoblinEscape = () => {
+      this.hud.toast("💨 The Loot Goblin got away…");
     };
     // Difficulty director: a loud tier banner each time the horde escalates.
     this.rounds.onDifficultyTier = (name, color) => {
@@ -2998,6 +3007,7 @@ class Game implements GameApi {
    *  feed the Rampage meter so killing with your own gun still matters. */
   private damageZombie(z: Zombie, dmg: number, scoreMul: number, crit = false, byPlayer = true) {
     const wasBoss = z.isBoss;
+    const wasBounty = z.bounty; // Loot Goblin — pays a jackpot on death
     const killed = z.hit(dmg);
     if (killed) {
       this.runStats.kills++;
@@ -3081,6 +3091,18 @@ class Game implements GameApi {
         this.shake = Math.min(0.8, this.shake + 0.5);
         this.zoomPunch = 1;
         this.hitStop = Math.min(0.18, this.hitStop + 0.12);
+      } else if (wasBounty) {
+        // Loot Goblin caught! A jackpot chest, a fat gold bonus, and a fanfare.
+        this.drops.spawnChest(z.pos, this.mods.dropChance + GOBLIN.chestLuck);
+        const bonus = 1500 + this.rounds.round * 120;
+        this.save.gold += bonus;
+        this.save.goldEarned += bonus;
+        this.floaters.spawn(z.pos, `+${bonus} 💰`, "#ffd24a", 1.9, true);
+        this.hud.toast("💰 LOOT GOBLIN DOWN — JACKPOT!");
+        this.audio.levelUp();
+        const candy = [0xffd24a, 0xff5d8f, 0x6ad7ff, 0x8fcf6f];
+        for (let i = 0; i < 4; i++) this.puffs.burst(z.pos, candy[i], 10);
+        this.shake = Math.min(0.6, this.shake + 0.35);
       } else {
         this.drops.maybeSpawn(z.pos, this.mods.dropChance);
       }

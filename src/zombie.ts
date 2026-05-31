@@ -91,6 +91,10 @@ export class Zombie {
   touchDamage = ZOMBIE.touchDamage;
   scoreMul = 1;
   puffColor = 0x8fcf6f;
+  /** Loot Goblin: flees the player instead of chasing, and pays a jackpot on
+   *  death (main reads `bounty`). Set by rounds.spawnGoblin(). */
+  fleer = false;
+  bounty = false;
   explodes = false;
   blastRadius = 0;
   blastDamage = 0;
@@ -141,6 +145,8 @@ export class Zombie {
     this.touchDamage = type.touchDamage;
     this.scoreMul = type.scoreMul;
     this.puffColor = type.body;
+    this.fleer = false;
+    this.bounty = false;
     this.explodes = type.blastRadius !== undefined;
     this.blastRadius = type.blastRadius ?? 0;
     this.blastDamage = type.blastDamage ?? 0;
@@ -327,7 +333,16 @@ export class Zombie {
     if (dist > 0.0001) _tmp.divideScalar(dist);
     // Summoner keeps its distance (flees if the player gets close) + raises adds.
     let approach = 1;
-    if (this.summonInterval > 0) {
+    if (this.fleer) {
+      // Loot Goblin: always sprint directly AWAY from the player. Add a slow
+      // lateral weave so it juke-runs instead of beelining into a corner.
+      approach = -1;
+      const weave = Math.sin(this.wobble) * 0.5;
+      this.wobble += dt * 3;
+      _tmp.set(_tmp.x + -_tmp.z * weave, 0, _tmp.z + _tmp.x * weave);
+      const l = _tmp.length() || 1;
+      _tmp.divideScalar(l);
+    } else if (this.summonInterval > 0) {
       if (dist < 7) approach = -0.6; // back away to stay a priority-but-annoying target
       this.summonTimer -= dt;
       if (this.summonTimer <= 0) {
