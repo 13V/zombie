@@ -2344,7 +2344,8 @@ class Game implements GameApi {
       const kg = Math.max(1, Math.round(PETS_TUNING.killGoldBase * z.scoreMul * scoreMul));
       this.save.gold += kg;
       this.save.goldEarned += kg;
-      this.floaters.spawn(z.pos, this.floatNum(pts), mult > 1 ? "#ffd24a" : "#ffffff", mult > 1 ? 1.2 : 1);
+      // tiered pop: crit > combo > plain (color/size handled by FloatingText)
+      this.floaters.spawn(z.pos, this.floatNum(pts), "#ffffff", 1, crit ? "crit" : mult > 1 ? "combo" : "normal");
       // beefier, warmer burst on crit / combo kills; ragdoll fling on big hits
       const burstN = crit ? 13 : mult >= 3 ? 11 : 8;
       this.puffs.burst(z.pos, crit ? 0xffe14a : z.puffColor, burstN);
