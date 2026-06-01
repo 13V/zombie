@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { PLAYER } from "./config";
 import { COLORS } from "./palette";
 import { AssetManager, CharacterRig } from "./assets";
-import { VoxelChar, type CosmeticSpec } from "./voxelChar";
+import { VoxelChar, type CosmeticSpec, type OutfitSpec } from "./voxelChar";
 import { GunStyle } from "./gunModels";
 
 /** Soft gradient strip texture for the aim guide (bright near the player, faint at the tip). */
@@ -135,6 +135,11 @@ export class Player {
   /** Swap the cosmetic kit (skin hat + back accessory). */
   setCosmetic(spec: CosmeticSpec) {
     if (this.char instanceof VoxelChar) this.char.setCosmetic(spec);
+  }
+
+  /** Dress the hero in a skin's detailed outfit (pants/shoes/belt/emblem). */
+  setOutfit(spec: OutfitSpec) {
+    if (this.char instanceof VoxelChar) this.char.setOutfit(spec);
   }
 
   /** Swap the held weapon model to match the active weapon (cheap if unchanged). */

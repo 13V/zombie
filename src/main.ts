@@ -270,9 +270,7 @@ class Game implements GameApi {
 
     // Menu progression UI (best run + Essence shop) + equipped cosmetic skin.
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
-    const skin = findSkin(this.save.skin);
-    this.player.setSkin(skin.body, skin.head, skin.glow ?? 0x000000);
-    this.player.setCosmetic({ hat: skin.hat, hatColor: skin.hatColor, back: skin.back, backColor: skin.backColor });
+    this.applyPlayerSkin();
     this.renderShop();
 
     this.rounds.onRoundStart = (n) => {
@@ -811,6 +809,14 @@ class Game implements GameApi {
     this.renderShop();
   }
 
+  /** Apply the equipped skin to the live hero: colours + glow + cosmetic kit + outfit. */
+  private applyPlayerSkin() {
+    const skin = findSkin(this.save.skin);
+    this.player.setSkin(skin.body, skin.head, skin.glow ?? 0x000000);
+    this.player.setCosmetic({ hat: skin.hat, hatColor: skin.hatColor, back: skin.back, backColor: skin.backColor });
+    this.player.setOutfit({ body: skin.body, pants: skin.pants, shoes: skin.shoes, belt: skin.belt, gloves: skin.gloves, emblem: skin.emblem });
+  }
+
   /** Equip an owned skin, or buy it with Essence then equip. */
   private selectSkin(id: string) {
     const skin = findSkin(id);
@@ -827,8 +833,7 @@ class Game implements GameApi {
     }
     this.save.skin = id;
     writeSave(this.save);
-    this.player.setSkin(skin.body, skin.head, skin.glow ?? 0x000000);
-    this.player.setCosmetic({ hat: skin.hat, hatColor: skin.hatColor, back: skin.back, backColor: skin.backColor });
+    this.applyPlayerSkin();
     this.renderShop();
   }
 

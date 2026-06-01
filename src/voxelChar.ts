@@ -9,13 +9,24 @@ export type EmoteId = "wave" | "dance" | "sit" | "cheer";
 const EMOTE_DUR: Record<EmoteId, number> = { wave: 2.2, dance: 3.2, sit: 0, cheer: 2.0 };
 
 /** Cosmetic headwear / back accessory styles a skin can equip. */
-export type HatStyle = "none" | "cap" | "crown" | "helmet" | "horns" | "halo" | "tophat" | "ears" | "mohawk" | "antenna" | "visor" | "bow";
+export type HatStyle = "none" | "cap" | "crown" | "helmet" | "horns" | "halo" | "tophat" | "ears" | "mohawk" | "antenna" | "visor" | "bow" | "wizard" | "hood" | "pirate";
 export type BackStyle = "none" | "cape" | "wings" | "pack" | "jetpack";
 export interface CosmeticSpec {
   hat?: HatStyle;
   hatColor?: number;
   back?: BackStyle;
   backColor?: number;
+}
+
+/** Outfit detail (multi-zone clothing) a skin can wear — pants/shoes/belt/gloves
+ *  + a face + an optional chest emblem. Most fields auto-derive from the body. */
+export interface OutfitSpec {
+  body: number;
+  pants?: number;
+  shoes?: number;
+  belt?: number;
+  gloves?: number;
+  emblem?: number;
 }
 
 export interface VoxelCharOpts {
@@ -58,6 +69,8 @@ export class VoxelChar implements CharacterRig {
   private reach: number;
   private bodyMat: THREE.MeshStandardMaterial;
   private headMat: THREE.MeshStandardMaterial;
+  private legMat!: THREE.MeshStandardMaterial; // pants
+  private outfit: THREE.Object3D[] = []; // skin detail pieces (belt/shoes/mouth/emblem)
   private baseEmissive = 0x000000;
   private gunHolder?: THREE.Group;
   private gunStyle?: GunStyle;
@@ -70,6 +83,9 @@ export class VoxelChar implements CharacterRig {
     const headMat = voxelMaterial(opts.head);
     this.bodyMat = bodyMat;
     this.headMat = headMat;
+    // legs get their own material so skins can wear PANTS (zombies keep it = body
+    // via setColor, so the horde is unaffected).
+    this.legMat = voxelMaterial(opts.body);
 
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.9, 0.5), bodyMat);
     torso.position.y = 1.05;
@@ -111,8 +127,8 @@ export class VoxelChar implements CharacterRig {
       this.setGun("pistol");
     }
 
-    this.legL = this.makeLeg(bodyMat, -0.18);
-    this.legR = this.makeLeg(bodyMat, 0.18);
+    this.legL = this.makeLeg(this.legMat, -0.18);
+    this.legR = this.makeLeg(this.legMat, 0.18);
 
     this.root.add(this.upper, this.legL, this.legR);
   }
@@ -156,6 +172,44 @@ export class VoxelChar implements CharacterRig {
     this.bodyMat.emissiveIntensity = emissive === 0x000000 ? 1 : 0.5;
     this.baseEmissive = emissive;
     this.headMat.color.set(head);
+    this.legMat.color.set(body); // legs follow the body unless an outfit overrides
+    this.legMat.emissive.set(emissive);
+    this.legMat.emissiveIntensity = this.bodyMat.emissiveIntensity;
+  }
+
+  /** Dress the hero in a detailed outfit — pants (recolours the legs) plus belt,
+   *  shoes, gloves, a mouth, and an optional glowing chest emblem. Skin-only
+   *  (player/peers); zombies never call this, so the horde stays cheap. */
+  setOutfit(spec: OutfitSpec) {
+    for (const m of this.outfit) {
+      m.parent?.remove(m);
+      (m as THREE.Mesh).geometry?.dispose?.();
+      ((m as THREE.Mesh).material as THREE.Material)?.dispose?.();
+    }
+    this.outfit = [];
+    const darker = (c: number, f = 0.6) => {
+      const r = Math.floor(((c >> 16) & 0xff) * f), g = Math.floor(((c >> 8) & 0xff) * f), b = Math.floor((c & 0xff) * f);
+      return (r << 16) | (g << 8) | b;
+    };
+    this.legMat.color.set(spec.pants ?? darker(spec.body));
+    const trim = 0x2a2018;
+    const add = (parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number, color: number, glow = false) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), glow ? glowMaterial(color, 1.0) : voxelMaterial(color));
+      m.position.set(x, y, z);
+      parent.add(m);
+      this.outfit.push(m);
+    };
+    // belt at the waist
+    add(this.upper, 0.84, 0.14, 0.54, 0, 0.66, 0, spec.belt ?? trim);
+    add(this.upper, 0.18, 0.18, 0.08, 0, 0.66, 0.27, spec.emblem ?? 0xd8c060); // buckle
+    // shoes (children of each leg group so they move with the stride)
+    for (const leg of [this.legL, this.legR]) add(leg, 0.36, 0.2, 0.42, 0, -0.6, 0.05, spec.shoes ?? trim);
+    // gloves at the hands
+    for (const arm of [this.armL, this.armR]) add(arm, 0.28, 0.22, 0.3, 0, -0.6, 0.02, spec.gloves ?? trim);
+    // a little mouth so there's a face
+    add(this.upper, 0.26, 0.06, 0.06, 0, 1.7, 0.39, trim);
+    // optional glowing chest emblem
+    if (spec.emblem !== undefined) add(this.upper, 0.32, 0.32, 0.06, 0, 1.16, 0.27, spec.emblem, true);
   }
 
   /** (Re)build the cosmetic kit (skin hat + back accessory). Cheap voxel boxes;
@@ -226,6 +280,22 @@ export class VoxelChar implements CharacterRig {
       case "bow":
         for (const sx of [-1, 1]) bx(0.22, 0.26, 0.16, sx * 0.22, 2.36, 0, hc);
         bx(0.14, 0.14, 0.18, 0, 2.36, 0, hc);
+        break;
+      case "wizard":
+        bx(0.92, 0.12, 0.92, 0, 2.28, 0, hc); // brim
+        { const cone = new THREE.Mesh(new THREE.ConeGeometry(0.46, 1.0, 8), voxelMaterial(hc));
+          cone.position.y = 2.85; cone.castShadow = true; this.cosmetic.add(cone); }
+        bx(0.16, 0.16, 0.16, 0, 3.32, 0, 0xffe14a, true); // glowing star tip
+        break;
+      case "hood":
+        bx(0.92, 0.8, 0.72, 0, 2.1, -0.12, hc); // hood shell (face pokes out front)
+        bx(0.5, 0.34, 0.18, 0, 1.62, 0.3, hc); // collar
+        break;
+      case "pirate":
+        bx(1.0, 0.18, 0.52, 0, 2.34, 0, hc); // brim
+        bx(0.32, 0.34, 0.16, 0, 2.48, 0.3, hc); // upturned front peak
+        bx(0.32, 0.34, 0.16, 0, 2.48, -0.3, hc); // back peak
+        bx(0.18, 0.18, 0.06, 0, 2.52, 0.38, 0xfff4d6); // skull emblem
         break;
       default: break;
     }

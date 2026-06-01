@@ -22,42 +22,67 @@ export interface Skin {
   hatColor?: number;
   back?: BackStyle;
   backColor?: number;
+  // ---- outfit detail (multi-zone clothing); pants/shoes/belt auto-derive if unset ----
+  pants?: number;
+  shoes?: number;
+  belt?: number;
+  gloves?: number;
+  emblem?: number; // glowing chest emblem
 }
 
 export const SKINS: Skin[] = [
-  // ---- common ----
+  // ===== COMMON — survivors & starters =====
   { id: "classic", name: "Classic", body: 0x4a78d6, head: 0xfff4d6, rarity: "common", cost: 0 },
   { id: "recruit", name: "Recruit", body: 0x6b7280, head: 0xe8d6a8, rarity: "common", cost: 0, hat: "cap", hatColor: 0x4a525e },
   { id: "ranger", name: "Ranger", body: 0x3f7d4a, head: 0xe8d6a8, rarity: "common", cost: 40, hat: "cap", hatColor: 0x2f5d3a },
-  { id: "dusty", name: "Dust Bowl", body: 0xb08a5a, head: 0xf0e0c0, rarity: "common", cost: 40, hat: "cap", hatColor: 0x8a6a3a },
-  { id: "sky", name: "Skyfarer", body: 0x5aa9e0, head: 0xeaf6ff, rarity: "common", cost: 50, hat: "antenna", hatColor: 0x6ad7ff },
-  // ---- uncommon ----
-  { id: "crimson", name: "Crimson", body: 0xb23a3a, head: 0xf0d2c0, rarity: "uncommon", cost: 90, hat: "mohawk", hatColor: 0xff5a4a },
-  { id: "frost", name: "Frostbite", body: 0x4aa6d6, head: 0xeaf6ff, rarity: "uncommon", cost: 90, hat: "ears", hatColor: 0xbfeaff },
-  { id: "toxic", name: "Toxic", body: 0x7ad14a, head: 0xd6ff8a, rarity: "uncommon", cost: 110, hat: "antenna", hatColor: 0xc8ff5a },
-  { id: "rose", name: "Rosewood", body: 0xd06a8a, head: 0xffe0ea, rarity: "uncommon", cost: 110, hat: "bow", hatColor: 0xff9ec7 },
-  { id: "slate", name: "Slate", body: 0x44505e, head: 0xc8d2dc, rarity: "uncommon", cost: 110, hat: "helmet", hatColor: 0x6f7882 },
-  // ---- rare ----
-  { id: "shadow", name: "Shadow", body: 0x2a2a36, head: 0x6a6a80, rarity: "rare", cost: 200, hat: "horns", hatColor: 0x14141c, back: "cape", backColor: 0x14141c },
-  { id: "royal", name: "Royal", body: 0x6e4a9e, head: 0xffd24a, rarity: "rare", cost: 200, hat: "crown", hatColor: 0xffd24a, back: "cape", backColor: 0x6e4a9e },
-  { id: "ocean", name: "Abyssal", body: 0x1f6f8b, head: 0x9fe8ff, rarity: "rare", cost: 220, hat: "visor", hatColor: 0x6ad7ff, back: "cape", backColor: 0x1f6f8b },
-  { id: "ember", name: "Ember", body: 0xd0542a, head: 0xffcf7a, rarity: "rare", cost: 220, hat: "mohawk", hatColor: 0xff7a2a },
-  { id: "verdant", name: "Verdant", body: 0x2f8f5a, head: 0xc8ff9a, rarity: "rare", cost: 240, hat: "ears", hatColor: 0x6fbf3b, back: "cape", backColor: 0x2f8f5a },
-  // ---- epic ----
-  { id: "midas", name: "Midas", body: 0xffcf52, head: 0xfff4d6, rarity: "epic", cost: 380, hat: "crown", hatColor: 0xffe14a, back: "cape", backColor: 0xffcf52 },
-  { id: "void", name: "Voidwalker", body: 0x1a1426, head: 0x8a5ad6, rarity: "epic", cost: 400, hat: "tophat", hatColor: 0x2a1a3e, back: "cape", backColor: 0x3a2a5e },
-  { id: "glacier", name: "Glacier", body: 0x6fd0ff, head: 0xffffff, rarity: "epic", cost: 400, hat: "helmet", hatColor: 0xeaf6ff, back: "wings", backColor: 0xbfeaff },
-  { id: "inferno", name: "Inferno", body: 0xff4a2a, head: 0xffd24a, rarity: "epic", cost: 420, hat: "horns", hatColor: 0xff7a2a, back: "jetpack", backColor: 0x6f3822 },
-  { id: "orchid", name: "Orchid", body: 0xb05ad6, head: 0xffd6f4, rarity: "epic", cost: 420, hat: "bow", hatColor: 0xff9ec7, back: "cape", backColor: 0xb05ad6 },
-  // ---- legendary (glow) ----
-  { id: "phoenix", name: "Phoenix", body: 0xff6a2a, head: 0xffe14a, rarity: "legendary", cost: 700, glow: 0xff7a2a, hat: "crown", hatColor: 0xffe14a, back: "wings", backColor: 0xff7a2a },
-  { id: "aurora", name: "Aurora", body: 0x4ad6c0, head: 0xc8a0ff, rarity: "legendary", cost: 700, glow: 0x6ad7ff, hat: "halo", hatColor: 0x9fe8ff, back: "wings", backColor: 0x6ad7ff },
-  { id: "obsidian", name: "Obsidian", body: 0x141420, head: 0xff5a7a, rarity: "legendary", cost: 750, glow: 0xff3a6a, hat: "horns", hatColor: 0xff3a6a, back: "cape", backColor: 0x141420 },
-  { id: "celestine", name: "Celestine", body: 0xdfeaff, head: 0x7af7ff, rarity: "legendary", cost: 800, glow: 0x9fe8ff, hat: "halo", hatColor: 0x7af7ff, back: "wings", backColor: 0xdfeaff },
-  // ---- mythic (bright glow) ----
-  { id: "cosmic", name: "Cosmic", body: 0x2a1a5e, head: 0xff9ec7, rarity: "mythic", cost: 1300, glow: 0xc792ea, hat: "crown", hatColor: 0xc792ea, back: "wings", backColor: 0xc792ea },
-  { id: "prismatic", name: "Prismatic", body: 0xff5a7a, head: 0x6ad7ff, rarity: "mythic", cost: 1500, glow: 0xffd24a, hat: "halo", hatColor: 0xffd24a, back: "wings", backColor: 0xff5a7a },
-  { id: "eclipse", name: "Eclipse", body: 0x0e0e14, head: 0xffd24a, rarity: "mythic", cost: 1600, glow: 0xffe14a, hat: "crown", hatColor: 0xffe14a, back: "cape", backColor: 0x0e0e14 },
+  { id: "scout", name: "Scout", body: 0x9a7b4a, head: 0xf0e0c0, rarity: "common", cost: 40, hat: "cap", hatColor: 0x6a4a2a },
+  { id: "medic", name: "Medic", body: 0xeef1f3, head: 0xffe0d0, rarity: "common", cost: 50, hat: "helmet", hatColor: 0xff5a5a, emblem: 0xff3a3a },
+  { id: "diver", name: "Skyfarer", body: 0x5aa9e0, head: 0xeaf6ff, rarity: "common", cost: 50, hat: "antenna", hatColor: 0x6ad7ff },
+
+  // ===== UNCOMMON — critters & characters =====
+  { id: "kitty", name: "Tabby", body: 0xe09a4a, head: 0xffe0b0, rarity: "uncommon", cost: 90, hat: "ears", hatColor: 0xe09a4a },
+  { id: "bunny", name: "Cottontail", body: 0xf4eef0, head: 0xfff4f0, rarity: "uncommon", cost: 90, hat: "ears", hatColor: 0xffffff, back: "pack", backColor: 0xffd6e6 },
+  { id: "frog", name: "Frogling", body: 0x5fae3a, head: 0x9ad05a, rarity: "uncommon", cost: 100, hat: "antenna", hatColor: 0x7ad14a },
+  { id: "jester", name: "Jester", body: 0x8a3a8a, head: 0xffe0ea, rarity: "uncommon", cost: 110, hat: "bow", hatColor: 0xff9ec7 },
+  { id: "miner", name: "Miner", body: 0x5a6270, head: 0xe8d6a8, rarity: "uncommon", cost: 110, hat: "helmet", hatColor: 0xffd24a, back: "pack", backColor: 0x3a4250 },
+  { id: "punk", name: "Punk", body: 0x2a2a36, head: 0xf0d2c0, rarity: "uncommon", cost: 120, hat: "mohawk", hatColor: 0xff3a7a },
+  { id: "rosewood", name: "Rosewood", body: 0xd06a8a, head: 0xffe0ea, rarity: "uncommon", cost: 120, hat: "bow", hatColor: 0xff9ec7, back: "cape", backColor: 0xd06a8a },
+
+  // ===== RARE — classes & undead =====
+  { id: "knight", name: "Knight", body: 0x8a93a0, head: 0xc8d2dc, rarity: "rare", cost: 200, hat: "helmet", hatColor: 0xb6c0cc, back: "cape", backColor: 0xb23a3a },
+  { id: "wizard", name: "Wizard", body: 0x3a4ea0, head: 0xe8d6c0, rarity: "rare", cost: 210, hat: "wizard", hatColor: 0x3a3a8a },
+  { id: "ninja", name: "Ninja", body: 0x1c1c24, head: 0x2a2a36, rarity: "rare", cost: 210, hat: "hood", hatColor: 0x14141c },
+  { id: "pirate", name: "Buccaneer", body: 0x6a3a2a, head: 0xe8c0a0, rarity: "rare", cost: 220, hat: "pirate", hatColor: 0x2a2018, back: "cape", backColor: 0x8a2a2a },
+  { id: "skeleton", name: "Rattlebones", body: 0xe8e4d8, head: 0xfff8ee, rarity: "rare", cost: 230, hat: "none" },
+  { id: "mummy", name: "Mummy", body: 0xd8cba0, head: 0xe8dcc0, rarity: "rare", cost: 230, hat: "none", back: "cape", backColor: 0xc8b88a },
+  { id: "robot", name: "Mk-II Bot", body: 0x8a93a0, head: 0xb6c0cc, rarity: "rare", cost: 240, hat: "antenna", hatColor: 0xff5a4a, back: "pack", backColor: 0x5a6270, emblem: 0x6ad7ff },
+
+  // ===== EPIC — heroes & elements =====
+  { id: "astronaut", name: "Astronaut", body: 0xeef1f3, head: 0xbfe2f0, rarity: "epic", cost: 380, hat: "helmet", hatColor: 0xffffff, back: "jetpack", backColor: 0xcfd6dc },
+  { id: "samurai", name: "Samurai", body: 0x9a2a2a, head: 0xf0d2c0, rarity: "epic", cost: 390, hat: "helmet", hatColor: 0x2a2a36, back: "cape", backColor: 0x9a2a2a },
+  { id: "vampire", name: "Vampire", body: 0x2a1420, head: 0xe8dcea, rarity: "epic", cost: 400, hat: "tophat", hatColor: 0x140a14, back: "cape", backColor: 0x7a1a2a },
+  { id: "pumpkin", name: "Pumpkin King", body: 0x3a2a1a, head: 0xff7a2a, rarity: "epic", cost: 400, hat: "crown", hatColor: 0x5a8a2a },
+  { id: "cyborg", name: "Cyborg", body: 0x2a3450, head: 0x9fb6ff, rarity: "epic", cost: 410, hat: "visor", hatColor: 0x6ad7ff, back: "jetpack", backColor: 0x3a4660, emblem: 0x6ad7ff },
+  { id: "pharaoh", name: "Pharaoh", body: 0x2a3a8a, head: 0xffd24a, rarity: "epic", cost: 420, hat: "crown", hatColor: 0xffe14a, back: "cape", backColor: 0x2a3a8a, emblem: 0xffe14a },
+  { id: "glacier", name: "Glacier", body: 0x6fd0ff, head: 0xffffff, rarity: "epic", cost: 420, hat: "helmet", hatColor: 0xeaf6ff, back: "wings", backColor: 0xbfeaff },
+  { id: "inferno", name: "Inferno", body: 0xff4a2a, head: 0xffd24a, rarity: "epic", cost: 430, hat: "horns", hatColor: 0xff7a2a, back: "jetpack", backColor: 0x6f3822 },
+  { id: "midas", name: "Midas", body: 0xffcf52, head: 0xfff4d6, rarity: "epic", cost: 450, hat: "crown", hatColor: 0xffe14a, back: "cape", backColor: 0xffcf52, emblem: 0xffe14a },
+
+  // ===== LEGENDARY — mythics of the realm (glow) =====
+  { id: "phoenix", name: "Phoenix", body: 0xff6a2a, head: 0xffe14a, rarity: "legendary", cost: 700, glow: 0xff7a2a, hat: "crown", hatColor: 0xffe14a, back: "wings", backColor: 0xff7a2a, emblem: 0xffd24a },
+  { id: "angel", name: "Seraph", body: 0xfff4e0, head: 0xffe9b0, rarity: "legendary", cost: 700, glow: 0xfff0c0, hat: "halo", hatColor: 0xffe14a, back: "wings", backColor: 0xffffff },
+  { id: "demon", name: "Demon", body: 0x7a1420, head: 0xff5a4a, rarity: "legendary", cost: 720, glow: 0xff3a2a, hat: "horns", hatColor: 0x2a0a0e, back: "cape", backColor: 0x2a0a0e, emblem: 0xff3a2a },
+  { id: "reaper", name: "Reaper", body: 0x14141c, head: 0x4a4a5e, rarity: "legendary", cost: 750, glow: 0x7af7c0, hat: "hood", hatColor: 0x0a0a10, back: "cape", backColor: 0x0a0a10 },
+  { id: "lich", name: "Lich King", body: 0x1a2a3a, head: 0x6ad7c0, rarity: "legendary", cost: 780, glow: 0x6ad7ff, hat: "crown", hatColor: 0x6ad7ff, back: "cape", backColor: 0x1a2a3a, emblem: 0x6ad7ff },
+  { id: "dragonlord", name: "Dragonlord", body: 0x2a6a3a, head: 0xc8ff8a, rarity: "legendary", cost: 820, glow: 0x9aff5a, hat: "horns", hatColor: 0x1a4a2a, back: "wings", backColor: 0x2a6a3a, emblem: 0x9aff5a },
+  { id: "aurora", name: "Aurora", body: 0x4ad6c0, head: 0xc8a0ff, rarity: "legendary", cost: 820, glow: 0x6ad7ff, hat: "halo", hatColor: 0x9fe8ff, back: "wings", backColor: 0x6ad7ff },
+
+  // ===== MYTHIC — cosmic apex (bright glow) =====
+  { id: "cosmic", name: "Cosmic", body: 0x2a1a5e, head: 0xff9ec7, rarity: "mythic", cost: 1300, glow: 0xc792ea, hat: "wizard", hatColor: 0x4a2a8e, back: "wings", backColor: 0xc792ea, emblem: 0xffd24a },
+  { id: "prismatic", name: "Prismatic", body: 0xff5a7a, head: 0x6ad7ff, rarity: "mythic", cost: 1500, glow: 0xffd24a, hat: "halo", hatColor: 0xffd24a, back: "wings", backColor: 0xff5a7a, emblem: 0x7be08a },
+  { id: "voidemperor", name: "Void Emperor", body: 0x140a26, head: 0x8a5ad6, rarity: "mythic", cost: 1600, glow: 0x9a5ad6, hat: "crown", hatColor: 0x9a5ad6, back: "cape", backColor: 0x140a26, emblem: 0xc792ea },
+  { id: "starseraph", name: "Star Seraph", body: 0xeaf0ff, head: 0x9fe8ff, rarity: "mythic", cost: 1700, glow: 0x7af7ff, hat: "halo", hatColor: 0x7af7ff, back: "wings", backColor: 0xffffff, emblem: 0x7af7ff },
+  { id: "eclipse", name: "Eclipse", body: 0x0e0e14, head: 0xffd24a, rarity: "mythic", cost: 1800, glow: 0xffe14a, hat: "crown", hatColor: 0xffe14a, back: "wings", backColor: 0x0e0e14, emblem: 0xffe14a },
 ];
 
 export function findSkin(id: string): Skin {

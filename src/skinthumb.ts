@@ -67,6 +67,7 @@ export function skinThumbnail(skinId: string): string {
     cosmetic: { hat: skin.hat, hatColor: skin.hatColor, back: skin.back, backColor: skin.backColor },
   });
   if (skin.glow) char.setColor(skin.body, skin.head, skin.glow); // high-rarity sheen
+  char.setOutfit({ body: skin.body, pants: skin.pants, shoes: skin.shoes, belt: skin.belt, gloves: skin.gloves, emblem: skin.emblem });
   char.root.rotation.y = -Math.PI * 0.12;
   scene.add(char.root);
   let url = "";

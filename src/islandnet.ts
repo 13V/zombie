@@ -124,6 +124,7 @@ class PeerFigure {
       const sk = findSkin(sid);
       this.char.setCosmetic({ hat: sk.hat, hatColor: sk.hatColor, back: sk.back, backColor: sk.backColor });
       this.char.setColor(sk.body, sk.head, sk.glow ?? 0x000000);
+      this.char.setOutfit({ body: sk.body, pants: sk.pants, shoes: sk.shoes, belt: sk.belt, gloves: sk.gloves, emblem: sk.emblem });
     }
     // aura tier
     const tier = Math.max(0, Math.min(3, Math.floor(p.aura ?? 0)));
