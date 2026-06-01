@@ -172,6 +172,7 @@ export class Island {
     this.buildLighting();
     this.buildGreeter();
     this.buildAtmosphere();
+    this.buildSigns();
     this.buildMoodLights();
     this.applyShadows();
     scene.add(this.group);
@@ -1287,6 +1288,34 @@ export class Island {
     this.lbTex.needsUpdate = true;
   }
 
+  /** Floating nameplate signs above every interactive structure so players can
+   *  spot the Shop / Sanctuary / rooms / attractions at a glance. */
+  private buildSigns() {
+    const info: Record<string, { text: string; color: number; h: number }> = {
+      daily: { text: "DAILY CHEST", color: 0xffd24a, h: 3.6 },
+      index: { text: "COLLECTION", color: 0x6ad7ff, h: 5.6 },
+      wheel: { text: "FORTUNE WHEEL", color: 0xff9ec7, h: 6.4 },
+      pets: { text: "PET SANCTUARY", color: 0xff7ab0, h: 5.6 },
+      shop: { text: "SHOP", color: 0xffd24a, h: 3.8 },
+      join: { text: "JOIN FRIEND", color: 0x6ad7ff, h: 3.8 },
+    };
+    for (const z of this.zones) {
+      let text = "", color = 0xffffff, h = 4.2;
+      if (z.kind === "mode") {
+        text = z.modePlayers === 4 ? "SQUAD" : z.modePlayers === 2 ? "DUO" : "SOLO";
+        color = z.modePlayers === 4 ? 0xff5a3a : z.modePlayers === 2 ? 0x6ad7ff : 0x7be08a;
+        h = 4.4 + (z.modePlayers === 4 ? 0.8 : z.modePlayers === 2 ? 0.4 : 0);
+      } else if (info[z.kind]) {
+        ({ text, color, h } = info[z.kind]);
+      } else {
+        continue; // eggs are self-evident glowing shrines — no sign
+      }
+      const sign = makeSign(text, color);
+      sign.position.set(z.pos.x, h, z.pos.z);
+      this.group.add(sign);
+    }
+  }
+
   /** Lobby attractions: a daily reward chest, a pet-collection board, and a
    *  spinning fortune wheel — each a walk-up zone handled by main. */
   private buildAttractions() {
@@ -1309,8 +1338,9 @@ export class Island {
       this.chestGlow = glow;
       c.add(base, lid, clasp, glow);
       c.position.set(-2.5, 0, 9.8);
+      c.scale.setScalar(1.7); // bigger so it's an obvious landmark
       this.group.add(c);
-      this.zones.push({ id: "daily", kind: "daily", pos: new THREE.Vector3(-2.5, 0, 9.8), radius: 1.6, label: "Daily Reward Chest" });
+      this.zones.push({ id: "daily", kind: "daily", pos: new THREE.Vector3(-2.5, 0, 9.8), radius: 2.3, label: "Daily Reward Chest" });
     }
     // ---- pet collection board (left side) ----
     {
@@ -1328,8 +1358,9 @@ export class Island {
       const pos = new THREE.Vector3(-9, 0, 3);
       b.position.copy(pos);
       b.rotation.y = Math.atan2(-pos.x, -pos.z);
+      b.scale.setScalar(1.5);
       this.group.add(b);
-      this.zones.push({ id: "index", kind: "index", pos, radius: 1.9, label: "Pet Collection" });
+      this.zones.push({ id: "index", kind: "index", pos, radius: 2.6, label: "Pet Collection" });
     }
     // ---- fortune wheel (right side, near the eggs) ----
     {
@@ -1362,8 +1393,9 @@ export class Island {
       const pos = new THREE.Vector3(9, 0, 4);
       w.position.copy(pos);
       w.rotation.y = Math.atan2(-pos.x, -pos.z);
+      w.scale.setScalar(1.5);
       this.group.add(w);
-      this.zones.push({ id: "wheel", kind: "wheel", pos, radius: 1.9, label: "Fortune Wheel" });
+      this.zones.push({ id: "wheel", kind: "wheel", pos, radius: 2.6, label: "Fortune Wheel" });
     }
   }
 
@@ -1816,6 +1848,37 @@ export class Island {
       this.group.add(cloud);
     }
   }
+}
+
+/** A floating pill-shaped nameplate sign (canvas sprite, fog-immune) used to
+ *  label the hub's interactive structures so they're easy to find. */
+function makeSign(text: string, color: number): THREE.Sprite {
+  const c = document.createElement("canvas");
+  c.width = 256;
+  c.height = 64;
+  const g = c.getContext("2d")!;
+  g.font = "bold 30px system-ui, sans-serif";
+  const tw = g.measureText(text).width;
+  const w = Math.min(252, tw + 40);
+  const x = (256 - w) / 2;
+  g.beginPath();
+  (g as CanvasRenderingContext2D & { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }).roundRect(x, 8, w, 48, 16);
+  g.fillStyle = "rgba(28,20,12,0.85)";
+  g.fill();
+  g.lineWidth = 4;
+  g.strokeStyle = `#${color.toString(16).padStart(6, "0")}`;
+  g.stroke();
+  g.fillStyle = "#ffffff";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(text, 128, 33);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false, fog: false }));
+  sprite.scale.set(3.4, 0.85, 1);
+  return sprite;
 }
 
 /** Multiply an 0xRRGGBB color toward black (f in 0..1). */

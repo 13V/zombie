@@ -24,7 +24,7 @@ import { Combo } from "./combo";
 import { Drops, DropKind } from "./drops";
 import { Explosions } from "./explosions";
 import { Island, IslandZone } from "./island";
-import { IslandNet, makeBubble } from "./islandnet";
+import { IslandNet, makeBubble, makeNamePlate } from "./islandnet";
 import { EmoteMenu } from "./emotes";
 import type { EmoteId } from "./voxelChar";
 import { petThumbnail } from "./petthumb";
@@ -62,6 +62,7 @@ class Game implements GameApi {
   private _gatherPortal = ""; // mode portal I'm currently standing in (co-op gather)
   private _portalStarting = false; // a portal match is being launched (host or guest)
   private _localAura?: THREE.Mesh; // my own lobby flex aura (attached to player.group)
+  private _localPlate?: THREE.Sprite; // my own nameplate over my head in the hub
   private _lbAcc = 0; // throttle accumulator for the lobby leaderboard refresh
   private composer: EffectComposer;
   private clock = new THREE.Clock();
@@ -945,7 +946,7 @@ class Game implements GameApi {
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.interactables.setVisible(true); // restore the map fixtures for the run
-    this.setLocalAura(0); // drop the lobby aura for the run
+    this.setLocalAura(0); this.setLocalPlate(false); // drop the lobby cosmetics for the run
     this.hud.setIslandMode(false);
     this.hud.hidePrompt();
     this.resetRun();
@@ -1229,7 +1230,7 @@ class Game implements GameApi {
       this.island.setVisible(false);
       this.arena.group.visible = true;
       this.interactables.setVisible(true);
-      this.setLocalAura(0);
+      this.setLocalAura(0); this.setLocalPlate(false);
       this.hud.setIslandMode(false);
       this.hud.hidePrompt();
       this.resetRun();
@@ -1536,6 +1537,7 @@ class Game implements GameApi {
     this.island.setDailyReady(dayUtc(Date.now()) !== this.save.dailyChestDay); // chest glow
     this.spawnPets(); // bring the equipped squad into the hub so they follow + flex
     this.setLocalAura(this.auraTierFor()); // show my own earned aura in the hub
+    this.setLocalPlate(true); // and my own nameplate over my head
     this.player.group.position.copy(this.player.pos);
     this.hud.setIslandMode(true);
     this.emoteMenu?.setAvailable(true);
@@ -1581,7 +1583,7 @@ class Game implements GameApi {
   private leaveIsland() {
     this.disconnectIslandPresence();
     this.hud.hideEggPanel();
-    this.setLocalAura(0);
+    this.setLocalAura(0); this.setLocalPlate(false);
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.hud.setIslandMode(false);
@@ -1932,6 +1934,17 @@ class Game implements GameApi {
       best: this.save.bestRound,
       aura: this.auraTierFor(),
     });
+  }
+
+  /** Attach/refresh my own nameplate over my head in the hub (null = remove). */
+  private setLocalPlate(on: boolean) {
+    if (this._localPlate) { this.player.group.remove(this._localPlate); this._localPlate = undefined; }
+    if (on) {
+      const plate = makeNamePlate(this.save.name, this.titleFor(), this.save.prestige, this.save.bestRound);
+      plate.position.set(0, 2.5, 0);
+      this.player.group.add(plate);
+      this._localPlate = plate;
+    }
   }
 
   /** Attach/refresh my own aura disc (so I see my flex too); tier 0 removes it. */
