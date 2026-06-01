@@ -1005,13 +1005,46 @@ body.touch .controls { display: none; }
 #pet-index .pi-shiny { position: absolute; top: 2px; right: 4px; font-size: 12px; }
 
 /* ---- Fortune wheel ---- */
-#wheel-modal { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(20,14,10,0.72); backdrop-filter: blur(3px); z-index: 60; }
+#wheel-modal { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 42%, rgba(44,32,22,0.6), rgba(14,9,6,0.85)); backdrop-filter: blur(4px); z-index: 60; }
 #wheel-modal.show { display: flex; }
-#wheel-modal .wh-stage { position: relative; width: 300px; height: 320px; display: flex; align-items: center; justify-content: center; }
-#wheel-modal .wh-pointer { position: absolute; top: -6px; font-size: 34px; color: var(--gold); z-index: 2; text-shadow: 0 2px 0 rgba(0,0,0,0.4); }
-#wheel-modal .wh-wheel { position: relative; width: 280px; height: 280px; border-radius: 50%; border: 6px solid #3a2a1c; box-shadow: 0 0 30px rgba(0,0,0,0.5), inset 0 0 20px rgba(0,0,0,0.35); }
-#wheel-modal .wh-label { position: absolute; left: 50%; top: 50%; font-size: 14px; font-weight: bold; color: #2a1a0e; transform-origin: 0 0; text-shadow: 0 1px 0 rgba(255,255,255,0.4); }
-#wheel-modal .wh-hint { position: absolute; bottom: -6px; font-size: 13px; opacity: 0.7; }
+#wheel-modal .wh-stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+#wheel-modal .wh-title { font-size: 24px; font-weight: 800; color: var(--gold); letter-spacing: 1px; text-shadow: 0 3px 0 rgba(0,0,0,0.35), 0 0 22px rgba(255,210,74,0.4); }
+#wheel-modal .wh-wrap { position: relative; width: 340px; height: 340px; display: grid; place-items: center; }
+/* wooden rim with glowing pegs */
+#wheel-modal .wh-rim {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 50% 42%, #6a4628, #3a2410 78%);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.6), inset 0 0 0 7px #7a5230, inset 0 0 0 9px #4a3018, inset 0 5px 14px rgba(255,255,255,0.12);
+}
+#wheel-modal .wh-peg {
+  position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%; background: radial-gradient(circle, #fff, #ffd24a);
+  box-shadow: 0 0 9px 1px rgba(255,224,138,0.9); transform-origin: 50% 50%;
+}
+/* the spinning disc */
+#wheel-modal .wh-wheel {
+  position: absolute; width: 296px; height: 296px; border-radius: 50%;
+  box-shadow: inset 0 0 0 3px rgba(0,0,0,0.22), inset 0 7px 20px rgba(255,255,255,0.22), inset 0 -12px 26px rgba(0,0,0,0.3);
+}
+#wheel-modal .wh-label {
+  position: absolute; left: 50%; top: 50%; font-size: 15px; font-weight: 800;
+  color: #fff; transform-origin: 0 0; white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.65), 0 0 2px rgba(0,0,0,0.5);
+}
+/* gold centre hub */
+#wheel-modal .wh-hub {
+  position: absolute; width: 58px; height: 58px; border-radius: 50%; z-index: 3;
+  background: radial-gradient(circle at 40% 35%, #ffe9a8, #f2b73c 70%, #d49a2a);
+  border: 3px solid #7a5230; display: grid; place-items: center;
+  color: #7a5230; font-size: 26px; box-shadow: 0 4px 12px rgba(0,0,0,0.45), inset 0 2px 4px rgba(255,255,255,0.5);
+}
+/* pointer at 12 o'clock */
+#wheel-modal .wh-pointer {
+  position: absolute; top: -8px; z-index: 4; width: 0; height: 0;
+  border-left: 15px solid transparent; border-right: 15px solid transparent; border-top: 28px solid #ffd24a;
+  filter: drop-shadow(0 3px 3px rgba(0,0,0,0.55));
+}
+#wheel-modal .wh-hint { font-size: 14px; opacity: 0.75; font-weight: 600; }
 
 /* In the island hub, hide all gameplay HUD — only the lobby chrome stays. */
 .island-mode .hud-top,

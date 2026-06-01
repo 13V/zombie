@@ -1060,19 +1060,31 @@ export class Hud {
     }
     const n = labels.length;
     const seg = 360 / n;
-    const cols = ["#ff5a7a", "#ffd24a", "#6ad7ff", "#7be08a", "#c792ea", "#ff9ec7", "#ffd24a", "#9ad0ff"];
-    // build conic-gradient wheel + labels
-    const stops = labels.map((_, i) => `${cols[i % cols.length]} ${i * seg}deg ${(i + 1) * seg}deg`).join(", ");
+    // cohesive jewel palette; a thin dark divider is baked between each slice
+    const cols = ["#ff6b8a", "#ffcf52", "#5ec8e0", "#7be08a", "#b88ae0", "#ff9ec7", "#ffa94a", "#74c0fc"];
+    const div = "rgba(60,40,24,0.55)";
+    const stops = labels.map((_, i) => {
+      const a0 = i * seg, a1 = (i + 1) * seg;
+      return `${div} ${a0}deg ${a0 + 0.8}deg, ${cols[i % cols.length]} ${a0 + 0.8}deg ${a1}deg`;
+    }).join(", ");
     const labelEls = labels.map((l, i) => {
       const ang = i * seg + seg / 2;
-      return `<span class="wh-label" style="transform:rotate(${ang}deg) translateY(-118px) rotate(${-ang}deg)">${l}</span>`;
+      // rotate out to the slice, then counter-rotate so the text stays upright
+      return `<span class="wh-label" style="transform:rotate(${ang}deg) translateY(-100px) rotate(${-ang}deg) translate(-50%,-50%)">${l}</span>`;
     }).join("");
+    const pegs = Array.from({ length: 12 }, (_, i) =>
+      `<span class="wh-peg" style="transform:rotate(${i * 30}deg) translateY(-164px)"></span>`).join("");
     // land the winning segment under the top pointer (with several extra turns)
     const target = 360 * 5 - (win * seg + seg / 2);
     this.wheelEl.innerHTML = `
       <div class="wh-stage">
-        <div class="wh-pointer">▼</div>
-        <div class="wh-wheel" style="background:conic-gradient(${stops})">${labelEls}</div>
+        <div class="wh-title">🎡 Fortune Wheel</div>
+        <div class="wh-wrap">
+          <div class="wh-pointer"></div>
+          <div class="wh-rim">${pegs}</div>
+          <div class="wh-wheel" style="background:conic-gradient(${stops})">${labelEls}</div>
+          <div class="wh-hub">✦</div>
+        </div>
         <div class="wh-hint">good luck!</div>
       </div>`;
     this.wheelEl.classList.add("show");
