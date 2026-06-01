@@ -1600,6 +1600,9 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
   border-radius: 999px; padding: 6px 14px; font-weight: 800; font-size: 16px;
   box-shadow: 0 4px 14px rgba(0,0,0,0.3);
 }
+#bw-res .bw-hp { color: #ff6f6f; }
 #bw-res .bw-iron { color: #d8dde4; }
 #bw-res .bw-gold { color: #ffd24a; }
 #bw-res .bw-emerald { color: #7be08a; }
+#bw-res .bw-bed { color: #ffb4ac; }
+#bw-res .bw-foes { color: #ffd9a0; }

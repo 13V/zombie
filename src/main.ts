@@ -1605,7 +1605,21 @@ class Game implements GameApi {
     // The shop modal owns input while open — freeze movement/fire, allow Esc out.
     if (bw.shopOpen) {
       this.player.idle(dt);
-      bw.tick(dt);
+      bw.tick(dt, this.player.pos);
+      return;
+    }
+
+    // Dead and waiting to respawn (your bed still stands): freeze + sit it out.
+    // When the clock runs out BW re-seats you at base; we mirror that here.
+    if (bw.playerWaiting) {
+      this.player.idle(dt);
+      bw.tick(dt, this.player.pos);
+      if (bw.consumeRespawn()) {
+        this.player.pos.copy(bw.spawn());
+        this.player.group.position.copy(this.player.pos);
+      }
+      this.hud.hidePrompt();
+      if (this.input.pressed("Escape")) this.leaveBedWars();
       return;
     }
 
@@ -1639,12 +1653,13 @@ class Game implements GameApi {
     if (this.input.pressed("KeyR")) w.reload();
 
     this.bullets.update(dt);
-    // Per-bullet: hand the impact point to BW, which damages raiders / enemy beds.
+    // Per-bullet: hand the impact point to BW, which damages raiders, the enemy
+    // guardian, or the enemy bed (in that priority).
     for (const b of this.bullets.bullets) {
       if (!b.alive) continue;
       const hit = bw.resolveHit(b.mesh.position, b.damage);
       if (hit) {
-        const col = hit === "bed" ? 0xff5a4a : 0xffe14a;
+        const col = hit === "bed" ? 0xff5a4a : hit === "guard" ? 0xffffff : 0xffe14a;
         this.sparks.burst(b.mesh.position, col, 5, { speed: 8, spread: 2, streak: true });
         this.bullets.retire(b);
       }
@@ -1656,12 +1671,12 @@ class Game implements GameApi {
     else this.hud.hidePrompt();
     if (nearBase && this.input.pressed("KeyE")) bw.openShop();
 
-    bw.tick(dt);
+    bw.tick(dt, this.player.pos);
 
     // --- win / lose ---
     if (bw.result.over) {
       this.hud.hidePrompt();
-      this.hud.toast(bw.result.win ? "🏆 Victory! All beds destroyed." : "💀 Defeat — your bed fell.");
+      this.hud.toast(bw.result.win ? "🏆 Victory! Every enemy eliminated." : "💀 Defeat — your bed fell and you're out.");
       this.audio.shoot(bw.result.win ? 0.9 : 0.2);
       this._bwEndTimer = 3.2;
     }
