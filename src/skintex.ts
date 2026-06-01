@@ -142,53 +142,150 @@ function paint(g: CanvasRenderingContext2D, skin: Skin) {
     p.rect(X + Math.floor(W * 0.34), mY, Math.floor(W * 0.32), 2, 0x7a3a30, 1);
   }
 
-  // ===== BODY =====
-  s = 200;
-  for (const f of ["top", "bottom", "right", "front", "left", "back"] as const) p.shade(p.px("body", f), shirt, (s += 23));
-  // collar + chest seam on the front/back
-  for (const f of ["front", "back"] as const) {
-    const [X, Y, W, H] = p.px("body", f);
-    p.rect(X, Y, W, 2, lighter(shirt, 1.3), 1); // collar
-    p.rect(X + Math.floor(W / 2) - 1, Y + 2, 1, H - 8, shirt, 0.75); // seam
-    if (skin.pattern) pattern(p, skin.pattern, [X, Y + 2, W, H - 8], skin.glow ?? skin.emblem ?? lighter(shirt, 1.4));
+  // ===== OUTFIT (torso + arms + legs) — a designed garment, not a flat shirt =====
+  paintOutfit(p, skin, { tone, shirt, pants, shoes, glove });
+}
+
+const FACES = ["top", "bottom", "right", "front", "left", "back"] as const;
+type SideFace = "front" | "back" | "left" | "right";
+const SIDES: SideFace[] = ["front", "back", "left", "right"];
+
+function paintOutfit(p: Painter, skin: Skin, c: { tone: number; shirt: number; pants: number; shoes: number; glove: number }) {
+  const { tone, shirt, pants, shoes, glove } = c;
+  const trim = skin.trim ?? lighter(shirt, 1.45);
+  const tmpl = skin.outfit ?? "tee";
+  const dressLike = tmpl === "dress" || tmpl === "robe";
+  const shorts = skin.legwear === "shorts" || tmpl === "tank";
+
+  const fillPart = (part: keyof typeof ATLAS, color: number, seed: number, vg = 0.26) => {
+    let s = seed;
+    for (const f of FACES) p.shade(p.px(part, f), color, (s += 29), { vGrad: vg });
+  };
+  const onSides = (part: keyof typeof ATLAS, fn: (r: Rect, f: SideFace) => void) => {
+    for (const f of SIDES) fn(p.px(part, f), f);
+  };
+
+  // ---- TORSO ----
+  fillPart("body", shirt, 200);
+  onSides("body", ([X, Y, W, H], f) => {
+    // neck/collar hole (skin tone) at top centre
+    p.rect(X + Math.floor(W * 0.32), Y, Math.ceil(W * 0.36), 2, tone, 0.9);
+    p.rect(X, Y, W, 1, lighter(shirt, 1.3), 1); // shoulder seam highlight
+    if (skin.pattern && f === "front") pattern(p, skin.pattern, [X, Y + 3, W, H - 7], skin.glow ?? skin.emblem ?? trim);
+  });
+  const [bX, bY, bW, bH] = p.px("body", "front");
+  const [kX, kY, kW, kH] = p.px("body", "back");
+  switch (tmpl) {
+    case "hoodie": {
+      // hood roll, kangaroo pocket, drawstrings, zipper
+      for (const [X, Y, W] of [[bX, bY, bW], [kX, kY, kW]]) p.rect(X, Y, W, 3, darker(shirt, 0.82), 1); // hood roll
+      p.rect(bX + Math.floor(bW * 0.46), bY + 3, 1, 6, trim); p.rect(bX + Math.floor(bW * 0.54), bY + 3, 1, 6, trim); // drawstrings
+      p.rect(bX + Math.floor(bW * 0.2), bY + Math.floor(bH * 0.5), Math.floor(bW * 0.6), Math.floor(bH * 0.22), darker(shirt, 0.85), 1); // pocket
+      p.rect(bX + Math.floor(bW * 0.2), bY + Math.floor(bH * 0.5), Math.floor(bW * 0.6), 1, lighter(shirt, 1.2), 1); // pocket lip
+      p.rect(bX + Math.floor(bW / 2), bY + 3, 1, bH - 7, darker(shirt, 0.7), 1); // zipper
+      break;
+    }
+    case "jacket": {
+      // open jacket showing inner shirt + lapels + zipper
+      p.rect(bX + Math.floor(bW * 0.36), bY + 2, Math.ceil(bW * 0.28), bH - 6, trim, 1); // inner panel
+      p.rect(bX + Math.floor(bW / 2), bY + 2, 1, bH - 6, darker(trim, 0.7), 1); // zipper
+      p.rect(bX + Math.floor(bW * 0.28), bY + 1, 3, 5, darker(shirt, 0.8), 1); // lapel L
+      p.rect(bX + Math.floor(bW * 0.62), bY + 1, 3, 5, darker(shirt, 0.8), 1); // lapel R
+      break;
+    }
+    case "dress": case "robe": {
+      // bodice + a waist sash (legs continue the garment below)
+      p.rect(bX, bY + Math.floor(bH * 0.62), bW, 3, trim, 1);
+      p.rect(kX, kY + Math.floor(bH * 0.62), kW, 3, trim, 1);
+      if (tmpl === "robe") { p.rect(bX + Math.floor(bW * 0.44), bY + 2, Math.ceil(bW * 0.12), bH - 6, trim, 1); pattern(p, "runes", [bX + Math.floor(bW * 0.42), bY + 4, Math.ceil(bW * 0.16), bH - 10], skin.glow ?? trim); }
+      break;
+    }
+    case "armor": {
+      pattern(p, "plate", [bX, bY + 2, bW, bH - 6], lighter(shirt, 1.2));
+      p.rect(bX + Math.floor(bW * 0.38), bY + 2, Math.ceil(bW * 0.24), bH - 5, trim, 1); // tabard
+      break;
+    }
+    case "tank": {
+      // bare shoulders/sides (skin), two straps over them
+      for (const [X, Y, W, H] of [[bX, bY, bW, bH], [kX, kY, kW, kH]]) {
+        p.rect(X, Y, Math.floor(W * 0.22), Math.floor(H * 0.3), tone, 1);
+        p.rect(X + W - Math.floor(W * 0.22), Y, Math.floor(W * 0.22), Math.floor(H * 0.3), tone, 1);
+        p.rect(X + Math.floor(W * 0.22), Y, 2, Math.floor(H * 0.3), shirt, 1); // strap L
+        p.rect(X + W - Math.floor(W * 0.22) - 2, Y, 2, Math.floor(H * 0.3), shirt, 1); // strap R
+      }
+      break;
+    }
+    case "suit": {
+      p.rect(bX, bY + 1, bW, 2, lighter(shirt, 1.4), 1); // collar ring
+      p.rect(bX, bY + Math.floor(bH * 0.4), bW, 2, trim, 1); // accent stripe
+      p.rect(bX + Math.floor(bW * 0.34), bY + Math.floor(bH * 0.18), Math.ceil(bW * 0.32), Math.floor(bH * 0.16), 0x1a2230, 1); // chest panel
+      for (let i = 0; i < 3; i++) p.rect(bX + Math.floor(bW * 0.4) + i * 2, bY + Math.floor(bH * 0.22), 1, 1, [0xff5a5a, 0x7be08a, 0x6ad7ff][i], 1);
+      break;
+    }
+    case "tunic": {
+      p.rect(bX + Math.floor(bW * 0.44), bY, 3, Math.floor(bH * 0.4), tone, 1); // V-neck
+      break;
+    }
+    default: { // tee — short sleeves handled below + a hem
+      p.rect(bX, bY + bH - 3, bW, 1, darker(shirt, 0.8), 1);
+      p.rect(kX, kY + bH - 3, kW, 1, darker(shirt, 0.8), 1);
+      break;
+    }
   }
-  // belt + buckle, and a glowing chest emblem
-  for (const f of ["front", "back", "left", "right"] as const) {
-    const [X, Y, W, H] = p.px("body", f);
-    p.rect(X, Y + H - 4, W, 3, 0x241a12, 1);
-    p.rect(X + Math.floor(W / 2) - 2, Y + H - 4, 4, 3, 0xd8c060, 1); // buckle
-  }
+  // belt + buckle (skip for dresses/robes which flow to a hem) + emblem
+  if (!dressLike) onSides("body", ([X, Y, W, H]) => {
+    p.rect(X, Y + H - 4, W, 3, skin.trim && tmpl === "tunic" ? trim : 0x241a12, 1);
+    p.rect(X + Math.floor(W / 2) - 2, Y + H - 4, 4, 3, 0xd8c060, 1);
+  });
   if (skin.emblem !== undefined) {
-    const [X, Y, W, H] = p.px("body", "front");
-    const cx = X + Math.floor(W / 2), cy = Y + Math.floor(H * 0.42), rr = Math.floor(W * 0.18);
+    const cx = bX + Math.floor(bW / 2), cy = bY + Math.floor(bH * 0.4), rr = Math.floor(bW * 0.18);
     p.rect(cx - rr, cy - rr, rr * 2, rr * 2, skin.emblem, 0.5);
     p.rect(cx - rr + 1, cy - rr + 1, rr * 2 - 2, rr * 2 - 2, skin.emblem, 1);
     p.rect(cx - 1, cy - rr, 2, rr * 2, lighter(skin.emblem, 1.6), 1);
     p.rect(cx - rr, cy - 1, rr * 2, 2, lighter(skin.emblem, 1.6), 1);
   }
 
-  // ===== ARMS: shoulder pad + sleeve + bracer + glove hand =====
-  s = 320;
-  for (const f of ["top", "bottom", "right", "front", "left", "back"] as const) p.shade(p.px("arm", f), shirt, (s += 17));
-  for (const f of ["front", "back", "left", "right"] as const) {
-    const [X, Y, W, H] = p.px("arm", f);
-    p.rect(X, Y, W, 3, lighter(shirt, 1.25), 1); // shoulder pad highlight
-    p.rect(X, Y + H - Math.floor(H * 0.3), W, 2, glove, 1); // bracer cuff
-    for (let y = Y + H - Math.floor(H * 0.28); y < Y + H; y++) for (let x = 0; x < W; x++) p.rect(X + x, y, 1, 1, glove, 0.95 - (y - (Y + H - Math.floor(H * 0.28))) * 0.03); // glove
-  }
-  p.shade(p.px("arm", "bottom"), glove, 355, { ao: false });
+  // ---- ARMS ----
+  const longSleeve = !(tmpl === "tee" || tmpl === "tank");
+  fillPart("arm", shirt, 320);
+  onSides("arm", ([X, Y, W, H]) => {
+    p.rect(X, Y, W, 2, lighter(shirt, 1.25), 1); // shoulder cap
+    if (tmpl === "armor") { p.rect(X, Y, W, 4, lighter(shirt, 1.45), 1); p.rect(X, Y + 4, W, 1, 0xd8dde4, 1); } // pauldron
+    if (tmpl === "suit") p.rect(X, Y + Math.floor(H * 0.45), W, 2, trim, 1); // elbow ring
+    const cuffH = longSleeve ? Math.floor(H * 0.26) : Math.floor(H * 0.55); // short sleeve shows more bare arm
+    if (!longSleeve) { // bare forearm (skin) for tee/tank
+      for (let y = Y + (H - cuffH); y < Y + H; y++) for (let x = 0; x < W; x++) p.rect(X + x, y, 1, 1, tone, 0.96);
+      p.rect(X, Y + (H - cuffH), W, 1, darker(shirt, 0.8), 1); // sleeve hem
+    }
+    // glove/cuff at the wrist
+    const gH = Math.floor(H * 0.22);
+    for (let y = Y + H - gH; y < Y + H; y++) for (let x = 0; x < W; x++) p.rect(X + x, y, 1, 1, glove, 1);
+    p.rect(X, Y + H - gH, W, 1, lighter(glove, 1.3), 1);
+  });
+  p.shade(p.px("arm", "bottom"), tone, 355, { ao: false }); // palm
 
-  // ===== LEGS: pants + knee + boots =====
-  s = 420;
-  for (const f of ["top", "bottom", "right", "front", "left", "back"] as const) p.shade(p.px("leg", f), pants, (s += 13));
-  for (const f of ["front", "back", "left", "right"] as const) {
-    const [X, Y, W, H] = p.px("leg", f);
-    p.rect(X, Y + Math.floor(H * 0.45), W, 2, darker(pants, 0.8), 1); // knee seam
-    p.rect(X + 1, Y + Math.floor(H * 0.42), W - 2, 3, lighter(pants, 1.15), 1); // knee pad
+  // ---- LEGS ----
+  const legBase = dressLike ? shirt : pants;
+  fillPart("leg", legBase, 420);
+  onSides("leg", ([X, Y, W, H]) => {
+    if (dressLike) { // skirt/robe fabric flowing to a trim hem
+      for (let y = Y; y < Y + H; y++) for (let x = 0; x < W; x++) p.rect(X + x, y, 1, 1, legBase, 1.05 - (y - Y) / H * 0.3);
+      p.rect(X, Y + H - 3, W, 2, trim, 1); // hem
+      return;
+    }
+    p.rect(X, Y + 1, W, 2, darker(legBase, 0.82), 1); // waistband
+    if (shorts) { // bare lower legs (skin) for shorts
+      const sh = Math.floor(H * 0.42);
+      for (let y = Y + (H - sh); y < Y + H; y++) for (let x = 0; x < W; x++) p.rect(X + x, y, 1, 1, tone, 0.96);
+      p.rect(X, Y + (H - sh), W, 1, darker(legBase, 0.7), 1); // shorts hem
+    } else {
+      p.rect(X, Y + Math.floor(H * 0.46), W, 2, darker(legBase, 0.8), 1); // knee seam
+      if (tmpl === "armor") { p.rect(X, Y + Math.floor(H * 0.5), W, 1, 0xd8dde4, 1); } // greave
+    }
     const bootH = Math.floor(H * 0.3);
     for (let y = Y + H - bootH; y < Y + H; y++) for (let x = 0; x < W; x++) p.rect(X + x, y, 1, 1, shoes, 1 - (y - (Y + H - bootH)) * 0.03);
-    p.rect(X, Y + H - bootH, W, 1, lighter(shoes, 1.6), 1); // boot top trim
-  }
+    p.rect(X, Y + H - bootH, W, 1, lighter(shoes, 1.6), 1); // boot trim
+  });
   p.shade(p.px("leg", "bottom"), darker(shoes, 0.7), 444, { ao: false }); // sole
 }
 
