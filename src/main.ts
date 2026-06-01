@@ -136,6 +136,9 @@ class Game implements GameApi {
   private levelCards: RunUpgrade[] = [];
   private rerollCost = 0;
   private levelPicking = false;
+  /** Timestamp (ms) a level-up pick was committed; the loop watchdog force-resumes
+   *  the run if the normal setTimeout resume never fires (e.g. a throttled tab). 0 = idle. */
+  private _levelPickAt = 0;
   private runStats: RunStats = blankRunStats();
   private _runCasts: Record<string, number> = {}; // per-pet ability casts this run (trial tracking)
 
@@ -870,15 +873,21 @@ class Game implements GameApi {
   }
 
   /** Dismiss the level-up picker and unfreeze the run after the card's selection
-   *  animation. The SOLE resume path (see applyUpgrade) — also self-heals if a
-   *  previous pick somehow left levelPicking stuck by always clearing it. */
+   *  animation. The primary resume path (see applyUpgrade); the loop watchdog
+   *  (_levelPickAt) is an independent backstop if this timer is ever dropped. */
   private scheduleLevelUpResume() {
+    this._levelPickAt = performance.now(); // arm the watchdog
     // let the card's selection animation finish before unfreezing the game
-    setTimeout(() => {
-      this.hud.hideLevelUp();
-      this.levelPicking = false;
-      if (this.state === "levelup") this.state = "playing";
-    }, 420);
+    setTimeout(() => this.resumeFromLevelUp(), 420);
+  }
+
+  /** Actually dismiss the picker + resume play. Idempotent and safe to call from
+   *  either the setTimeout above or the loop watchdog — whichever fires first. */
+  private resumeFromLevelUp() {
+    this._levelPickAt = 0; // disarm the watchdog
+    this.hud.hideLevelUp();
+    this.levelPicking = false;
+    if (this.state === "levelup") this.state = "playing";
   }
 
   private startRun() {
@@ -1342,6 +1351,14 @@ class Game implements GameApi {
       else if (this.input.pressed("Digit2")) this.hud.pickLevelByIndex(1);
       else if (this.input.pressed("Digit3")) this.hud.pickLevelByIndex(2);
       else if (this.input.pressed("KeyR")) this.hud.triggerReroll();
+    }
+    // Watchdog: if a pick was committed but the normal resume never fired (a
+    // dropped/throttled setTimeout in a backgrounded tab, etc.), force the run
+    // back to playing so it can NEVER hang on the chosen card. Frame-loop based,
+    // independent of any timer. 2s >> the 420ms selection animation.
+    if (this._levelPickAt && performance.now() - this._levelPickAt > 2000) {
+      console.warn("level-up resume watchdog fired — forcing resume");
+      this.resumeFromLevelUp();
     }
 
     this.input.updateAim(this.camera);
