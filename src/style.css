@@ -867,6 +867,15 @@ body.touch .controls { display: none; }
 }
 #prompt.cant { border-color: var(--danger); }
 
+/* In the island hub, hide all gameplay HUD — only the lobby chrome stays. */
+.island-mode .hud-top,
+.island-mode .powerups,
+.island-mode .combo,
+.island-mode #rampage,
+.island-mode .bossbar,
+.island-mode .hud-bottom,
+.island-mode #overdrive { display: none !important; }
+
 /* Egg-odds panel: shown above the prompt when standing by a gacha egg. */
 #egg-panel {
   position: absolute;

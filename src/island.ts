@@ -107,12 +107,16 @@ export class Island {
   private savedBg: THREE.Color | THREE.Texture | null = null;
   private savedEnv = 0.5;
   private moodSaved = false;
+  // original intensity/color of the shared scene lights, so the hub can dim +
+  // warm them for golden hour and restore them exactly on the way out
+  private lightOrig = new Map<THREE.Light, { intensity: number; color: number }>();
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
     this.buildGround();
     this.buildWater();
     this.buildDecor();
+    this.buildBackdrop();
     this.buildPlaza();
     this.buildPaths();
     this.buildFountain();
@@ -153,13 +157,25 @@ export class Island {
       this.savedFog = this.scene.fog;
       this.savedBg = this.scene.background as THREE.Color | THREE.Texture | null;
       this.savedEnv = this.scene.environmentIntensity ?? 0.5;
+      // snapshot the shared scene lights once (arena's sun/hemi/fill)
+      for (const c of this.scene.children) {
+        const l = c as THREE.Light;
+        if (l.isLight) this.lightOrig.set(l, { intensity: l.intensity, color: l.color.getHex() });
+      }
       this.moodSaved = true;
     }
     // warm haze hugging the island + a soft peach sky, dimmed IBL so the warm
     // lights & lantern bloom carry the cozy golden-hour mood.
-    this.scene.fog = new THREE.Fog(0xf2c489, 26, 78);
-    this.scene.background = new THREE.Color(0xf3d3a0);
-    this.scene.environmentIntensity = 0.34;
+    this.scene.fog = new THREE.Fog(0xf0bb7a, 22, 70);
+    this.scene.background = new THREE.Color(0xf6cf94);
+    this.scene.environmentIntensity = 0.3;
+    // dim + warm the shared daylight so the scene actually reads golden-hour
+    // rather than washing out under the bright neutral arena sun.
+    for (const [l, o] of this.lightOrig) {
+      const isKey = o.intensity > 1; // the strong directional key
+      l.intensity = o.intensity * (isKey ? 0.42 : 0.55);
+      l.color.setHex(isKey ? 0xffc486 : 0xffd9ad);
+    }
   }
 
   private exitMood() {
@@ -167,6 +183,10 @@ export class Island {
     this.scene.fog = this.savedFog;
     this.scene.background = this.savedBg;
     this.scene.environmentIntensity = this.savedEnv;
+    for (const [l, o] of this.lightOrig) {
+      l.intensity = o.intensity;
+      l.color.setHex(o.color);
+    }
   }
 
   /** Opaque structures cast + receive contact shadows; glassy/glow/transparent
@@ -458,8 +478,6 @@ export class Island {
   private buildDecor() {
     const trunk = voxelMaterial(VOX.bark);
     const trunkDark = voxelMaterial(VOX.barkDark);
-    const leaf = voxelMaterial(VOX.leaf);
-    const leafLight = voxelMaterial(VOX.leafLight);
     const rock = voxelMaterial(VOX.rock);
     const tuft = voxelMaterial(VOX.grassLight);
     const flowers = [VOX.flowerPink, VOX.flowerYellow, VOX.flowerWhite, VOX.flowerRed];
@@ -474,17 +492,27 @@ export class Island {
     const tooClose = (x: number, z: number, pad: number) =>
       clearPts.some((p) => (p.x - x) ** 2 + (p.z - z) ** 2 < pad * pad);
 
+    // autumn-mixed canopies (green / gold / amber / russet) like the reference —
+    // each paired with a lighter "lit top" tone for that sun-kissed crown.
+    const canopies: [number, number][] = [
+      [VOX.leaf, VOX.leafLight], [VOX.leaf, VOX.leafLight],
+      [0xe8a23c, 0xffc861], // gold
+      [0xd9762e, 0xf0a24a], // amber
+      [0xc24a35, 0xe0734f], // russet
+    ];
     const makeTree = (x: number, z: number) => {
       const tree = new THREE.Group();
-      const th = 1.8 + rnd() * 1.8;
-      const tk = new THREE.Mesh(new THREE.BoxGeometry(0.55, th, 0.55), rnd() < 0.5 ? trunk : trunkDark);
+      const [cMain, cTop] = canopies[Math.floor(rnd() * canopies.length)];
+      const main = voxelMaterial(cMain);
+      const th = 2.0 + rnd() * 2.2;
+      const tk = new THREE.Mesh(new THREE.BoxGeometry(0.6, th, 0.6), rnd() < 0.5 ? trunk : trunkDark);
       tk.position.y = th / 2;
-      const c1 = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.5, 2.1), leaf);
-      c1.position.y = th + 0.5;
-      const c2 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.2, 1.5), leaf);
-      c2.position.y = th + 1.45;
-      const c3 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.9), leafLight);
-      c3.position.y = th + 2.2;
+      const c1 = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 2.4), main);
+      c1.position.y = th + 0.55;
+      const c2 = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.3, 1.7), main);
+      c2.position.y = th + 1.6;
+      const c3 = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.9, 1.0), voxelMaterial(cTop));
+      c3.position.y = th + 2.45;
       tree.add(tk, c1, c2, c3);
       tree.position.set(x, 0, z);
       tree.rotation.y = rnd() * Math.PI;
@@ -557,6 +585,45 @@ export class Island {
         peb.position.set(x, s * 0.3, z);
         this.group.add(peb);
       }
+    }
+  }
+
+  /** Big layered rock outcrops near the shore — a craggy skyline that frames the
+   *  village like the cliffs in the reference (placed behind the tree band). */
+  private buildBackdrop() {
+    const tones = [VOX.rock, VOX.rockDark, VOX.stone, VOX.stoneDark];
+    let seed = 24680;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const count = 9;
+    for (let i = 0; i < count; i++) {
+      // bias outcrops toward the back/sides so they read as a backdrop, not clutter
+      const a = (i / count) * Math.PI * 2 + (rnd() - 0.5) * 0.4;
+      const r = ISLAND.shore - 3 - rnd() * 4;
+      const cx = Math.cos(a) * r;
+      const cz = Math.sin(a) * r;
+      const outcrop = new THREE.Group();
+      // a craggy stack: a few large blocks of decreasing size piled + jittered
+      const layers = 3 + Math.floor(rnd() * 3);
+      let w = 4 + rnd() * 4;
+      let y = 0;
+      for (let k = 0; k < layers; k++) {
+        const h = 1.6 + rnd() * 2.2;
+        const blk = new THREE.Mesh(
+          new THREE.BoxGeometry(w, h, w * (0.7 + rnd() * 0.5)),
+          voxelMaterial(tones[Math.floor(rnd() * tones.length)]),
+        );
+        blk.position.set((rnd() - 0.5) * 1.4, y + h / 2, (rnd() - 0.5) * 1.4);
+        blk.rotation.y = rnd() * 0.6;
+        outcrop.add(blk);
+        y += h * (0.7 + rnd() * 0.2);
+        w *= 0.66 + rnd() * 0.14;
+      }
+      // a little snow/grass cap on the tallest for a peak
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.7, w + 0.4), voxelMaterial(rnd() < 0.5 ? 0xeef2f6 : VOX.grass));
+      cap.position.y = y + 0.3;
+      outcrop.add(cap);
+      outcrop.position.set(cx, 0, cz);
+      this.group.add(outcrop);
     }
   }
 
@@ -713,47 +780,66 @@ export class Island {
     ];
     for (const m of modes) {
       const gate = new THREE.Group();
-      // width/height scale up with "grandeur" (solo=0, duo=1, squad=2)
-      const halfW = 1.5 + m.grand * 0.55;
-      const height = 3.2 + m.grand * 0.9;
+      // big stone arches — width/height scale up with grandeur (solo/duo/squad)
+      const halfW = 1.9 + m.grand * 0.7;
+      const height = 4.2 + m.grand * 1.2;
+      const thick = 0.95;
       const stone = voxelMaterial(VOX.stone);
       const stoneDark = voxelMaterial(VOX.stoneDark);
 
-      // pillars: chunky stacked-stone posts (extra outer posts on the squad gate)
-      const pillarXs = m.grand >= 2 ? [-halfW, -halfW * 0.45, halfW * 0.45, halfW] : [-halfW, halfW];
-      for (const px of pillarXs) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, height, 0.55), stone);
-        post.position.set(px, height / 2, 0);
-        gate.add(post);
-        // a darker cap block on each pillar
-        const cap = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.4, 0.75), stoneDark);
-        cap.position.set(px, height + 0.2, 0);
-        gate.add(cap);
-      }
-      // lintel + (for grander gates) battlements on top
-      const lintel = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2 + 0.8, 0.55, 0.6), stoneDark);
-      lintel.position.set(0, height + 0.55, 0);
-      gate.add(lintel);
-      if (m.grand >= 1) {
-        const merlonN = m.grand >= 2 ? 5 : 3;
-        for (let i = 0; i < merlonN; i++) {
-          const mer = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.6), stone);
-          mer.position.set(-halfW + 0.3 + (i / (merlonN - 1)) * (halfW * 2 - 0.6), height + 1.0, 0);
-          gate.add(mer);
+      // a stacked-stone column with a wider plinth foot + a darker cap block
+      const column = (px: number) => {
+        const plinth = new THREE.Mesh(new THREE.BoxGeometry(thick + 0.5, 0.5, thick + 0.5), stoneDark);
+        plinth.position.set(px, 0.25, 0);
+        gate.add(plinth);
+        // stack blocks (slight size jitter) so the shaft reads as hand-laid masonry
+        const blocks = Math.round((height - 0.5) / 0.7);
+        let seed = Math.floor(px * 97) + m.grand * 13 + 1;
+        const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+        for (let b = 0; b < blocks; b++) {
+          const bw = thick + (rnd() - 0.5) * 0.16;
+          const blk = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.7, thick), b % 2 ? stoneDark : stone);
+          blk.position.set(px + (rnd() - 0.5) * 0.06, 0.5 + 0.35 + b * 0.7, 0);
+          gate.add(blk);
         }
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(thick + 0.5, 0.45, thick + 0.5), stoneDark);
+        cap.position.set(px, height + 0.05, 0);
+        gate.add(cap);
+      };
+      [-halfW, halfW].forEach(column);
+
+      // layered ziggurat arch crowning the gate (stacked beams stepping inward)
+      const archLayers = 2 + m.grand;
+      for (let k = 0; k < archLayers; k++) {
+        const lw = halfW * 2 + 0.9 - k * 0.9;
+        const beam = new THREE.Mesh(new THREE.BoxGeometry(Math.max(0.8, lw), 0.5, thick + 0.3), k % 2 ? stone : stoneDark);
+        beam.position.set(0, height + 0.35 + k * 0.5, 0);
+        gate.add(beam);
       }
-      // keystone gem set into the lintel, tier-colored + glowing
-      const key = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), glowMaterial(m.color, 1.3));
-      key.position.set(0, height + 0.55, 0.34);
-      gate.add(key);
+      const archTopY = height + 0.35 + archLayers * 0.5;
+      // battlements on top
+      const merlonN = 3 + m.grand;
+      for (let i = 0; i < merlonN; i++) {
+        const mer = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, thick + 0.3), stone);
+        mer.position.set(-halfW + 0.5 + (i / (merlonN - 1)) * (halfW * 2 - 1.0), archTopY, 0);
+        gate.add(mer);
+      }
+      // a big glowing keystone gem at the apex, front + back
+      for (const kz of [thick / 2 + 0.18, -(thick / 2 + 0.18)]) {
+        const key = new THREE.Mesh(new THREE.OctahedronGeometry(0.46, 0), glowMaterial(m.color, 1.4));
+        (key.geometry as THREE.BufferGeometry).scale(1, 1.3, 1);
+        key.position.set(0, height + 0.6, kz);
+        gate.add(key);
+      }
 
       // ---- portal: a dark doorway "void" with bright energy bars flowing up ----
       // The dark backdrop (normal-blended) reads as a real opening; the additive
       // tier-colored bars + bloom turn it into a glowing portal rather than a
       // flat pale sheet.
       const veilH = height;
+      const openW = halfW * 2 - thick - 0.15; // clear span between the pillar faces
       const veil = new THREE.Mesh(
-        new THREE.PlaneGeometry(halfW * 2 - 0.25, veilH),
+        new THREE.PlaneGeometry(openW, veilH),
         new THREE.MeshStandardMaterial({
           color: darken(m.color, 0.22), emissive: darken(m.color, 0.3), emissiveIntensity: 0.5,
           transparent: true, opacity: 0.82, depthWrite: false,
@@ -766,7 +852,7 @@ export class Island {
       const slatN = 7;
       for (let i = 0; i < slatN; i++) {
         const slat = new THREE.Mesh(
-          new THREE.PlaneGeometry(halfW * 2 - 0.4, 0.22),
+          new THREE.PlaneGeometry(openW - 0.15, 0.24),
           new THREE.MeshStandardMaterial({
             color: m.color, emissive: m.color, emissiveIntensity: 1.8,
             transparent: true, opacity: 0.55, depthWrite: false,
@@ -795,17 +881,11 @@ export class Island {
         gate.add(tg);
         this.flames.push(flame);
       }
-      if (m.grand >= 2) {
-        // squad gate gets a banner on each tall pillar
-        for (const bx of [-halfW, halfW]) {
-          const banner = this.makeBanner(m.color, height);
-          banner.group.position.set(bx, height - 0.3, 0.32);
-          gate.add(banner.group);
-          this.banners.push(banner.rec);
-        }
-      } else if (m.grand >= 1) {
+      // hang tier banners on the pillar faces (both pillars on grander gates)
+      const bannerXs = m.grand >= 1 ? [-halfW, halfW] : [];
+      for (const bx of bannerXs) {
         const banner = this.makeBanner(m.color, height);
-        banner.group.position.set(0, height + 0.3, 0.4);
+        banner.group.position.set(bx, height - 0.6, thick / 2 + 0.1);
         gate.add(banner.group);
         this.banners.push(banner.rec);
       }
@@ -906,9 +986,9 @@ export class Island {
       g.add(ringGlow);
 
       // --- the egg: a big faceted, gem-like ovoid (flat-shaded catches light) ---
-      const eggGeo = new THREE.IcosahedronGeometry(0.56, 1);
+      const eggGeo = new THREE.IcosahedronGeometry(0.66, 1);
       eggGeo.scale(1, 1.34, 1);
-      const egg = new THREE.Mesh(eggGeo, glowMaterial(e.color, 0.95));
+      const egg = new THREE.Mesh(eggGeo, glowMaterial(e.color, 1.3));
       egg.position.y = 2.05;
       // speckle pattern: bright accent cubes banded around the shell
       const speckN = 6;
@@ -921,7 +1001,7 @@ export class Island {
       g.add(egg);
 
       // --- breathing aura shell ---
-      const aura = new THREE.Mesh(new THREE.IcosahedronGeometry(0.86, 1), auraMaterial(e.color, 0.6));
+      const aura = new THREE.Mesh(new THREE.IcosahedronGeometry(1.0, 1), auraMaterial(e.color, 0.6));
       (aura.geometry as THREE.BufferGeometry).scale(1, 1.32, 1);
       aura.position.y = 2.05;
       g.add(aura);

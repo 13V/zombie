@@ -286,6 +286,10 @@ export class Hud {
   /** Toggle the on-island HUD affordances (a small "leave island" control). */
   setIslandMode(on: boolean) {
     this.q("#island-bar").classList.toggle("hidden", !on);
+    // hide all the gameplay HUD (round/points/health/weapon/combo/…) in the hub;
+    // CSS keys off this class so only the lobby chrome (prompt/toast/island bar)
+    // stays up. See `.island-mode` rules in style.css.
+    this.root.classList.toggle("island-mode", on);
   }
   onLeaveIsland(cb: () => void) {
     this.q("#btn-leave-island").addEventListener("click", cb);
