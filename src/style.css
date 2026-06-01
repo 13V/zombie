@@ -1612,3 +1612,16 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 #bw-res .bw-clock { color: #c9b6ff; }
 #bw-res .bw-trap-flash { color: #ffd24a; background: rgba(90,40,10,0.85) !important; }
 #bw-res .bw-trap-flash:empty { display: none; }
+
+#td-hud {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 10px; z-index: 30; pointer-events: none;
+}
+#td-hud .td-r {
+  background: rgba(18,26,32,0.84); border: 1.5px solid rgba(255,255,255,0.14);
+  border-radius: 999px; padding: 6px 14px; font-weight: 800; font-size: 16px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+#td-hud .td-gold { color: #ffd24a; }
+#td-hud .td-lives { color: #ff6f6f; }
+#td-hud .td-wave { color: #7fd4ff; }

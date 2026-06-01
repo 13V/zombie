@@ -41,6 +41,8 @@ import { SKINS, findSkin } from "./cosmetics";
 import { skinThumbnail } from "./skinthumb";
 import { skinTexture } from "./skintex";
 import { BedWarsMode } from "./bedwars/bwmode";
+import { TdMode } from "./td/tdmode";
+import { TD_TOWER_IDS } from "./td/tdtowers";
 import { makeItem, rollRarity, rollRarityPity, resetPity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, AffixCode, warmServer, getServerUrl, setServerUrl } from "./net";
@@ -52,7 +54,7 @@ import { COLORS, auraMaterial } from "./palette";
 import { TiltShift } from "./tiltShift";
 import { Puffs } from "./puffs";
 
-type State = "menu" | "island" | "playing" | "paused" | "over" | "levelup" | "bedwars";
+type State = "menu" | "island" | "playing" | "paused" | "over" | "levelup" | "bedwars" | "td";
 
 class Game implements GameApi {
   private renderer: THREE.WebGLRenderer;
@@ -145,6 +147,8 @@ class Game implements GameApi {
   private state: State = "menu";
   private bw?: BedWarsMode; // Bed Wars-lite mode controller (lazy)
   private _bwEndTimer = 0;   // countdown after a BW match ends, then return to hub
+  private td?: TdMode;       // Tower-Defense mode controller (lazy)
+  private _tdEndTimer = 0;   // countdown after a TD run ends, then return to hub
 
   // multiplayer (undefined = single-player)
   private net?: NetClient;
@@ -1526,7 +1530,7 @@ class Game implements GameApi {
     if (warpActive) dt *= 2;
     this.hud.setOverdrive(warpActive); // persistent "2× OVERDRIVE" banner
 
-    this.touch?.setActive(this.state === "playing" || this.state === "paused" || this.state === "island");
+    this.touch?.setActive(this.state === "playing" || this.state === "paused" || this.state === "island" || this.state === "bedwars" || this.state === "td");
     this.player.showAimGuide(this.state === "playing");
     if (this.state === "playing") {
       if (this.netplay && !this.netplay.isHost) this.simulateGuest(dt);
@@ -1535,6 +1539,8 @@ class Game implements GameApi {
       this.simulateIsland(dt);
     } else if (this.state === "bedwars") {
       this.simulateBedwars(dt);
+    } else if (this.state === "td") {
+      this.simulateTd(dt);
     } else {
       this.player.idle(dt); // keep the figure breathing on menu / pause / over
     }
@@ -1586,6 +1592,88 @@ class Game implements GameApi {
     this.bullets.clear();
     this.hud.hidePrompt();
     this.enterIsland();
+  }
+
+  /** Enter Tower-Defense: hide hub/arena, load the TD field; you're the engineer
+   *  who walks between pads raising towers while waves march your lane. */
+  private enterTd() {
+    if (!this.td) this.td = new TdMode(this.scene);
+    this.disconnectIslandPresence();
+    this.island.setVisible(false);
+    this.arena.group.visible = false;
+    this.interactables.setVisible(false);
+    this.setLocalAura(0); this.setLocalPlate(false);
+    this.hud.hideEggPanel();
+    this.hud.hidePrompt();
+    this.hud.hideCombatHud(true);     // hide combat HUD; TD draws its own
+    this.hud.setIslandPopulation(-1); // drop the island presence chip
+    this.emoteMenu?.setAvailable(false);
+    this.weapons = [];                // no personal weapon — your towers do the shooting
+    this.bullets.clear();
+    this._tdEndTimer = 0;
+    this.td.enter();
+    this.player.pos.copy(this.td.spawn());
+    this.player.group.position.copy(this.player.pos);
+    this.camZoomTarget = 2.2;         // pull back to read the whole lane
+    this.applyPlayerSkin();
+    this.spawnPets();
+    this.state = "td";
+  }
+
+  private leaveTd() {
+    this.td?.leave();
+    this.hud.hidePrompt();
+    this.enterIsland();
+  }
+
+  /** Walk the engineer, build/upgrade/sell at pads, call waves, run the loop. */
+  private simulateTd(dt: number) {
+    const td = this.td;
+    if (!td) return;
+
+    if (td.result.over) {
+      if (this._tdEndTimer > 0) { this._tdEndTimer -= dt; if (this._tdEndTimer <= 0) this.leaveTd(); }
+      this.player.idle(dt);
+      td.tick(dt, this.player.pos);
+      return;
+    }
+
+    // move the engineer (no aiming/firing — towers fight for you)
+    const axis = this.input.moveAxis(this._axis);
+    this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, false);
+    td.clamp(this.player.pos);
+    this.player.group.position.copy(this.player.pos);
+    this.pets.forEach((p, i) => p.update(dt, this.player.pos.x, this.player.pos.z, i, this.pets.length, null));
+
+    // build / upgrade / sell at the nearest pad
+    const pad = td.nearestPad(this.player.pos);
+    if (pad >= 0) {
+      const occ = td.towerAt(pad);
+      if (occ) {
+        this.hud.showPrompt(`${occ.id} ${"★".repeat(occ.tier)} — E upgrade · X sell`, true);
+        if (this.input.pressed("KeyE")) td.upgrade(pad);
+        if (this.input.pressed("KeyX")) td.sell(pad);
+      } else {
+        this.hud.showPrompt("Build: 1 Arrow 50 · 2 Frost 75 · 3 Cannon 110", true);
+        if (this.input.pressed("Digit1")) td.build(pad, TD_TOWER_IDS[0]);
+        if (this.input.pressed("Digit2")) td.build(pad, TD_TOWER_IDS[1]);
+        if (this.input.pressed("Digit3")) td.build(pad, TD_TOWER_IDS[2]);
+      }
+    } else {
+      this.hud.hidePrompt();
+    }
+
+    if (td.isBetweenWaves && this.input.pressed("Space")) td.startNextWave();
+
+    td.tick(dt, this.player.pos);
+
+    if (td.result.over) {
+      this.hud.hidePrompt();
+      this.hud.toast(td.result.win ? "🏆 All waves cleared — base held!" : "💀 The base was overrun.");
+      this.audio.shoot(td.result.win ? 0.9 : 0.2);
+      this._tdEndTimer = 3.4;
+    }
+    if (this.input.pressed("Escape")) this.leaveTd();
   }
 
   /** Raid + defend: move, shoot raiders & enemy beds, shop at your base, win/lose. */
@@ -1944,6 +2032,9 @@ class Game implements GameApi {
         break;
       case "bedwars":
         this.enterBedWars();
+        break;
+      case "td":
+        this.enterTd();
         break;
     }
   }

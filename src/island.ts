@@ -64,7 +64,7 @@ const CLEAR_PTS = [...GATES, ...PADS].map((d) => d.pos).concat(
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
   id: string;
-  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel" | "wardrobe" | "bedwars";
+  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel" | "wardrobe" | "bedwars" | "td";
   pos: THREE.Vector3;
   radius: number; // proximity radius that triggers the prompt
   label: string; // shown in the proximity prompt
@@ -1299,6 +1299,7 @@ export class Island {
       wheel: { text: "FORTUNE WHEEL", color: 0xff9ec7, h: 6.4 },
       wardrobe: { text: "WARDROBE", color: 0xc792ea, h: 4.6 },
       bedwars: { text: "BED WARS", color: 0xff5a4a, h: 4.6 },
+      td: { text: "TOWER DEFENSE", color: 0x7fd4ff, h: 4.6 },
       pets: { text: "PET SANCTUARY", color: 0xff7ab0, h: 5.6 },
       shop: { text: "SHOP", color: 0xffd24a, h: 3.8 },
       join: { text: "JOIN FRIEND", color: 0x6ad7ff, h: 3.8 },
@@ -1475,6 +1476,40 @@ export class Island {
       g.rotation.y = Math.atan2(-pos.x, -pos.z);
       this.group.add(g);
       this.zones.push({ id: "bedwars", kind: "bedwars", pos, radius: 2.4, label: "Bed Wars" });
+    }
+    // ---- TOWER DEFENSE portal: a podium with a little turret on a winding lane ----
+    {
+      const g = new THREE.Group();
+      const stone = voxelMaterial(VOX.stone);
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.0, 0.4, 8), stone);
+      pad.position.y = 0.2;
+      const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 0.12, 20), glowMaterial(0x7fd4ff, 0.7));
+      ring.position.y = 0.42;
+      g.add(pad, ring);
+      // a stubby turret on the pad (base + body + glowing barrel)
+      const tbase = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.4, 1.0), stone);
+      tbase.position.set(0, 0.6, 0);
+      const tbody = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), voxelMaterial(0x9fe0a0));
+      tbody.position.set(0, 1.0, 0);
+      const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.9), glowMaterial(0x7fd4ff, 0.8));
+      barrel.position.set(0, 1.1, 0.6);
+      g.add(tbase, tbody, barrel);
+      // two posts + a blue arch beam behind
+      for (const px of [-1.7, 1.7]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, 3.4, 0.4), stone);
+        post.position.set(px, 1.7, -0.6);
+        g.add(post);
+      }
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.5, 0.5), glowMaterial(0x7fd4ff, 0.8));
+      beam.position.set(0, 3.4, -0.6);
+      const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), glowMaterial(0x9fe0a0, 1.2));
+      crystal.position.set(0, 3.4, -0.4);
+      g.add(beam, crystal);
+      const pos = new THREE.Vector3(-13, 0, 10);
+      g.position.copy(pos);
+      g.rotation.y = Math.atan2(-pos.x, -pos.z);
+      this.group.add(g);
+      this.zones.push({ id: "td", kind: "td", pos, radius: 2.4, label: "Tower Defense" });
     }
   }
 
