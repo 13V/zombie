@@ -1139,6 +1139,9 @@ export class Hud {
    *  lobby chrome — used by Bed Wars, which draws its own resource HUD. */
   hideCombatHud(on: boolean) {
     this.root.classList.toggle("island-mode", on);
+    // Bed Wars is NOT the island lobby: also pull down the island bottom bar
+    // (the "walk up to a glowing pad / Leave Island" chrome) when hiding.
+    if (on) this.q("#island-bar").classList.add("hidden");
   }
 
   /** Is a dismissable menu overlay currently up (shop modal or pet index)? */

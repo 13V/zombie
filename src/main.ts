@@ -1565,6 +1565,8 @@ class Game implements GameApi {
     this.hud.hideEggPanel();
     this.hud.hidePrompt();
     this.hud.hideCombatHud(true); // hide combat HUD; BW draws its own resource HUD
+    this.hud.setIslandPopulation(-1); // drop the "N players here" presence chip
+    this.emoteMenu?.setAvailable(false); // hide the island emote button (T = upgrades here)
     // Arm the raider with a fast auto SMG (own loadout, separate from the run).
     this.weapons = [new Weapon(WEAPONS.buzzgun)];
     this.activeSlot = 0;

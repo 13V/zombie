@@ -207,12 +207,19 @@ export class BedWarsMode {
   // ── diamond / emerald gem generators (walk-to-collect) ─────────────────────
   private buildGemGens() {
     this.clearGems();
+    // Diamonds sit on the four MID islands (between team bases); emeralds on the
+    // big centre platform. Derive the mid radius from the team-island offset so
+    // gems land ON the islands, not in the void gaps. (wiki 4-team layout:
+    // 4 diamond generators + 2 emerald generators.)
+    const R = Math.abs(this.map.teams[0]?.base.x ?? 22);
+    const c = this.map.center;
     const spots: { kind: BwResource; pos: THREE.Vector3 }[] = [
-      { kind: "diamond", pos: new THREE.Vector3(12, 0, 0) },
-      { kind: "diamond", pos: new THREE.Vector3(-12, 0, 0) },
-      { kind: "diamond", pos: new THREE.Vector3(0, 0, 12) },
-      { kind: "diamond", pos: new THREE.Vector3(0, 0, -12) },
-      { kind: "emerald", pos: this.map.center.clone().setY(0) },
+      { kind: "diamond", pos: new THREE.Vector3(R, 0, 0) },
+      { kind: "diamond", pos: new THREE.Vector3(-R, 0, 0) },
+      { kind: "diamond", pos: new THREE.Vector3(0, 0, R) },
+      { kind: "diamond", pos: new THREE.Vector3(0, 0, -R) },
+      { kind: "emerald", pos: new THREE.Vector3(c.x - 4.5, 0, c.z) },
+      { kind: "emerald", pos: new THREE.Vector3(c.x + 4.5, 0, c.z) },
     ];
     for (const s of spots) {
       const mesh = this.makeGemMesh(s.kind);
