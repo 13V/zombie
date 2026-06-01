@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { voxelMaterial } from "./palette";
+import { voxelMaterial, glowMaterial } from "./palette";
 import { AnimState, CharacterRig } from "./assets";
 import { GunStyle, buildGun } from "./gunModels";
 
@@ -7,6 +7,16 @@ import { GunStyle, buildGun } from "./gunModels";
 export type EmoteId = "wave" | "dance" | "sit" | "cheer";
 /** Default play length (seconds) per emote; "sit" loops until movement clears it. */
 const EMOTE_DUR: Record<EmoteId, number> = { wave: 2.2, dance: 3.2, sit: 0, cheer: 2.0 };
+
+/** Cosmetic headwear / back accessory styles a skin can equip. */
+export type HatStyle = "none" | "cap" | "crown" | "helmet" | "horns" | "halo" | "tophat" | "ears" | "mohawk" | "antenna" | "visor" | "bow";
+export type BackStyle = "none" | "cape" | "wings" | "pack" | "jetpack";
+export interface CosmeticSpec {
+  hat?: HatStyle;
+  hatColor?: number;
+  back?: BackStyle;
+  backColor?: number;
+}
 
 export interface VoxelCharOpts {
   body: number;
@@ -17,6 +27,8 @@ export interface VoxelCharOpts {
   gun?: boolean;
   /** Shambling gait + forward-reaching arms. */
   zombie?: boolean;
+  /** Cosmetic headwear / back accessory (skins). */
+  cosmetic?: CosmeticSpec;
 }
 
 /**
@@ -32,6 +44,7 @@ export class VoxelChar implements CharacterRig {
   private armL: THREE.Group;
   private armR: THREE.Group;
   private upper = new THREE.Group(); // torso + head + arms (for bob/lean)
+  private cosmetic = new THREE.Group(); // skin headwear + back accessory
 
   private state: AnimState = "idle";
   private t = 0;
@@ -86,6 +99,11 @@ export class VoxelChar implements CharacterRig {
     this.armR = this.makeArm(bodyMat, 0.52);
     this.upper.add(this.armL, this.armR);
 
+    // cosmetic kit (hat + back accessory) lives in its own group so a skin swap
+    // can rebuild it without touching the body.
+    this.upper.add(this.cosmetic);
+    if (opts.cosmetic) this.setCosmetic(opts.cosmetic);
+
     if (opts.gun) {
       this.gunHolder = new THREE.Group();
       this.gunHolder.position.set(0.32, 1.02, 0.26); // right hand, barrel forward
@@ -138,6 +156,103 @@ export class VoxelChar implements CharacterRig {
     this.bodyMat.emissiveIntensity = emissive === 0x000000 ? 1 : 0.5;
     this.baseEmissive = emissive;
     this.headMat.color.set(head);
+  }
+
+  /** (Re)build the cosmetic kit (skin hat + back accessory). Cheap voxel boxes;
+   *  clears the previous kit's geometry so a skin swap doesn't leak. */
+  setCosmetic(spec: CosmeticSpec) {
+    for (const o of this.cosmetic.children) {
+      const m = o as THREE.Mesh;
+      m.geometry?.dispose?.();
+      (m.material as THREE.Material)?.dispose?.();
+    }
+    this.cosmetic.clear();
+    const hc = spec.hatColor ?? 0xffffff;
+    const bx = (w: number, h: number, d: number, x: number, y: number, z: number, color: number, glow = false) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), glow ? glowMaterial(color, 1.0) : voxelMaterial(color));
+      m.position.set(x, y, z);
+      m.castShadow = !glow;
+      this.cosmetic.add(m);
+      return m;
+    };
+    // ---- headwear (head top ≈ y2.22) ----
+    switch (spec.hat) {
+      case "cap":
+        bx(0.82, 0.16, 0.82, 0, 2.3, 0, hc);
+        bx(0.5, 0.1, 0.5, 0, 2.42, 0, hc);
+        bx(0.6, 0.1, 0.4, 0, 2.26, 0.42, hc); // brim
+        break;
+      case "crown":
+        bx(0.86, 0.16, 0.86, 0, 2.32, 0, hc);
+        for (const a of [0, 1, 2, 3, 4]) {
+          const ang = (a / 5) * Math.PI * 2;
+          bx(0.14, 0.26, 0.14, Math.cos(ang) * 0.34, 2.5, Math.sin(ang) * 0.34, hc, true);
+        }
+        break;
+      case "helmet":
+        bx(0.9, 0.5, 0.9, 0, 2.2, 0, hc);
+        bx(0.16, 0.4, 0.16, 0, 2.7, 0, hc, true); // plume
+        break;
+      case "horns":
+        for (const sx of [-1, 1]) {
+          bx(0.16, 0.5, 0.16, sx * 0.42, 2.4, 0, hc);
+          bx(0.14, 0.28, 0.14, sx * 0.56, 2.72, 0, hc);
+        }
+        break;
+      case "halo":
+        { const ring = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.07, 6, 20), glowMaterial(hc, 1.4));
+          ring.rotation.x = Math.PI / 2; ring.position.y = 2.62; this.cosmetic.add(ring); }
+        break;
+      case "tophat":
+        bx(0.95, 0.12, 0.95, 0, 2.26, 0, hc);
+        bx(0.62, 0.6, 0.62, 0, 2.6, 0, hc);
+        bx(0.66, 0.1, 0.66, 0, 2.5, 0, 0x222222); // band
+        break;
+      case "ears":
+        for (const sx of [-1, 1]) bx(0.2, 0.34, 0.16, sx * 0.26, 2.5, 0, hc);
+        break;
+      case "mohawk":
+        for (let i = 0; i < 5; i++) bx(0.14, 0.34 - Math.abs(i - 2) * 0.06, 0.5, 0, 2.5, 0.28 - i * 0.14, hc, true);
+        break;
+      case "antenna":
+        for (const sx of [-1, 1]) {
+          bx(0.06, 0.4, 0.06, sx * 0.18, 2.5, 0, 0x333333);
+          bx(0.16, 0.16, 0.16, sx * 0.18, 2.74, 0, hc, true);
+        }
+        break;
+      case "visor":
+        bx(0.8, 0.18, 0.1, 0, 1.92, 0.42, hc, true);
+        break;
+      case "bow":
+        for (const sx of [-1, 1]) bx(0.22, 0.26, 0.16, sx * 0.22, 2.36, 0, hc);
+        bx(0.14, 0.14, 0.18, 0, 2.36, 0, hc);
+        break;
+      default: break;
+    }
+    // ---- back accessory (behind the torso) ----
+    const bc = spec.backColor ?? hc;
+    switch (spec.back) {
+      case "cape":
+        { const cape = bx(0.74, 1.1, 0.1, 0, 1.0, -0.32, bc); cape.rotation.x = 0.12; }
+        break;
+      case "wings":
+        for (const sx of [-1, 1]) {
+          const w1 = bx(0.7, 0.5, 0.08, sx * 0.55, 1.5, -0.3, bc, true); w1.rotation.z = sx * 0.5; w1.rotation.y = sx * 0.5;
+          const w2 = bx(0.5, 0.36, 0.08, sx * 0.85, 1.15, -0.34, bc, true); w2.rotation.z = sx * 0.5; w2.rotation.y = sx * 0.5;
+        }
+        break;
+      case "pack":
+        bx(0.5, 0.6, 0.3, 0, 1.2, -0.4, bc);
+        bx(0.16, 0.16, 0.12, 0, 1.5, -0.56, 0x333333);
+        break;
+      case "jetpack":
+        for (const sx of [-1, 1]) {
+          bx(0.22, 0.6, 0.22, sx * 0.26, 1.25, -0.42, bc);
+          bx(0.16, 0.18, 0.16, sx * 0.26, 0.9, -0.42, 0xff7a2a, true); // exhaust glow
+        }
+        break;
+      default: break;
+    }
   }
 
   /** White flash on hit (0..1); fades back to the variant's base emissive. */

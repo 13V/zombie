@@ -216,6 +216,8 @@ export interface PresenceMsg {
   best?: number;
   /** Cosmetic aura tier (0 none .. 3) earned from prestige/best round. */
   aura?: number;
+  /** Equipped skin id, so peers render its hat/cape/glow cosmetic kit. */
+  skinId?: string;
 }
 
 /** Island social — a played emote (wave/dance/sit/cheer). Broadcast once on

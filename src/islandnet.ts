@@ -3,6 +3,7 @@ import { VoxelChar, EmoteId } from "./voxelChar";
 import { NetClient, NetMsg, PresenceMsg } from "./net";
 import { EMOTES, QUICK_CHAT } from "./emotes";
 import { Pet, findAnyPet } from "./pets";
+import { findSkin } from "./cosmetics";
 import { auraMaterial } from "./palette";
 
 const PEER_PET_CAP = 4; // how many of a peer's pets we render (perf)
@@ -59,6 +60,7 @@ class PeerFigure {
   private plateKey = ""; // current name/title/prestige/best (rebuild on change)
   private aura?: THREE.Mesh;
   private auraTier = 0;
+  private skinId = ""; // current cosmetic skin (rebuild kit on change)
   best = 0; // peer's best round (for the lobby leaderboard)
   get displayName(): string { return this.name; }
 
@@ -114,6 +116,14 @@ class PeerFigure {
         this.scene.add(pet.group);
         this.pets.push(pet);
       });
+    }
+    // equipped skin → hat/cape cosmetic kit + high-rarity glow
+    const sid = typeof p.skinId === "string" ? p.skinId.slice(0, 24) : "";
+    if (sid && sid !== this.skinId) {
+      this.skinId = sid;
+      const sk = findSkin(sid);
+      this.char.setCosmetic({ hat: sk.hat, hatColor: sk.hatColor, back: sk.back, backColor: sk.backColor });
+      this.char.setColor(sk.body, sk.head, sk.glow ?? 0x000000);
     }
     // aura tier
     const tier = Math.max(0, Math.min(3, Math.floor(p.aura ?? 0)));
@@ -207,8 +217,8 @@ export class IslandNet {
   private menuOpen = false;
   private portal = ""; // mode portal I'm standing in (broadcast in my pose)
   // my own "flex" cosmetics, broadcast in each pose so peers can render them
-  private flex: { pets: string[]; title: string; prestige: number; best: number; aura: number } =
-    { pets: [], title: "", prestige: 0, best: 0, aura: 0 };
+  private flex: { pets: string[]; title: string; prestige: number; best: number; aura: number; skinId: string } =
+    { pets: [], title: "", prestige: 0, best: 0, aura: 0, skinId: "" };
   /** Fired when a peer hatches an egg, so main can play the lobby celebration at
    *  their position. (x,z) = peer's current spot; rarity 0..6; shiny flag. */
   onHatch?: (x: number, z: number, rarity: number, shiny: boolean, petId: string) => void;
@@ -263,7 +273,7 @@ export class IslandNet {
   }
 
   /** Update my broadcast "flex" cosmetics (equipped pets, title, prestige, …). */
-  setFlex(f: { pets: string[]; title: string; prestige: number; best: number; aura: number }) {
+  setFlex(f: { pets: string[]; title: string; prestige: number; best: number; aura: number; skinId: string }) {
     this.flex = f;
   }
 
@@ -301,6 +311,7 @@ export class IslandNet {
         prestige: this.flex.prestige || undefined,
         best: this.flex.best || undefined,
         aura: this.flex.aura || undefined,
+        skinId: this.flex.skinId || undefined,
       };
       this.net.send(msg); // broadcast to the whole instance
     }

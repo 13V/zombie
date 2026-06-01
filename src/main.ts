@@ -272,6 +272,7 @@ class Game implements GameApi {
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
     const skin = findSkin(this.save.skin);
     this.player.setSkin(skin.body, skin.head, skin.glow ?? 0x000000);
+    this.player.setCosmetic({ hat: skin.hat, hatColor: skin.hatColor, back: skin.back, backColor: skin.backColor });
     this.renderShop();
 
     this.rounds.onRoundStart = (n) => {
@@ -827,6 +828,7 @@ class Game implements GameApi {
     this.save.skin = id;
     writeSave(this.save);
     this.player.setSkin(skin.body, skin.head, skin.glow ?? 0x000000);
+    this.player.setCosmetic({ hat: skin.hat, hatColor: skin.hatColor, back: skin.back, backColor: skin.backColor });
     this.renderShop();
   }
 
@@ -1965,6 +1967,7 @@ class Game implements GameApi {
       prestige: this.save.prestige,
       best: this.save.bestRound,
       aura: this.auraTierFor(),
+      skinId: this.save.skin,
     });
   }
 

@@ -62,7 +62,10 @@ export function skinThumbnail(skinId: string): string {
     return "";
   }
   const skin = findSkin(skinId);
-  const char = new VoxelChar({ body: skin.body, head: skin.head, eye: 0x222222, gun: true });
+  const char = new VoxelChar({
+    body: skin.body, head: skin.head, eye: 0x222222, gun: true,
+    cosmetic: { hat: skin.hat, hatColor: skin.hatColor, back: skin.back, backColor: skin.backColor },
+  });
   if (skin.glow) char.setColor(skin.body, skin.head, skin.glow); // high-rarity sheen
   char.root.rotation.y = -Math.PI * 0.12;
   scene.add(char.root);
