@@ -57,6 +57,7 @@ export function recordScore(board: ScoreEntry[], entry: ScoreEntry, cap = LEADER
 
 export interface SaveData {
   version: number; // save-schema version (for future migrations; starts at 1)
+  name: string; // player display name shown to others in the island hub
   lastSeen: number; // ms epoch of the last writeSave (drives offline accrual)
   prestige: number; // ascension currency — permanent gold/essence multiplier
   lifetimeGold: number; // running total of all gold ever earned (prestige basis)
@@ -95,9 +96,15 @@ function blankDaily(): DailyState {
   return { dayUtc: 0, progress: {}, claimed: [] };
 }
 
+/** A friendly default display name (e.g. "Survivor4821") for the hub. */
+function randomName(): string {
+  return `Survivor${1000 + Math.floor(Math.random() * 9000)}`;
+}
+
 function blank(): SaveData {
   return {
     version: 1,
+    name: randomName(),
     lastSeen: 0,
     prestige: 0,
     lifetimeGold: 0,
@@ -229,6 +236,7 @@ export function loadSave(): SaveData {
     return {
       // version: clamp to >=1 so a corrupt/0 value still reads as the v1 schema.
       version: Math.max(1, Math.floor(num(data.version, 1))),
+      name: typeof data.name === "string" && data.name.trim() ? data.name.slice(0, 16) : randomName(),
       lastSeen: num(data.lastSeen),
       prestige: Math.floor(num(data.prestige)),
       lifetimeGold: num(data.lifetimeGold),

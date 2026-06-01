@@ -205,6 +205,17 @@ export interface PresenceMsg {
   /** Mode-portal the player is currently standing in (e.g. "mode_quad"), for the
    *  co-op gather/matchmaking count. Omitted/empty when not in a portal. */
   portal?: string;
+  // ---- lobby "flex" cosmetics (all optional; peers render what they get) ----
+  /** Equipped pet ids so peers see your squad follow you. */
+  pets?: string[];
+  /** Earned display title shown under the name (e.g. "Round 50 Survivor"). */
+  title?: string;
+  /** Prestige (ascension) level — shown as stars on the nameplate. */
+  prestige?: number;
+  /** Best round reached — shown as a badge on the nameplate. */
+  best?: number;
+  /** Cosmetic aura tier (0 none .. 3) earned from prestige/best round. */
+  aura?: number;
 }
 
 /** Island social — a played emote (wave/dance/sit/cheer). Broadcast once on

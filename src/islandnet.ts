@@ -2,6 +2,11 @@ import * as THREE from "three";
 import { VoxelChar, EmoteId } from "./voxelChar";
 import { NetClient, NetMsg, PresenceMsg } from "./net";
 import { EMOTES, QUICK_CHAT } from "./emotes";
+import { Pet, findAnyPet } from "./pets";
+import { auraMaterial } from "./palette";
+
+const PEER_PET_CAP = 4; // how many of a peer's pets we render (perf)
+const AURA_COLORS = [0x000000, 0x6ad7ff, 0xc792ea, 0xffd24a]; // tier 0..3
 
 // The relay is untrusted: only accept emote ids / chat we actually broadcast.
 const VALID_EMOTES = new Set<string>(EMOTES.map((e) => e.id));
@@ -47,12 +52,22 @@ class PeerFigure {
   private bubble?: THREE.Sprite;
   private bubbleT = 0; // seconds remaining on the current speech bubble
   private typing?: THREE.Sprite;
+  // ---- flex cosmetics ----
+  private name = "";
+  private pets: Pet[] = [];
+  private petKey = ""; // current pet-id set (rebuild on change)
+  private plateKey = ""; // current name/title/prestige/best (rebuild on change)
+  private aura?: THREE.Mesh;
+  private auraTier = 0;
+  best = 0; // peer's best round (for the lobby leaderboard)
+  get displayName(): string { return this.name; }
 
   constructor(private scene: THREE.Scene, look: PeerLook) {
     this.char = new VoxelChar({ body: look.body, head: look.head, eye: 0x222222, hat: 0xf2c14e, gun: false });
     this.group.add(this.char.root);
-    if (look.name) {
-      this.label = makeLabel(look.name);
+    this.name = look.name ?? "";
+    if (this.name) {
+      this.label = makeNamePlate(this.name, "", 0, 0);
       this.group.add(this.label);
     }
     scene.add(this.group);
@@ -68,6 +83,49 @@ class PeerFigure {
     this.walking = p.moving;
     this.portal = typeof p.portal === "string" ? p.portal.slice(0, 16) : "";
     this.setTyping(!!p.menuOpen);
+    this.applyFlex(p);
+  }
+
+  /** Rebuild the nameplate / pets / aura when a peer's flex data changes. */
+  private applyFlex(p: PresenceMsg) {
+    // nameplate (name + title + prestige stars + best round)
+    const title = typeof p.title === "string" ? p.title.slice(0, 28) : "";
+    const prestige = Math.max(0, Math.min(99, Math.floor(p.prestige ?? 0)));
+    const best = Math.max(0, Math.min(999, Math.floor(p.best ?? 0)));
+    this.best = best;
+    const plateKey = `${this.name}|${title}|${prestige}|${best}`;
+    if (plateKey !== this.plateKey && this.name) {
+      this.plateKey = plateKey;
+      if (this.label) { this.group.remove(this.label); disposeSprite(this.label); }
+      this.label = makeNamePlate(this.name, title, prestige, best);
+      this.group.add(this.label);
+    }
+    // pets following the peer
+    const ids = Array.isArray(p.pets) ? p.pets.filter((s) => typeof s === "string").slice(0, PEER_PET_CAP) : [];
+    const key = ids.join("|");
+    if (key !== this.petKey) {
+      this.petKey = key;
+      for (const pet of this.pets) this.scene.remove(pet.group);
+      this.pets = [];
+      ids.forEach((id) => {
+        const def = findAnyPet(id);
+        if (!def) return;
+        const pet = new Pet(def, 0, 1, false);
+        this.scene.add(pet.group);
+        this.pets.push(pet);
+      });
+    }
+    // aura tier
+    const tier = Math.max(0, Math.min(3, Math.floor(p.aura ?? 0)));
+    if (tier !== this.auraTier) {
+      this.auraTier = tier;
+      if (this.aura) { this.group.remove(this.aura); (this.aura.geometry as THREE.BufferGeometry).dispose(); this.aura = undefined; }
+      if (tier > 0) {
+        this.aura = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.0, 0.12, 18), auraMaterial(AURA_COLORS[tier], 0.7));
+        this.aura.position.y = 0.08;
+        this.group.add(this.aura);
+      }
+    }
   }
 
   /** Play an emote received from this peer. */
@@ -111,6 +169,14 @@ class PeerFigure {
     // emoting peers keep idle as the base state so the emote can layer over it
     this.char.play(this.walking ? "walk" : "idle");
     this.char.update(dt);
+    // pets orbit the peer (peaceful — no combat in the hub)
+    const px = this.group.position.x, pz = this.group.position.z;
+    this.pets.forEach((pet, i) => pet.update(dt, px, pz, i, this.pets.length, null));
+    // aura breathes
+    if (this.aura) {
+      const s = 1 + Math.sin(performance.now() * 0.003) * 0.08;
+      this.aura.scale.set(s, 1, s);
+    }
     // expire speech bubbles
     if (this.bubble) {
       this.bubbleT -= dt;
@@ -127,6 +193,8 @@ class PeerFigure {
     if (this.label) disposeSprite(this.label);
     if (this.bubble) disposeSprite(this.bubble);
     if (this.typing) disposeSprite(this.typing);
+    for (const pet of this.pets) this.scene.remove(pet.group);
+    this.pets = [];
   }
 }
 
@@ -138,6 +206,9 @@ export class IslandNet {
   private name?: string;
   private menuOpen = false;
   private portal = ""; // mode portal I'm standing in (broadcast in my pose)
+  // my own "flex" cosmetics, broadcast in each pose so peers can render them
+  private flex: { pets: string[]; title: string; prestige: number; best: number; aura: number } =
+    { pets: [], title: "", prestige: 0, best: 0, aura: 0 };
   /** Fired when a peer hatches an egg, so main can play the lobby celebration at
    *  their position. (x,z) = peer's current spot; rarity 0..6; shiny flag. */
   onHatch?: (x: number, z: number, rarity: number, shiny: boolean, petId: string) => void;
@@ -191,6 +262,18 @@ export class IslandNet {
     this.portal = id ?? "";
   }
 
+  /** Update my broadcast "flex" cosmetics (equipped pets, title, prestige, …). */
+  setFlex(f: { pets: string[]; title: string; prestige: number; best: number; aura: number }) {
+    this.flex = f;
+  }
+
+  /** Best-round standings for every named peer (for the lobby leaderboard). */
+  standings(): { name: string; best: number }[] {
+    const out: { name: string; best: number }[] = [];
+    for (const f of this.peers.values()) if (f.displayName) out.push({ name: f.displayName, best: f.best });
+    return out;
+  }
+
   /** Ids of OTHER players currently standing in the given portal. */
   occupants(portalId: string): number[] {
     const ids: number[] = [];
@@ -213,6 +296,11 @@ export class IslandNet {
         t: "presence", x: me.x, z: me.z, ry: me.ry, moving: me.moving,
         skin: this.body, head: this.head, name: this.name, menuOpen: this.menuOpen,
         portal: this.portal || undefined,
+        pets: this.flex.pets.length ? this.flex.pets : undefined,
+        title: this.flex.title || undefined,
+        prestige: this.flex.prestige || undefined,
+        best: this.flex.best || undefined,
+        aura: this.flex.aura || undefined,
       };
       this.net.send(msg); // broadcast to the whole instance
     }
@@ -298,6 +386,49 @@ export function makeLabel(name: string): THREE.Sprite {
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false }));
   sprite.scale.set(2.2, 0.55, 1);
   sprite.position.set(0, 2.2, 0);
+  return sprite;
+}
+
+/** A rich nameplate: name + prestige stars on top, an earned title / best-round
+ *  badge underneath — the lobby "flex" plate floating over a peer's head. */
+export function makeNamePlate(name: string, title: string, prestige: number, best: number): THREE.Sprite {
+  const c = document.createElement("canvas");
+  c.width = 320;
+  c.height = 112;
+  const g = c.getContext("2d")!;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  // line 1: prestige stars (gold) + name (white)
+  const stars = prestige > 0 ? "★".repeat(Math.min(5, prestige)) + (prestige > 5 ? `+${prestige - 5}` : "") : "";
+  g.font = "bold 34px system-ui, sans-serif";
+  g.lineWidth = 6;
+  g.strokeStyle = "rgba(0,0,0,0.85)";
+  const nameY = title || best ? 36 : 56;
+  if (stars) {
+    g.strokeText(stars, 160, 12);
+    g.fillStyle = "#ffd24a";
+    g.fillText(stars, 160, 12);
+  }
+  g.strokeText(name, 160, nameY);
+  g.fillStyle = "#ffffff";
+  g.fillText(name, 160, nameY);
+  // line 2: title (+ best round badge)
+  const sub = [title, best > 0 ? `Round ${best}` : ""].filter(Boolean).join("  ·  ");
+  if (sub) {
+    g.font = "bold 22px system-ui, sans-serif";
+    g.lineWidth = 5;
+    g.strokeStyle = "rgba(0,0,0,0.85)";
+    g.strokeText(sub, 160, nameY + 32);
+    g.fillStyle = "#ffe9a8";
+    g.fillText(sub, 160, nameY + 32);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false }));
+  sprite.scale.set(2.9, 1.0, 1);
+  sprite.position.set(0, 2.4, 0);
   return sprite;
 }
 

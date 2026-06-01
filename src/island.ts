@@ -138,6 +138,8 @@ export class Island {
   private lilies: THREE.Mesh[] = [];
   private sanctuaryOrb?: THREE.Mesh; // spinning centerpiece of the Pet Sanctuary
   private sanctuaryHearts?: THREE.Group; // little hearts orbiting it
+  private lbCanvas?: HTMLCanvasElement; // leaderboard board face
+  private lbTex?: THREE.CanvasTexture;
   private smokes: Mote[] = []; // chimney smoke puffs (reuse the Mote drift record)
   // warm golden-hour mood — applied to the shared scene only while the hub shows
   private scene: THREE.Scene;
@@ -162,6 +164,7 @@ export class Island {
     this.buildModes();
     this.buildEggs();
     this.buildSanctuary();
+    this.buildLeaderboard();
     this.buildHouses();
     this.buildLighting();
     this.buildGreeter();
@@ -1196,6 +1199,71 @@ export class Island {
     g.rotation.y = Math.atan2(-SANCTUARY.x, -SANCTUARY.z); // face the plaza
     this.group.add(g);
     this.zones.push({ id: "pets", kind: "pets", pos: SANCTUARY.clone(), radius: 2.5, label: "Pet Sanctuary — equip & flex your pets" });
+  }
+
+  /** A wooden notice board in the plaza showing the hub's top survivors; the face
+   *  is a canvas sprite redrawn by main via setLeaderboard(). */
+  private buildLeaderboard() {
+    const g = new THREE.Group();
+    for (const px of [-1.4, 1.4]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.24, 3.4, 0.24), voxelMaterial(VOX.bark));
+      post.position.set(px, 1.7, 0);
+      g.add(post);
+    }
+    const board = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.2, 0.18), voxelMaterial(VOX.woodTrim));
+    board.position.set(0, 2.5, 0);
+    const header = new THREE.Mesh(new THREE.BoxGeometry(3.3, 0.3, 0.22), glowMaterial(VOX.lantern, 0.8));
+    header.position.set(0, 3.7, 0);
+    g.add(board, header);
+    // canvas-sprite face
+    this.lbCanvas = document.createElement("canvas");
+    this.lbCanvas.width = 320;
+    this.lbCanvas.height = 224;
+    this.lbTex = new THREE.CanvasTexture(this.lbCanvas);
+    this.lbTex.colorSpace = THREE.SRGBColorSpace;
+    this.lbTex.generateMipmaps = false;
+    this.lbTex.minFilter = THREE.LinearFilter;
+    const face = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.lbTex, transparent: true, depthTest: true, depthWrite: false, toneMapped: false }));
+    face.scale.set(2.9, 2.0, 1);
+    face.position.set(0, 2.5, 0.12);
+    g.add(face);
+    this.setLeaderboard([]); // initial placeholder
+    g.position.set(-7.5, 0, 9.8);
+    g.rotation.y = Math.atan2(7.5, -9.8); // face the plaza center
+    this.group.add(g);
+  }
+
+  /** Redraw the leaderboard face with the current top survivors. */
+  setLeaderboard(entries: { name: string; best: number }[]) {
+    if (!this.lbCanvas || !this.lbTex) return;
+    const g = this.lbCanvas.getContext("2d")!;
+    g.clearRect(0, 0, 320, 224);
+    g.fillStyle = "rgba(40,30,20,0.85)";
+    g.fillRect(0, 0, 320, 224);
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.font = "bold 26px system-ui, sans-serif";
+    g.fillStyle = "#ffd24a";
+    g.fillText("🏆 TOP SURVIVORS", 160, 24);
+    g.font = "bold 20px system-ui, sans-serif";
+    g.textAlign = "left";
+    const top = entries.filter((e) => e.best > 0).sort((a, b) => b.best - a.best).slice(0, 5);
+    if (!top.length) {
+      g.textAlign = "center";
+      g.fillStyle = "#cbd";
+      g.fillText("No runs yet — go make a mess!", 160, 120);
+    } else {
+      top.forEach((e, i) => {
+        const y = 64 + i * 32;
+        g.fillStyle = ["#ffd24a", "#cfe0ff", "#e0b070", "#ffffff", "#ffffff"][i] ?? "#fff";
+        const nm = e.name.length > 14 ? e.name.slice(0, 13) + "…" : e.name;
+        g.fillText(`${i + 1}. ${nm}`, 16, y);
+        g.textAlign = "right";
+        g.fillText(`R${e.best}`, 304, y);
+        g.textAlign = "left";
+      });
+    }
+    this.lbTex.needsUpdate = true;
   }
 
   /**

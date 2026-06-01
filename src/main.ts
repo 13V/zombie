@@ -45,7 +45,7 @@ import { TouchControls, isTouchDevice } from "./touchControls";
 import { Wallet } from "./wallet";
 import { getTokenApiUrl, setTokenApiUrl, fetchClaimable } from "./token";
 import { NetPlay, GuestSlot } from "./netplay";
-import { COLORS } from "./palette";
+import { COLORS, auraMaterial } from "./palette";
 import { TiltShift } from "./tiltShift";
 import { Puffs } from "./puffs";
 
@@ -61,6 +61,8 @@ class Game implements GameApi {
   private _hatching = false; // an egg-hatch reveal is on screen (blocks re-hatch)
   private _gatherPortal = ""; // mode portal I'm currently standing in (co-op gather)
   private _portalStarting = false; // a portal match is being launched (host or guest)
+  private _localAura?: THREE.Mesh; // my own lobby flex aura (attached to player.group)
+  private _lbAcc = 0; // throttle accumulator for the lobby leaderboard refresh
   private composer: EffectComposer;
   private clock = new THREE.Clock();
 
@@ -943,6 +945,7 @@ class Game implements GameApi {
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.interactables.setVisible(true); // restore the map fixtures for the run
+    this.setLocalAura(0); // drop the lobby aura for the run
     this.hud.setIslandMode(false);
     this.hud.hidePrompt();
     this.resetRun();
@@ -1226,6 +1229,7 @@ class Game implements GameApi {
       this.island.setVisible(false);
       this.arena.group.visible = true;
       this.interactables.setVisible(true);
+      this.setLocalAura(0);
       this.hud.setIslandMode(false);
       this.hud.hidePrompt();
       this.resetRun();
@@ -1530,6 +1534,7 @@ class Game implements GameApi {
     this._portalStarting = false; // fresh gather state on (re)entering the hub
     this._gatherPortal = "";
     this.spawnPets(); // bring the equipped squad into the hub so they follow + flex
+    this.setLocalAura(this.auraTierFor()); // show my own earned aura in the hub
     this.player.group.position.copy(this.player.pos);
     this.hud.setIslandMode(true);
     this.emoteMenu?.setAvailable(true);
@@ -1548,11 +1553,12 @@ class Game implements GameApi {
       this.net.onClose = () => this.disconnectIslandPresence();
       await this.net.island();
       const skin = findSkin(this.save.skin);
-      this.islandNet = new IslandNet(this.net, this.scene, skin.body, skin.head);
+      this.islandNet = new IslandNet(this.net, this.scene, skin.body, skin.head, this.save.name);
       // a peer hatched an egg → play the celebration over their figure for us too
       this.islandNet.onHatch = (x, z, rarity, shiny, petId) => this.hatchCelebration(x, z, rarity, shiny, petId, true);
       // the co-op gather leader hosted a room → join it if I'm in that portal
       this.islandNet.onPortalStart = (portal, code) => this.onPortalStart(portal, code);
+      this.updateIslandFlex(); // broadcast my squad + title + prestige to peers
       this.islandNet.setMenuOpen(this.emoteMenu?.isOpen ?? false);
       this.hud.toast("Island: press T to emote 👋");
     } catch {
@@ -1574,6 +1580,7 @@ class Game implements GameApi {
   private leaveIsland() {
     this.disconnectIslandPresence();
     this.hud.hideEggPanel();
+    this.setLocalAura(0);
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.hud.setIslandMode(false);
@@ -1628,6 +1635,14 @@ class Game implements GameApi {
     if (pop !== this.islandPop) {
       this.islandPop = pop;
       this.hud.setIslandPopulation(pop);
+    }
+
+    // refresh the lobby leaderboard ~once a second (me + every named peer)
+    this._lbAcc = (this._lbAcc ?? 0) + dt;
+    if (this._lbAcc >= 1) {
+      this._lbAcc = 0;
+      const me = { name: this.save.name, best: this.save.bestRound };
+      this.island.setLeaderboard([me, ...(this.islandNet?.standings() ?? [])]);
     }
 
     // while a hatch reveal is on screen, keep the world prompts hidden behind it
@@ -1787,6 +1802,50 @@ class Game implements GameApi {
       for (const c of colors) {
         this.sparks.burst(top, c, 5, { speed: 9 + rarity, spread: 7 + w * 1.5, gravity: 13 });
       }
+    }
+  }
+
+  // ---- lobby "flex" cosmetics: title / aura derived from progress ----
+
+  /** An earned display title from best-round milestones (shown on the nameplate). */
+  private titleFor(): string {
+    const b = this.save.bestRound;
+    if (b >= 50) return "Apocalypse Veteran";
+    if (b >= 40) return "Nightmare Slayer";
+    if (b >= 30) return "Horde Breaker";
+    if (b >= 20) return "Survivor";
+    if (b >= 10) return "Seasoned";
+    return "";
+  }
+
+  /** Cosmetic aura tier (0..3) from prestige / best round. */
+  private auraTierFor(): number {
+    if (this.save.prestige >= 3) return 3;
+    if (this.save.prestige >= 1 || this.save.bestRound >= 40) return 2;
+    if (this.save.bestRound >= 20) return 1;
+    return 0;
+  }
+
+  /** Push my flex cosmetics to peers (equipped squad + title + prestige + best). */
+  private updateIslandFlex() {
+    this.islandNet?.setFlex({
+      pets: this.pets.map((p) => p.def.id).slice(0, 6),
+      title: this.titleFor(),
+      prestige: this.save.prestige,
+      best: this.save.bestRound,
+      aura: this.auraTierFor(),
+    });
+  }
+
+  /** Attach/refresh my own aura disc (so I see my flex too); tier 0 removes it. */
+  private setLocalAura(tier: number) {
+    if (this._localAura) { this.player.group.remove(this._localAura); this._localAura = undefined; }
+    if (tier > 0) {
+      const cols = [0x000000, 0x6ad7ff, 0xc792ea, 0xffd24a];
+      const aura = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.0, 0.12, 18), auraMaterial(cols[tier], 0.7));
+      aura.position.y = 0.08;
+      this.player.group.add(aura);
+      this._localAura = aura;
     }
   }
 
@@ -2399,6 +2458,8 @@ class Game implements GameApi {
     // ownership (not the spawn list) so a full combat squad can't crowd the
     // time-god out of its passive.
     this.chronosActive = this.save.pets.includes("chronos") && !this.save.benchedPets.includes("chronos");
+    // re-equipping in the hub → re-broadcast my squad so peers see the change
+    if (this.state === "island") this.updateIslandFlex();
   }
 
   /** Stars a pet has earned via dupe-ascension (petProgress[id]._stars). */
