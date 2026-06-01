@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BedWarsMap, type BwTeamId } from "./bwmap";
-import { makeGenerator, tickGenerator, emptyWallet, addToWallet, type BwGenerator, type BwResource, type BwWallet } from "./bwresources";
+import { makeGenerator, tickGenerator, upgradeGenerator, emptyWallet, addToWallet, type BwGenerator, type BwResource, type BwWallet } from "./bwresources";
 import { createMatch, breakBed, killPlayer, respawnPlayer, isTeamOut, aliveTeams, type BwMatch } from "./bwteams";
 import { BwBots } from "./bwbots";
 import { BwGolems } from "./bwgolem";
@@ -85,9 +85,13 @@ export class BedWarsMode {
   respawnTimer = 0;
   private respawnReady = false;
 
-  // ---- match clock / sudden death ----
+  // ---- match clock + the wiki's timed "Game Progression" events ----
   private elapsed = 0;
   private suddenDeath = false;
+  private bedDestruction = false;
+  private events: { t: number; label: string; fire: () => void }[] = [];
+  private eventIdx = 0;
+  private announce: string[] = []; // drained by main → on-screen toasts
 
   result: { over: boolean; win: boolean } = { over: false, win: false };
 
@@ -149,6 +153,10 @@ export class BedWarsMode {
     this.speedBuff = 0;
     this.elapsed = 0;
     this.suddenDeath = false;
+    this.bedDestruction = false;
+    this.events = this.buildEvents();
+    this.eventIdx = 0;
+    this.announce = [];
     this.waveInterval = WAVE_START;
     this.waveTimer = WAVE_START;
     this.playerHp = PLAYER_HP;
@@ -349,7 +357,7 @@ export class BedWarsMode {
     }
 
     this.maybeTriggerTrap();
-    this.maybeSuddenDeath();
+    this.processEvents();
     this.updateDragons(dt, playerPos);
     this.updatePlayerLife(dt, playerPos);
     this.refreshHud();
@@ -429,13 +437,47 @@ export class BedWarsMode {
     this.flashTrapHud(trap);
   }
 
-  // ── sudden death: destroy every bed, send the dragons ──
-  private maybeSuddenDeath() {
-    if (this.suddenDeath || this.elapsed < SUDDEN_DEATH) return;
-    this.suddenDeath = true;
+  // ── the wiki's timed Game Progression: generators ramp, then Bed
+  //    Destruction, then Sudden Death dragons. Compressed for a quick match. ──
+  private buildEvents(): { t: number; label: string; fire: () => void }[] {
+    return [
+      { t: 45,  label: "💎 Diamond Generator II",  fire: () => this.tierUpGems("diamond") },
+      { t: 90,  label: "✦ Emerald Generator II",   fire: () => this.tierUpGems("emerald") },
+      { t: 135, label: "💎 Diamond Generator III", fire: () => this.tierUpGems("diamond") },
+      { t: 180, label: "✦ Emerald Generator III",  fire: () => this.tierUpGems("emerald") },
+      { t: SUDDEN_DEATH - 45, label: "🛏 BED DESTRUCTION — every bed is gone!", fire: () => this.destroyAllBeds() },
+      { t: SUDDEN_DEATH,      label: "🐉 SUDDEN DEATH — dragons incoming!",     fire: () => this.startSuddenDeath() },
+    ];
+  }
+  private processEvents() {
+    while (this.eventIdx < this.events.length && this.elapsed >= this.events[this.eventIdx].t) {
+      const ev = this.events[this.eventIdx++];
+      ev.fire();
+      this.announce.push(ev.label);
+    }
+  }
+  /** Drain queued event callouts so main can toast them. */
+  drainAnnouncements(): string[] {
+    if (this.announce.length === 0) return [];
+    const out = this.announce;
+    this.announce = [];
+    return out;
+  }
+  private tierUpGems(kind: BwResource) {
+    for (const g of this.gems) if (g.kind === kind) upgradeGenerator(g.gen);
+  }
+  private destroyAllBeds() {
+    if (this.bedDestruction) return;
+    this.bedDestruction = true;
     for (const b of this.beds.values()) {
       if (!b.dead) { b.dead = true; this.map.group.remove(b.group); breakBed(this.match, b.team); }
     }
+    this.checkEnd();
+  }
+  private startSuddenDeath() {
+    if (this.suddenDeath) return;
+    this.suddenDeath = true;
+    this.destroyAllBeds(); // safety net if the prior event was somehow skipped
     const hostile = Math.max(1, 2 - bwDragonBonus(this.upgrades));
     for (let i = 0; i < hostile; i++) this.dragons.spawn(0xc060ff, this.map.center);
     this.checkEnd();
@@ -551,6 +593,15 @@ export class BedWarsMode {
     const pip = this.hud.querySelector(".bw-trap-flash");
     if (pip) pip.textContent = `⚠ ${trap === "counter" ? "Counter!" : trap === "alarm" ? "Alarm!" : "Trap sprung!"}`;
   }
+  /** Clock chip: counts down to the next timed event, by name. */
+  private nextEventLabel(): string {
+    if (this.suddenDeath) return "🐉 SUDDEN DEATH";
+    if (this.eventIdx >= this.events.length) return "";
+    const ev = this.events[this.eventIdx];
+    const secs = Math.max(0, Math.ceil(ev.t - this.elapsed));
+    const short = ev.label.replace(/ —.*$/, ""); // trim the long Bed/Sudden blurbs
+    return `⏳ ${short} ${secs}s`;
+  }
   private refreshHud() {
     if (!this.hud) return;
     const w = this.wallet;
@@ -558,7 +609,7 @@ export class BedWarsMode {
     const bedTxt = my && !my.dead ? `🛏 ${Math.max(0, Math.round(my.hp))}` : "🛏 ✖ FINAL LIFE";
     const enemies = aliveTeams(this.match).filter((t) => t !== this.playerTeam).length;
     const hpTxt = this.respawnTimer > 0 ? `💀 ${Math.ceil(this.respawnTimer)}s` : `❤ ${Math.round(this.playerHp)}`;
-    const clock = this.suddenDeath ? "🐲 SUDDEN DEATH" : `⏳ ${Math.ceil(this.timeToSuddenDeath)}s`;
+    const clock = this.nextEventLabel();
     const traps = this.traps.slots.length > 0 ? `🪤 ${this.traps.slots.length}` : "";
     this.hud.innerHTML =
       `<span class="bw-r bw-hp">${hpTxt}</span>` +

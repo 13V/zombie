@@ -1607,6 +1607,7 @@ class Game implements GameApi {
     if (bw.anyMenuOpen) {
       this.player.idle(dt);
       bw.tick(dt, this.player.pos);
+      for (const msg of bw.drainAnnouncements()) this.hud.toast(msg);
       return;
     }
 
@@ -1615,6 +1616,7 @@ class Game implements GameApi {
     if (bw.playerWaiting) {
       this.player.idle(dt);
       bw.tick(dt, this.player.pos);
+      for (const msg of bw.drainAnnouncements()) this.hud.toast(msg);
       if (bw.consumeRespawn()) {
         this.player.pos.copy(bw.spawn());
         this.player.group.position.copy(this.player.pos);
@@ -1675,6 +1677,9 @@ class Game implements GameApi {
     if (nearBase && this.input.pressed("KeyT")) bw.openUpgrades();
 
     bw.tick(dt, this.player.pos);
+
+    // Timed Game-Progression callouts (generator tiers, bed destruction, dragons).
+    for (const msg of bw.drainAnnouncements()) this.hud.toast(msg);
 
     // --- win / lose ---
     if (bw.result.over) {
