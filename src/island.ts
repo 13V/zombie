@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { voxelMaterial, glowMaterial, auraMaterial, VOX, COLORS } from "./palette";
 import { VoxelChar } from "./voxelChar";
 import { makeBubble, makeLabel } from "./islandnet";
+import { SATELLITES, clampToHub } from "./hublayout";
 
 /**
  * The Island — a persistent social hub / lobby the player spawns into (think a
@@ -26,10 +27,18 @@ export const ISLAND = {
 // Shared hub layout (so every builder agrees on where things go as it scales).
 const PLAZA_R = 13; // stone town-square radius
 const EGG_R = 7.2; // egg-shrine ring radius around the fountain
+// The three zombie modes live on the ZOMBIES satellite island, lined up across
+// it (perpendicular to the bridge that arrives from the main island).
+const _ZS = SATELLITES.find((s) => s.id === "sat_zombies")!.center;
+const _zd = Math.hypot(_ZS.x, _ZS.z) || 1;
+const _zperp = { x: -_ZS.z / _zd, z: _ZS.x / _zd }; // left perpendicular to the bridge axis
+function _zgate(off: number): THREE.Vector3 {
+  return new THREE.Vector3(_ZS.x + _zperp.x * off, 0, _ZS.z + _zperp.z * off);
+}
 const GATES = [
-  { id: "mode_solo", players: 1 as const, pos: new THREE.Vector3(-15, 0, -13), color: 0x7be08a, label: "SOLO — 1 player", grand: 0 },
-  { id: "mode_duo", players: 2 as const, pos: new THREE.Vector3(0, 0, -20), color: 0x6ad7ff, label: "DUO — 2 players (2× harder)", grand: 1 },
-  { id: "mode_quad", players: 4 as const, pos: new THREE.Vector3(15, 0, -13), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)", grand: 2 },
+  { id: "mode_solo", players: 1 as const, pos: _zgate(-8), color: 0x7be08a, label: "SOLO — 1 player", grand: 0 },
+  { id: "mode_duo", players: 2 as const, pos: _zgate(0), color: 0x6ad7ff, label: "DUO — 2 players (2× harder)", grand: 1 },
+  { id: "mode_quad", players: 4 as const, pos: _zgate(8), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)", grand: 2 },
 ];
 const PADS = [
   { id: "join" as const, pos: new THREE.Vector3(12, 0, 8), color: 0x6ad7ff, label: "Join a Friend's Run" },
@@ -64,7 +73,7 @@ const CLEAR_PTS = [...GATES, ...PADS].map((d) => d.pos).concat(
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
   id: string;
-  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel" | "wardrobe" | "bedwars" | "td";
+  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel" | "wardrobe" | "bedwars" | "td" | "soon";
   pos: THREE.Vector3;
   radius: number; // proximity radius that triggers the prompt
   label: string; // shown in the proximity prompt
@@ -161,9 +170,9 @@ export class Island {
     this.buildDecor();
     this.buildBackdrop();
     this.buildPlaza();
-    this.buildPaths();
     this.buildFountain();
     this.buildZones();
+    this.buildSatellites(); // floating game-mode islands + bridges (hub-and-spoke)
     this.buildModes();
     this.buildEggs();
     this.buildSanctuary();
@@ -250,14 +259,11 @@ export class Island {
     });
   }
 
-  /** Keep the player inside the grassy shore (soft circular clamp). */
+  /** Keep the player on the walkable hub: main island ∪ bridges ∪ satellites. */
   clamp(pos: THREE.Vector3) {
-    const r = Math.hypot(pos.x, pos.z);
-    const max = ISLAND.shore - 1.2;
-    if (r > max) {
-      pos.x = (pos.x / r) * max;
-      pos.z = (pos.z / r) * max;
-    }
+    const c = clampToHub(pos.x, pos.z);
+    pos.x = c.x;
+    pos.z = c.z;
   }
 
   /** Nearest zone within its trigger radius (for the walk-up prompt), or null. */
@@ -806,28 +812,6 @@ export class Island {
     this.group.add(kerb);
   }
 
-  /** Wide cobble spoke paths from the plaza out to each portal gate. */
-  private buildPaths() {
-    const path = voxelMaterial(VOX.path);
-    const pathDark = voxelMaterial(VOX.dirtDark);
-    for (const g of GATES) {
-      const dir = g.pos.clone().normalize();
-      const perp = new THREE.Vector3(-dir.z, 0, dir.x);
-      const start = PLAZA_R - 1;
-      const end = g.pos.length() - 1.6;
-      for (let r = start; r <= end; r += 0.95) {
-        for (const off of [-0.85, 0.85]) {
-          const c = dir.clone().multiplyScalar(r).add(perp.clone().multiplyScalar(off));
-          const tile = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.2, 1.7), (Math.round(r) + (off > 0 ? 1 : 0)) % 2 ? path : pathDark);
-          tile.position.set(c.x, 0.0, c.z);
-          tile.rotation.y = Math.atan2(dir.x, dir.z);
-          tile.userData.noCast = true;
-          this.group.add(tile);
-        }
-      }
-    }
-  }
-
   /**
    * The centerpiece: a grand three-tier fountain with cascading glowing basins,
    * arcing water jets, and a slowly-rotating crystal spire crowning the top.
@@ -899,6 +883,90 @@ export class Island {
   /** Build the utility pads (join + shop) just outside the plaza. */
   private buildZones() {
     for (const p of PADS) this.addPad(p.id, p.id, p.pos.clone(), p.color, p.label);
+  }
+
+  /**
+   * Hub-and-spoke lobby: a floating platform for each game-mode satellite
+   * (ZOMBIES / TOWER DEFENSE / COMING SOON), a plank bridge linking it to the
+   * main island, and a big glowing title over each. The mode entries themselves
+   * live on these platforms (gates → ZOMBIES, the TD podium → TOWER DEFENSE);
+   * COMING SOON gets a locked monument + its own zone.
+   */
+  private buildSatellites() {
+    const grass = voxelMaterial(VOX.grass);
+    const grassDark = voxelMaterial(VOX.grassDark);
+    const rock = voxelMaterial(VOX.stone);
+    const rockDark = voxelMaterial(VOX.stoneDark);
+    const plank = voxelMaterial(VOX.path ?? VOX.bark);
+    const plankDark = voxelMaterial(VOX.dirtDark ?? VOX.bark);
+
+    for (const s of SATELLITES) {
+      const cx = s.center.x, cz = s.center.z;
+
+      // ---- floating platform: grass cap + tapering rock underside + glow rim ----
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(s.radius, s.radius, 1.0, 32), grass);
+      cap.position.set(cx, 0.0, cz);
+      cap.userData.noCast = true;
+      const trimTop = new THREE.Mesh(new THREE.CylinderGeometry(s.radius + 0.3, s.radius + 0.3, 0.5, 32), grassDark);
+      trimTop.position.set(cx, -0.5, cz);
+      trimTop.userData.noCast = true;
+      const under = new THREE.Mesh(new THREE.CylinderGeometry(s.radius - 1, 1.5, 7, 16), rockDark);
+      under.position.set(cx, -4.0, cz);
+      const underTop = new THREE.Mesh(new THREE.CylinderGeometry(s.radius, s.radius - 1, 1.6, 16), rock);
+      underTop.position.set(cx, -1.3, cz);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(s.radius - 0.2, 0.14, 6, 40), glowMaterial(s.color, 0.7));
+      rim.rotation.x = Math.PI / 2;
+      rim.position.set(cx, 0.55, cz);
+      this.group.add(cap, trimTop, under, underTop, rim);
+
+      // ---- plank bridge from the main island edge to the platform ----
+      const d = Math.hypot(cx, cz) || 1;
+      const dir = { x: cx / d, z: cz / d };
+      const perp = { x: -dir.z, z: dir.x };
+      const start = ISLAND.shore - 4;   // begin on the main shore
+      const end = d - s.radius + 1.5;   // land on the platform lip
+      const ang = Math.atan2(dir.x, dir.z);
+      let row = 0;
+      for (let r = start; r <= end; r += 1.7, row++) {
+        for (const off of [-1.4, 0, 1.4]) {
+          const px = dir.x * r + perp.x * off;
+          const pz = dir.z * r + perp.z * off;
+          const tile = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.22, 1.6), row % 2 ? plank : plankDark);
+          tile.position.set(px, 0.0, pz);
+          tile.rotation.y = ang;
+          tile.userData.noCast = true;
+          this.group.add(tile);
+        }
+        // low rope-posts every few planks
+        if (row % 2 === 0) {
+          for (const off of [-2.3, 2.3]) {
+            const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.0, 0.18), rockDark);
+            post.position.set(dir.x * r + perp.x * off, 0.4, dir.z * r + perp.z * off);
+            this.group.add(post);
+          }
+        }
+      }
+
+      // ---- big floating title over the platform ----
+      const sign = makeSign(s.label, s.color);
+      sign.position.set(cx, 7.0, cz);
+      sign.scale.multiplyScalar(1.6);
+      this.group.add(sign);
+
+      // ---- COMING SOON: a wrapped, locked monument + its own zone ----
+      if (s.kind === "soon") {
+        const box = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), voxelMaterial(0x6a5a8a));
+        box.position.set(cx, 2.0, cz);
+        const ribbonV = new THREE.Mesh(new THREE.BoxGeometry(0.6, 3.1, 3.1), glowMaterial(s.color, 0.8));
+        ribbonV.position.set(cx, 2.0, cz);
+        const ribbonH = new THREE.Mesh(new THREE.BoxGeometry(3.1, 3.1, 0.6), glowMaterial(s.color, 0.8));
+        ribbonH.position.set(cx, 2.0, cz);
+        const bow = new THREE.Mesh(new THREE.OctahedronGeometry(0.7, 0), glowMaterial(s.color, 1.2));
+        bow.position.set(cx, 3.9, cz);
+        this.group.add(box, ribbonV, ribbonH, bow);
+        this.zones.push({ id: "soon", kind: "soon", pos: new THREE.Vector3(cx, 0, cz), radius: 3.0, label: "Coming Soon" });
+      }
+    }
   }
 
   private addPad(id: string, kind: IslandZone["kind"], pos: THREE.Vector3, color: number, label: string) {
@@ -1505,11 +1573,12 @@ export class Island {
       const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), glowMaterial(0x9fe0a0, 1.2));
       crystal.position.set(0, 3.4, -0.4);
       g.add(beam, crystal);
-      const pos = new THREE.Vector3(-13, 0, 10);
+      const tdSat = SATELLITES.find((s) => s.id === "sat_td")!.center;
+      const pos = new THREE.Vector3(tdSat.x, 0, tdSat.z); // on the Tower Defense island
       g.position.copy(pos);
       g.rotation.y = Math.atan2(-pos.x, -pos.z);
       this.group.add(g);
-      this.zones.push({ id: "td", kind: "td", pos, radius: 2.4, label: "Tower Defense" });
+      this.zones.push({ id: "td", kind: "td", pos, radius: 3.0, label: "Tower Defense" });
     }
   }
 

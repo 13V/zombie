@@ -2036,6 +2036,9 @@ class Game implements GameApi {
       case "td":
         this.enterTd();
         break;
+      case "soon":
+        this.hud.toast("🚧 New island coming soon!");
+        break;
     }
   }
 
