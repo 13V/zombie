@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { voxelMaterial, glowMaterial, VOX, COLORS } from "./palette";
+import { voxelMaterial, glowMaterial, auraMaterial, VOX, COLORS } from "./palette";
 import { VoxelChar } from "./voxelChar";
 import { makeBubble, makeLabel } from "./islandnet";
 
@@ -7,12 +7,15 @@ import { makeBubble, makeLabel } from "./islandnet";
  * The Island — a persistent social hub / lobby the player spawns into (think a
  * cozy Roblox-style starting world). You walk around your voxel character here,
  * see other people (multiplayer presence is layered on top via NetPlay), hatch
- * pets at the egg ring in the middle, and step onto game-mode structures to
- * start a Solo / Duo / Squad run.
+ * pets at the egg shrines ringing the central fountain, and step into one of the
+ * Solo / Duo / Squad portal gates to start a run.
  *
- * This module owns ONLY the static world + the interactive "zones" (proximity
- * pads). Movement, camera and presence are driven by main.ts so the island can
- * reuse the existing Player / NetClient / camera systems.
+ * This module owns the static world + the interactive "zones" (proximity pads)
+ * AND all of the hub's ambient animation (fountain, floating eggs, shimmering
+ * portals, torches, banners, drifting motes & clouds). It is deliberately rich:
+ * the lobby is the first thing players see, so it earns the polish. Movement,
+ * camera and presence are still driven by main.ts so the island can reuse the
+ * existing Player / NetClient / camera systems.
  */
 
 export const ISLAND = {
@@ -33,30 +36,83 @@ export interface IslandZone {
   eggId?: string;
 }
 
+// ---- animation record types ------------------------------------------------
+
+interface Flame {
+  mesh: THREE.Mesh;
+  phase: number;
+  base: number; // rest scale
+}
+interface Banner {
+  segs: THREE.Mesh[];
+  phase: number;
+}
+interface EggShrine {
+  id: string;
+  group: THREE.Group; // whole shrine (for proximity scale)
+  egg: THREE.Mesh; // the faceted gem-egg (bobs + wobbles)
+  aura: THREE.Mesh; // translucent breathing halo
+  orbit: THREE.Group; // sparkles revolving around the egg
+  beam: THREE.Mesh; // light shaft rising from the egg
+  ringGlow: THREE.Mesh; // glowing disc on the pedestal top
+  pos: THREE.Vector3;
+  phase: number;
+  color: number;
+  lit: number; // eased proximity highlight 0..1
+}
+interface PortalGate {
+  group: THREE.Group;
+  slats: THREE.Mesh[]; // scrolling energy bars inside the arch
+  veil: THREE.Mesh; // soft backdrop glow plane
+  rune: THREE.Mesh; // rotating ground rune ring
+  figures: THREE.Object3D[]; // bobbing party-size figures
+  veilH: number;
+  pos: THREE.Vector3;
+  color: number;
+  lit: number;
+}
+interface Mote {
+  mesh: THREE.Mesh;
+  baseY: number;
+  phase: number;
+  speed: number;
+  span: number; // vertical travel before looping
+}
+
 export class Island {
   readonly group = new THREE.Group();
   readonly zones: IslandZone[] = [];
   private water?: THREE.Mesh;
   private beacons: THREE.Mesh[] = [];
   private t = 0;
-  // interactive pads, tracked so they can bounce-scale + brighten when stood on
+  // interactive pads (join/shop), tracked so they bounce-scale when stood on
   private pads: { id: string; group: THREE.Group; ring: THREE.Mesh; pos: THREE.Vector3; lit: number }[] = [];
-  // greeter NPC (static voxel figure near spawn) + the floating "go here" arrow
   private greeter?: VoxelChar;
   private arrow?: THREE.Mesh;
-  // egg pedestals (spin + bob in update) and the game-mode portal structures
-  private eggs: { id: string; group: THREE.Group; pos: THREE.Vector3 }[] = [];
-  private modeRings: { ring: THREE.Mesh; pos: THREE.Vector3 }[] = [];
+  // animation registries
+  private eggs: EggShrine[] = [];
+  private gates: PortalGate[] = [];
+  private flames: Flame[] = [];
+  private banners: Banner[] = [];
+  private motes: Mote[] = [];
+  private clouds: { mesh: THREE.Mesh; speed: number; reset: number }[] = [];
+  private fountainDiscs: THREE.Mesh[] = [];
+  private fountainJets: THREE.Mesh[] = [];
+  private fountainSpire?: THREE.Mesh;
+  private lilies: THREE.Mesh[] = [];
 
   constructor(scene: THREE.Scene) {
     this.buildGround();
     this.buildWater();
     this.buildDecor();
     this.buildPlaza();
+    this.buildPaths();
+    this.buildFountain();
     this.buildZones();
     this.buildModes();
     this.buildEggs();
     this.buildGreeter();
+    this.buildAtmosphere();
     scene.add(this.group);
     this.group.visible = false; // shown only while in the island state
   }
@@ -94,62 +150,192 @@ export class Island {
   update(dt: number) {
     if (!this.group.visible) return;
     this.t += dt;
-    // gentle water bob + beacon pulse for life
-    if (this.water) this.water.position.y = -0.35 + Math.sin(this.t * 0.8) * 0.05;
+    const t = this.t;
+
+    if (this.water) this.water.position.y = -0.35 + Math.sin(t * 0.8) * 0.05;
     for (const b of this.beacons) {
       const m = b.material as THREE.MeshStandardMaterial;
-      m.emissiveIntensity = 0.8 + (Math.sin(this.t * 2.4) + 1) * 0.5;
+      m.emissiveIntensity = 0.8 + (Math.sin(t * 2.4) + 1) * 0.5;
       b.rotation.y += dt * 1.2;
     }
-    // greeter waves on a loop (re-trigger the one-shot when it finishes)
     if (this.greeter) {
       if (!this.greeter.emoting) this.greeter.emote("wave");
       this.greeter.update(dt);
     }
     if (this.arrow) {
-      this.arrow.position.y = 3.1 + Math.sin(this.t * 2.2) * 0.18;
+      this.arrow.position.y = 3.6 + Math.sin(t * 2.2) * 0.2;
       this.arrow.rotation.y += dt * 1.5;
     }
-    this.animateInteractables();
+
+    this.animateFountain(dt);
+    this.animateEggs(dt);
+    this.animateGates(dt);
+    this.animateFlames();
+    this.animateBanners();
+    this.animateAtmosphere(dt);
+  }
+
+  // ========================================================================
+  //  ANIMATION
+  // ========================================================================
+
+  private animateFountain(dt: number) {
+    const t = this.t;
+    if (this.fountainSpire) {
+      this.fountainSpire.rotation.y += dt * 0.6;
+      this.fountainSpire.position.y = 2.5 + Math.sin(t * 1.4) * 0.12;
+      const m = this.fountainSpire.material as THREE.MeshStandardMaterial;
+      m.emissiveIntensity = 1.1 + (Math.sin(t * 2) + 1) * 0.35;
+    }
+    this.fountainDiscs.forEach((d, i) => {
+      const s = 1 + Math.sin(t * 2.2 + i * 1.3) * 0.04;
+      d.scale.set(s, 1, s);
+    });
+    // jets rise + fall on staggered phases, fading as they peak
+    this.fountainJets.forEach((j, i) => {
+      const ph = (t * 1.3 + i * 0.5) % 1;
+      j.position.y = 1.3 + ph * 1.7;
+      j.scale.y = 0.4 + (1 - ph) * 1.2;
+      const m = j.material as THREE.MeshStandardMaterial;
+      m.opacity = 0.55 * (1 - ph);
+    });
+  }
+
+  private animateEggs(dt: number) {
+    const t = this.t;
+    for (const e of this.eggs) {
+      e.group.scale.setScalar(1 + e.lit * 0.08);
+      const bob = Math.sin(t * 2 + e.phase) * 0.1;
+      e.egg.position.y = 1.55 + bob + e.lit * 0.12;
+      // gentle wobble + a faster, livelier spin when a player is close
+      e.egg.rotation.y += dt * (0.7 + e.lit * 1.8);
+      e.egg.rotation.z = Math.sin(t * 1.7 + e.phase) * 0.12;
+      // sparkles orbit; spin up near the player
+      e.orbit.position.copy(e.egg.position);
+      e.orbit.rotation.y += dt * (1.4 + e.lit * 2.5);
+      // aura breathes
+      const aS = 1 + Math.sin(t * 2.4 + e.phase) * 0.06 + e.lit * 0.18;
+      e.aura.scale.setScalar(aS);
+      e.aura.position.y = e.egg.position.y;
+      (e.aura.material as THREE.MeshStandardMaterial).opacity = 0.18 + e.lit * 0.22;
+      // light shaft shimmer
+      const bm = e.beam.material as THREE.MeshStandardMaterial;
+      bm.opacity = 0.1 + (Math.sin(t * 3 + e.phase) + 1) * 0.06 + e.lit * 0.2;
+      e.beam.rotation.y -= dt * 0.8;
+      // pedestal glow disc pulse
+      (e.ringGlow.material as THREE.MeshStandardMaterial).emissiveIntensity =
+        0.8 + (Math.sin(t * 2.6 + e.phase) + 1) * 0.5 + e.lit * 1.4;
+    }
+  }
+
+  private animateGates(dt: number) {
+    const t = this.t;
+    for (const g of this.gates) {
+      g.group.scale.setScalar(1 + g.lit * 0.03);
+      // scroll the energy bars upward, wrapping + fading near the top/bottom
+      for (const s of g.slats) {
+        s.position.y += dt * (0.9 + g.lit * 0.8);
+        if (s.position.y > g.veilH) s.position.y -= g.veilH;
+        const f = s.position.y / g.veilH; // 0..1 up the arch
+        const fade = Math.sin(f * Math.PI); // dim at both ends
+        (s.material as THREE.MeshStandardMaterial).opacity = (0.18 + g.lit * 0.3) * fade;
+      }
+      const vm = g.veil.material as THREE.MeshStandardMaterial;
+      vm.opacity = 0.12 + (Math.sin(t * 2 + g.pos.x) + 1) * 0.04 + g.lit * 0.18;
+      // ground rune slowly rotates + pulses
+      g.rune.rotation.y += dt * 0.4;
+      (g.rune.material as THREE.MeshStandardMaterial).emissiveIntensity =
+        0.7 + (Math.sin(t * 2.3 + g.pos.x) + 1) * 0.4 + g.lit * 1.2;
+      // figures bob in a little wave
+      g.figures.forEach((f, i) => {
+        f.position.y = 0.5 + Math.abs(Math.sin(t * 3 + i * 0.9)) * 0.18 + g.lit * 0.1;
+      });
+    }
+  }
+
+  private animateFlames() {
+    const t = this.t;
+    for (const fl of this.flames) {
+      // pseudo-random flicker from layered sines
+      const n = Math.sin(t * 13 + fl.phase) * 0.5 + Math.sin(t * 29 + fl.phase * 2) * 0.3;
+      const s = fl.base * (1 + n * 0.18);
+      fl.mesh.scale.set(s, fl.base * (1.2 + n * 0.35), s);
+      (fl.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.4 + n * 0.8;
+    }
+  }
+
+  private animateBanners() {
+    const t = this.t;
+    for (const b of this.banners) {
+      b.segs.forEach((seg, i) => {
+        // lower cloth segments lag, giving a soft ripple down the banner
+        seg.rotation.y = Math.sin(t * 2.2 + b.phase + i * 0.6) * (0.12 + i * 0.05);
+        seg.position.x = Math.sin(t * 2.2 + b.phase + i * 0.6) * (0.02 + i * 0.015);
+      });
+    }
+  }
+
+  private animateAtmosphere(dt: number) {
+    const t = this.t;
+    for (const m of this.motes) {
+      m.mesh.position.y += dt * m.speed;
+      if (m.mesh.position.y > m.baseY + m.span) m.mesh.position.y = m.baseY;
+      // gentle horizontal drift as it rises
+      m.mesh.position.x += Math.cos(t * 0.5 + m.phase) * dt * 0.25;
+      m.mesh.position.z += Math.sin(t * 0.6 + m.phase) * dt * 0.25;
+      const f = (m.mesh.position.y - m.baseY) / m.span;
+      (m.mesh.material as THREE.MeshStandardMaterial).opacity = Math.sin(f * Math.PI) * 0.9;
+    }
+    for (const c of this.clouds) {
+      c.mesh.position.x += dt * c.speed;
+      if (c.mesh.position.x > c.reset) c.mesh.position.x = -c.reset;
+    }
+    for (const lp of this.lilies) {
+      lp.position.y = -0.28 + Math.sin(t * 0.8 + lp.position.x) * 0.05;
+      lp.rotation.y += dt * 0.05;
+    }
   }
 
   /**
-   * A friendly static greeter NPC near spawn with a welcome speech bubble + name
-   * label, plus a floating arrow over the host pad pointing players at the action.
+   * Reactive proximity highlights — pads bounce, and the nearest egg / gate
+   * brightens & energizes when the player walks up. Called from main with the
+   * live player position each island frame.
    */
-  private buildGreeter() {
-    const npc = new VoxelChar({ body: 0x6e4a9e, head: COLORS.playerAccent, eye: 0x222222, hat: 0xffd24a, gun: false });
-    npc.root.position.set(2.6, 0, 6.2); // beside the spawn point, facing the plaza
-    npc.root.rotation.y = Math.PI; // look south toward arriving players
-    npc.play("idle");
-    npc.emote("wave"); // perpetual friendly wave (sit/wave loop handled by emote)
-    this.greeter = npc;
-    const label = makeLabel("Guide");
-    npc.root.add(label);
-    const bubble = makeBubble("Hatch pets at the eggs, then step into a SOLO / DUO / SQUAD gate to fight! Press T to wave 👋");
-    bubble.scale.set(5.4, 1.4, 1);
-    bubble.position.set(0, 3.1, 0);
-    npc.root.add(bubble);
-    this.group.add(npc.root);
-
-    // floating arrow over the DUO gate (center-back of the plaza, z = -11)
-    const cone = new THREE.ConeGeometry(0.5, 1.0, 4);
-    cone.rotateX(Math.PI); // point down
-    this.arrow = new THREE.Mesh(cone, glowMaterial(0x6ad7ff, 1.2));
-    this.arrow.position.set(0, 3.4, -11);
-    this.group.add(this.arrow);
+  reactPads(playerPos: THREE.Vector3, dt: number) {
+    const ease = Math.min(1, dt * 8);
+    for (const p of this.pads) {
+      const dx = p.pos.x - playerPos.x;
+      const dz = p.pos.z - playerPos.z;
+      const on = dx * dx + dz * dz < 2.2 * 2.2;
+      p.lit += ((on ? 1 : 0) - p.lit) * ease;
+      const s = 1 + p.lit * 0.18 + (on ? Math.sin(this.t * 8) * 0.04 : 0);
+      p.group.scale.set(s, 1 + p.lit * 0.12, s);
+      (p.ring.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.9 + p.lit * 1.6;
+    }
+    for (const e of this.eggs) {
+      const on = e.pos.distanceToSquared(playerPos) < 1.9 * 1.9;
+      e.lit += ((on ? 1 : 0) - e.lit) * ease;
+    }
+    for (const g of this.gates) {
+      const on = g.pos.distanceToSquared(playerPos) < 2.6 * 2.6;
+      g.lit += ((on ? 1 : 0) - g.lit) * ease;
+    }
   }
 
-  // ---- world building -----------------------------------------------------
+  // ========================================================================
+  //  WORLD BUILDING
+  // ========================================================================
 
   private buildGround() {
     const g = new THREE.Group();
     const grass = voxelMaterial(VOX.grass);
     const grassDark = voxelMaterial(VOX.grassDark);
+    const grassLight = voxelMaterial(VOX.grassLight);
     const sand = voxelMaterial(0xe6d9a8);
-    // chunky voxel terrain: a disc of 2x2 tiles, sand near the rim
     const TILE = 2;
     const n = Math.ceil(ISLAND.half / TILE);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     for (let ix = -n; ix <= n; ix++) {
       for (let iz = -n; iz <= n; iz++) {
         const x = ix * TILE;
@@ -157,7 +343,11 @@ export class Island {
         const r = Math.hypot(x, z);
         if (r > ISLAND.half) continue;
         const onSand = r > ISLAND.shore;
-        const mat = onSand ? sand : (ix + iz) % 2 === 0 ? grass : grassDark;
+        // occasional sun-kissed highlight tile for a hand-placed, lively lawn
+        let mat: THREE.Material;
+        if (onSand) mat = sand;
+        else if (rnd() < 0.1) mat = grassLight;
+        else mat = (ix + iz) % 2 === 0 ? grass : grassDark;
         const h = onSand ? 0.6 : 1.0;
         const tile = new THREE.Mesh(new THREE.BoxGeometry(TILE, h, TILE), mat);
         tile.position.set(x, h / 2 - 0.5, z);
@@ -177,74 +367,206 @@ export class Island {
     w.position.y = -0.35;
     this.water = w;
     this.group.add(w);
+
+    // a handful of lily pads bobbing in the shallows
+    const padMat = voxelMaterial(0x4f9e4a);
+    let seed = 99;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let i = 0; i < 10; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = ISLAND.shore + 1.5 + rnd() * 6;
+      const lp = new THREE.Mesh(new THREE.CylinderGeometry(0.7 + rnd() * 0.4, 0.7, 0.12, 7), padMat);
+      lp.position.set(Math.cos(a) * r, -0.28, Math.sin(a) * r);
+      this.lilies.push(lp);
+      this.group.add(lp);
+    }
   }
 
   private buildDecor() {
-    // scattered palm-ish trees + rocks around the shore (skip the central plaza)
-    const trunk = voxelMaterial(0x8a5a32);
-    const leaf = voxelMaterial(0x5fb04a);
-    const rock = voxelMaterial(0x9b9b90);
+    // layered foliage: chunky palms, rocks, flowers, mushrooms + grass tufts.
+    const trunk = voxelMaterial(VOX.bark);
+    const trunkDark = voxelMaterial(VOX.barkDark);
+    const leaf = voxelMaterial(VOX.leaf);
+    const leafLight = voxelMaterial(VOX.leafLight);
+    const rock = voxelMaterial(VOX.rock);
+    const tuft = voxelMaterial(VOX.grassLight);
+    const flowers = [VOX.flowerPink, VOX.flowerYellow, VOX.flowerWhite, VOX.flowerRed];
     let seed = 1337;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-    for (let i = 0; i < 46; i++) {
+
+    for (let i = 0; i < 54; i++) {
       const a = rnd() * Math.PI * 2;
       const r = 9 + rnd() * (ISLAND.shore - 10);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
-      if (Math.hypot(x, z) < 8) continue; // keep the plaza clear
-      if (rnd() < 0.75) {
+      if (Math.hypot(x, z) < 8.5) continue; // keep the plaza clear
+      const roll = rnd();
+      if (roll < 0.5) {
+        // leafy tree: 2-tone tapered canopy on a chunky trunk
         const tree = new THREE.Group();
-        const th = 1.6 + rnd() * 1.4;
-        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.5, th, 0.5), trunk);
+        const th = 1.8 + rnd() * 1.6;
+        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.55, th, 0.55), rnd() < 0.5 ? trunk : trunkDark);
         tk.position.y = th / 2;
-        const top = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.4, 1.8), leaf);
-        top.position.y = th + 0.4;
-        const top2 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 1.2), leaf);
-        top2.position.y = th + 1.3;
-        tree.add(tk, top, top2);
+        const c1 = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.5, 2.1), leaf);
+        c1.position.y = th + 0.5;
+        const c2 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.2, 1.5), leaf);
+        c2.position.y = th + 1.45;
+        const c3 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.9), leafLight);
+        c3.position.y = th + 2.2;
+        tree.add(tk, c1, c2, c3);
         tree.position.set(x, 0, z);
+        tree.rotation.y = rnd() * Math.PI;
         this.group.add(tree);
+      } else if (roll < 0.68) {
+        // rock cluster
+        const cl = new THREE.Group();
+        const cnt = 1 + Math.floor(rnd() * 3);
+        for (let k = 0; k < cnt; k++) {
+          const s = 0.6 + rnd() * 0.9;
+          const rk = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.7, s), rock);
+          rk.position.set((rnd() - 0.5) * 1.2, s * 0.35, (rnd() - 0.5) * 1.2);
+          rk.rotation.y = rnd() * Math.PI;
+          cl.add(rk);
+        }
+        cl.position.set(x, 0, z);
+        this.group.add(cl);
+      } else if (roll < 0.86) {
+        // flower patch
+        const patch = new THREE.Group();
+        const col = flowers[Math.floor(rnd() * flowers.length)];
+        for (let k = 0; k < 3; k++) {
+          const stem = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), voxelMaterial(VOX.flowerStem));
+          stem.position.set((rnd() - 0.5) * 0.8, 0.25, (rnd() - 0.5) * 0.8);
+          const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), glowMaterial(col, 0.35));
+          head.position.set(stem.position.x, 0.58, stem.position.z);
+          patch.add(stem, head);
+        }
+        patch.position.set(x, 0, z);
+        this.group.add(patch);
       } else {
-        const s = 0.7 + rnd() * 0.9;
-        const rk = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.7, s), rock);
-        rk.position.set(x, s * 0.35, z);
-        rk.rotation.y = rnd() * Math.PI;
-        this.group.add(rk);
+        // grass tuft
+        const t = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.4), tuft);
+        t.position.set(x, 0.2, z);
+        t.scale.y = 0.6 + rnd();
+        this.group.add(t);
       }
     }
   }
 
   private buildPlaza() {
-    // a cobble plaza at the center where players gather + the portals live
-    const cobble = voxelMaterial(VOX.cobble ?? 0xc2c2b6);
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 7.5, 0.4, 32), cobble);
+    // a two-tone cobble plaza ringed by a low rune-lit kerb
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(8, 8, 0.4, 40), voxelMaterial(VOX.cobble));
     disc.position.y = 0.05;
-    this.group.add(disc);
-    // a welcoming central fountain
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.8, 0.6, 16), voxelMaterial(VOX.stone ?? 0x9b9b90));
-    base.position.y = 0.4;
-    const water = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 0.3, 16), glowMaterial(VOX.water, 0.5));
-    water.position.y = 0.72;
-    this.group.add(base, water);
+    const inner = new THREE.Mesh(new THREE.CylinderGeometry(5.6, 5.6, 0.46, 36), voxelMaterial(VOX.cobbleDark));
+    inner.position.y = 0.07;
+    this.group.add(disc, inner);
+
+    // glowing kerb studs around the rim — gentle landmark lighting
+    const studN = 24;
+    for (let i = 0; i < studN; i++) {
+      const a = (i / studN) * Math.PI * 2;
+      const stud = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), glowMaterial(0xffd98a, 0.7));
+      stud.position.set(Math.cos(a) * 7.9, 0.32, Math.sin(a) * 7.9);
+      this.group.add(stud);
+      this.beacons.push(stud); // reuse the beacon pulse loop
+    }
   }
 
-  /** Build the utility pads (join + shop) near the plaza edge. Game-mode
-   *  portals live in buildModes(); egg pedestals in buildEggs(). */
+  /** Cobble spoke paths from the plaza out to each portal gate. */
+  private buildPaths() {
+    const path = voxelMaterial(VOX.path);
+    const targets = [
+      new THREE.Vector3(-9, 0, -8),
+      new THREE.Vector3(0, 0, -12),
+      new THREE.Vector3(9, 0, -8),
+    ];
+    for (const tg of targets) {
+      const dir = tg.clone().normalize();
+      const start = 7.5;
+      const end = tg.length() - 1.6;
+      for (let r = start; r <= end; r += 1.0) {
+        const x = dir.x * r;
+        const z = dir.z * r;
+        const tile = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.2, 1.6), path);
+        tile.position.set(x, 0.0, z);
+        tile.rotation.y = Math.atan2(dir.x, dir.z);
+        this.group.add(tile);
+      }
+    }
+  }
+
+  /**
+   * The centerpiece: a grand three-tier fountain with cascading glowing basins,
+   * arcing water jets, and a slowly-rotating crystal spire crowning the top.
+   */
+  private buildFountain() {
+    const stone = voxelMaterial(VOX.stone);
+    const stoneDark = voxelMaterial(VOX.stoneDark);
+
+    // stacked basins (wide → narrow), each with a glowing water disc on top
+    const tiers = [
+      { r: 2.0, y: 0.5, h: 0.7 },
+      { r: 1.35, y: 1.2, h: 0.6 },
+      { r: 0.8, y: 1.8, h: 0.5 },
+    ];
+    tiers.forEach((tr, i) => {
+      const basin = new THREE.Mesh(new THREE.CylinderGeometry(tr.r, tr.r + 0.2, tr.h, 16), i % 2 ? stoneDark : stone);
+      basin.position.y = tr.y;
+      this.group.add(basin);
+      const water = new THREE.Mesh(new THREE.CylinderGeometry(tr.r - 0.18, tr.r - 0.18, 0.12, 16), this.fountainWaterMat());
+      water.position.y = tr.y + tr.h / 2 + 0.02;
+      this.fountainDiscs.push(water);
+      this.group.add(water);
+    });
+
+    // crystal spire on top — a faceted glowing octahedron
+    const spire = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), glowMaterial(0x9fe8ff, 1.2));
+    (spire.geometry as THREE.BufferGeometry).scale(1, 1.6, 1);
+    spire.position.y = 2.5;
+    this.fountainSpire = spire;
+    this.group.add(spire);
+
+    // arcing water jets around the top basin (translucent rising shafts)
+    const jetMat = () =>
+      new THREE.MeshStandardMaterial({
+        color: VOX.water, emissive: VOX.water, emissiveIntensity: 0.8,
+        transparent: true, opacity: 0.5, depthWrite: false, toneMapped: false,
+      });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const jet = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.4, 0.12), jetMat());
+      jet.position.set(Math.cos(a) * 0.9, 1.5, Math.sin(a) * 0.9);
+      this.fountainJets.push(jet);
+      this.group.add(jet);
+    }
+  }
+
+  private fountainWaterMat() {
+    return new THREE.MeshStandardMaterial({
+      color: 0x6fd0ff, emissive: 0x3f9fe0, emissiveIntensity: 0.7,
+      roughness: 0.3, transparent: true, opacity: 0.92, toneMapped: false,
+    });
+  }
+
+  /** Build the utility pads (join + shop) just outside the plaza. */
   private buildZones() {
-    // JOIN pad — enter a friend's room code
-    this.addPad("join", "join", new THREE.Vector3(6.5, 0, 4.5), 0x6ad7ff, "Join a Friend's Run");
-    // SHOP pad — open the pet/upgrade shop from the hub
-    this.addPad("shop", "shop", new THREE.Vector3(-6.5, 0, 4.5), 0xffd24a, "Open Shop");
+    this.addPad("join", "join", new THREE.Vector3(8, 0, 5), 0x6ad7ff, "Join a Friend's Run");
+    this.addPad("shop", "shop", new THREE.Vector3(-8, 0, 5), 0xffd24a, "Open Shop");
   }
 
   private addPad(id: string, kind: IslandZone["kind"], pos: THREE.Vector3, color: number, label: string) {
     const pad = new THREE.Group();
     const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 0.2, 24), glowMaterial(color, 0.9));
     ring.position.y = 0.12;
-    const beacon = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.2, 0.5), glowMaterial(color, 1.0));
-    beacon.position.y = 1.3;
-    this.beacons.push(beacon);
-    pad.add(ring, beacon);
+    const inner = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.24, 24), glowMaterial(color, 0.45));
+    inner.position.y = 0.13;
+    const beacon = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.4, 0.5), glowMaterial(color, 1.0));
+    beacon.position.y = 1.4;
+    // a small floating icon-cube crowning the beacon
+    const cap = new THREE.Mesh(new THREE.OctahedronGeometry(0.32, 0), glowMaterial(color, 1.2));
+    cap.position.y = 2.9;
+    this.beacons.push(beacon, cap);
+    pad.add(ring, inner, beacon, cap);
     pad.position.copy(pos);
     this.group.add(pad);
     this.pads.push({ id, group: pad, ring, pos: pos.clone(), lit: 0 });
@@ -252,115 +574,334 @@ export class Island {
   }
 
   /**
-   * Game-mode portals — three voxel archway structures the player steps into to
-   * start a Solo (1), Duo (2), or Squad (4) run. Each is a colored gate with a
-   * glowing floor ring + a count of figures, arranged across the back of the
-   * plaza. Difficulty scales with the player count the structure hosts.
+   * The three portal gates — Solo / Duo / Squad — each a distinct piece of
+   * architecture so the party size reads at a glance: a humble single arch, a
+   * balanced twin-pillar gate, and an imposing four-pillar fortress. Every gate
+   * has a shimmering scroll-energy veil, flickering torches, waving banners, a
+   * rotating ground rune, and bobbing figures counting the party size.
    */
   private buildModes() {
-    const modes: { id: string; players: 1 | 2 | 4; pos: THREE.Vector3; color: number; label: string }[] = [
-      { id: "mode_solo", players: 1, pos: new THREE.Vector3(-9, 0, -9), color: 0x7be08a, label: "SOLO — 1 player" },
-      { id: "mode_duo", players: 2, pos: new THREE.Vector3(0, 0, -11), color: 0x6ad7ff, label: "DUO — 2 players (2× harder)" },
-      { id: "mode_quad", players: 4, pos: new THREE.Vector3(9, 0, -9), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)" },
+    const modes = [
+      { id: "mode_solo", players: 1 as const, pos: new THREE.Vector3(-9, 0, -8), color: 0x7be08a, label: "SOLO — 1 player", grand: 0 },
+      { id: "mode_duo", players: 2 as const, pos: new THREE.Vector3(0, 0, -12), color: 0x6ad7ff, label: "DUO — 2 players (2× harder)", grand: 1 },
+      { id: "mode_quad", players: 4 as const, pos: new THREE.Vector3(9, 0, -8), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)", grand: 2 },
     ];
     for (const m of modes) {
       const gate = new THREE.Group();
-      const post = (x: number) => {
-        const p = new THREE.Mesh(new THREE.BoxGeometry(0.5, 3.0, 0.5), glowMaterial(m.color, 0.8));
-        p.position.set(x, 1.5, 0);
-        gate.add(p);
-      };
-      post(-1.4); post(1.4);
-      const lintel = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.5, 0.5), glowMaterial(m.color, 0.9));
-      lintel.position.set(0, 3.05, 0);
-      gate.add(lintel);
-      // glowing floor ring
-      const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 0.18, 28), glowMaterial(m.color, 0.85));
-      ring.position.y = 0.1;
-      gate.add(ring);
-      // little voxel figures showing the party size (1 / 2 / 4 stubby blocks)
-      for (let i = 0; i < m.players; i++) {
-        const a = m.players === 1 ? 0 : (i / m.players) * Math.PI * 2;
-        const fig = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.8, 0.34), glowMaterial(m.color, 1.1));
-        fig.position.set(Math.cos(a) * 0.6, 0.5, Math.sin(a) * 0.6 + 0.1);
-        gate.add(fig);
+      // width/height scale up with "grandeur" (solo=0, duo=1, squad=2)
+      const halfW = 1.5 + m.grand * 0.55;
+      const height = 3.2 + m.grand * 0.9;
+      const stone = voxelMaterial(VOX.stone);
+      const stoneDark = voxelMaterial(VOX.stoneDark);
+
+      // pillars: chunky stacked-stone posts (extra outer posts on the squad gate)
+      const pillarXs = m.grand >= 2 ? [-halfW, -halfW * 0.45, halfW * 0.45, halfW] : [-halfW, halfW];
+      for (const px of pillarXs) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, height, 0.55), stone);
+        post.position.set(px, height / 2, 0);
+        gate.add(post);
+        // a darker cap block on each pillar
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.4, 0.75), stoneDark);
+        cap.position.set(px, height + 0.2, 0);
+        gate.add(cap);
       }
+      // lintel + (for grander gates) battlements on top
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2 + 0.8, 0.55, 0.6), stoneDark);
+      lintel.position.set(0, height + 0.55, 0);
+      gate.add(lintel);
+      if (m.grand >= 1) {
+        const merlonN = m.grand >= 2 ? 5 : 3;
+        for (let i = 0; i < merlonN; i++) {
+          const mer = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.6), stone);
+          mer.position.set(-halfW + 0.3 + (i / (merlonN - 1)) * (halfW * 2 - 0.6), height + 1.0, 0);
+          gate.add(mer);
+        }
+      }
+      // keystone gem set into the lintel, tier-colored + glowing
+      const key = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), glowMaterial(m.color, 1.3));
+      key.position.set(0, height + 0.55, 0.34);
+      gate.add(key);
+
+      // ---- portal veil: soft backdrop + scrolling energy bars ----
+      const veilH = height;
+      const veil = new THREE.Mesh(
+        new THREE.PlaneGeometry(halfW * 2 - 0.2, veilH),
+        new THREE.MeshStandardMaterial({
+          color: m.color, emissive: m.color, emissiveIntensity: 1.0,
+          transparent: true, opacity: 0.14, depthWrite: false,
+          side: THREE.DoubleSide, toneMapped: false,
+        }),
+      );
+      veil.position.set(0, veilH / 2, 0);
+      gate.add(veil);
+      const slats: THREE.Mesh[] = [];
+      const slatN = 7;
+      for (let i = 0; i < slatN; i++) {
+        const slat = new THREE.Mesh(
+          new THREE.PlaneGeometry(halfW * 2 - 0.35, 0.16),
+          new THREE.MeshStandardMaterial({
+            color: m.color, emissive: m.color, emissiveIntensity: 1.4,
+            transparent: true, opacity: 0.25, depthWrite: false,
+            side: THREE.DoubleSide, toneMapped: false,
+          }),
+        );
+        slat.position.set(0, (i / slatN) * veilH, 0.02);
+        slats.push(slat);
+        gate.add(slat);
+      }
+
+      // ground rune ring (two discs: solid + a thinner accent that rotates)
+      const runeBase = new THREE.Mesh(new THREE.CylinderGeometry(halfW + 0.5, halfW + 0.5, 0.1, 28), glowMaterial(m.color, 0.5));
+      runeBase.position.y = 0.06;
+      gate.add(runeBase);
+      const rune = new THREE.Mesh(new THREE.TorusGeometry(halfW + 0.1, 0.08, 6, 24), glowMaterial(m.color, 0.9));
+      rune.rotation.x = Math.PI / 2;
+      rune.position.y = 0.14;
+      gate.add(rune);
+
+      // torches flanking the gate
+      const torchXs = [-halfW - 0.5, halfW + 0.5];
+      for (const tx of torchXs) {
+        const { group: tg, flame } = this.makeTorch(0xffa53a);
+        tg.position.set(tx, 0, 0.2);
+        gate.add(tg);
+        this.flames.push(flame);
+      }
+      if (m.grand >= 2) {
+        // squad gate gets a banner on each tall pillar
+        for (const bx of [-halfW, halfW]) {
+          const banner = this.makeBanner(m.color, height);
+          banner.group.position.set(bx, height - 0.3, 0.32);
+          gate.add(banner.group);
+          this.banners.push(banner.rec);
+        }
+      } else if (m.grand >= 1) {
+        const banner = this.makeBanner(m.color, height);
+        banner.group.position.set(0, height + 0.3, 0.4);
+        gate.add(banner.group);
+        this.banners.push(banner.rec);
+      }
+
+      // bobbing figures showing the party size, lined up before the gate
+      const figures: THREE.Object3D[] = [];
+      for (let i = 0; i < m.players; i++) {
+        const spread = m.players === 1 ? 0 : (i - (m.players - 1) / 2) * 0.7;
+        const fig = new THREE.Group();
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.55, 0.34), glowMaterial(m.color, 1.0));
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), glowMaterial(0xfff2d6, 0.6));
+        head.position.y = 0.42;
+        fig.add(body, head);
+        fig.position.set(spread, 0.5, 1.3);
+        fig.rotation.y = Math.PI; // face out toward the player
+        gate.add(fig);
+        figures.push(fig);
+      }
+
       gate.position.copy(m.pos);
       gate.lookAt(0, 0, 0); // face the plaza center
       this.group.add(gate);
-      this.modeRings.push({ ring, pos: m.pos.clone() });
+      this.gates.push({ group: gate, slats, veil, rune, figures, veilH, pos: m.pos.clone(), color: m.color, lit: 0 });
       this.zones.push({ id: m.id, kind: "mode", pos: m.pos.clone(), radius: 2.6, label: m.label, modePlayers: m.players });
     }
   }
 
+  /** A flickering torch: post + bowl + glowing flame. Returns the flame record. */
+  private makeTorch(flameColor: number): { group: THREE.Group; flame: Flame } {
+    const group = new THREE.Group();
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.8, 0.22), voxelMaterial(VOX.bark));
+    post.position.y = 0.9;
+    const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.18, 0.3, 8), voxelMaterial(VOX.steelDark));
+    bowl.position.y = 1.85;
+    const flameMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.26, 0), glowMaterial(flameColor, 1.5));
+    flameMesh.position.y = 2.15;
+    (flameMesh.geometry as THREE.BufferGeometry).scale(1, 1.5, 1);
+    group.add(post, bowl, flameMesh);
+    return { group, flame: { mesh: flameMesh, phase: Math.random() * 6.28, base: 1 } };
+  }
+
+  /** A hanging cloth banner that ripples; returns the group + animation record. */
+  private makeBanner(color: number, height: number): { group: THREE.Group; rec: Banner } {
+    const group = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), voxelMaterial(VOX.steelDark));
+    pole.position.y = 0.2;
+    group.add(pole);
+    const segs: THREE.Mesh[] = [];
+    const segN = 4;
+    const clothMat = glowMaterial(color, 0.5);
+    for (let i = 0; i < segN; i++) {
+      const seg = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.42, 0.06), clothMat);
+      seg.position.y = -0.2 - i * 0.42;
+      group.add(seg);
+      segs.push(seg);
+    }
+    // accent emblem in the middle
+    const emblem = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.08), glowMaterial(0xfff2d6, 0.8));
+    emblem.position.set(0, -0.62, 0.04);
+    group.add(emblem);
+    void height;
+    return { group, rec: { segs, phase: Math.random() * 6.28 } };
+  }
+
   /**
-   * The egg ring — five gacha pedestals around the central fountain. Each holds
-   * a floating, slowly-spinning egg tinted to its tier; walking up lets the
-   * player hatch a random pet (handled in main via the gacha module).
+   * The five egg shrines ringing the fountain. Each is a tiered pedestal topped
+   * by a faceted, glowing gem-egg that bobs and wobbles inside a breathing aura,
+   * crowned by a rising light shaft and orbited by sparkles. Tiers are visually
+   * graded — pricier eggs glow brighter and carry more sparkles — so value reads
+   * at a glance. Pure visuals; hatching is handled in main via the gacha module.
    */
-  private buildEggs(eggDefs: { id: string; color: number; label: string }[] = DEFAULT_EGG_VISUALS) {
-    const ringR = 4.6;
+  private buildEggs(eggDefs = DEFAULT_EGG_VISUALS) {
+    const ringR = 4.4;
     eggDefs.forEach((e, i) => {
       const a = (i / eggDefs.length) * Math.PI * 2 - Math.PI / 2;
       const x = Math.cos(a) * ringR;
       const z = Math.sin(a) * ringR;
       const pos = new THREE.Vector3(x, 0, z);
       const g = new THREE.Group();
-      // pedestal
-      const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 0.7, 12), voxelMaterial(VOX.stone ?? 0x9b9b90));
-      ped.position.y = 0.35;
-      g.add(ped);
-      // the egg: a slightly squashed glowing box, spins/bobs in update()
-      const egg = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.7, 0.55), glowMaterial(e.color, 1.0));
-      egg.position.y = 1.15;
-      egg.name = "egg";
-      // a couple of accent speckles
-      const spot = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16), glowMaterial(0xffffff, 1.2));
-      spot.position.set(0.12, 1.25, 0.26);
-      g.add(egg, spot);
+
+      // --- tiered pedestal (chunky voxel stone with a tier-colored gem inset) ---
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.72, 0.4, 8), voxelMaterial(VOX.stone));
+      base.position.y = 0.2;
+      const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.56, 0.55, 8), voxelMaterial(VOX.stoneDark));
+      mid.position.y = 0.67;
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.5, 0.22, 8), voxelMaterial(VOX.stone));
+      top.position.y = 1.05;
+      g.add(base, mid, top);
+      // gem inset on the pedestal front
+      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), glowMaterial(e.color, 1.1));
+      gem.position.set(0, 0.67, 0.5);
+      g.add(gem);
+      // glowing disc on top the egg floats above
+      const ringGlow = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.08, 16), glowMaterial(e.color, 0.9));
+      ringGlow.position.y = 1.18;
+      g.add(ringGlow);
+
+      // --- the egg: a faceted, gem-like ovoid (flat-shaded catches the light) ---
+      const eggGeo = new THREE.IcosahedronGeometry(0.4, 1);
+      eggGeo.scale(1, 1.32, 1);
+      const egg = new THREE.Mesh(eggGeo, glowMaterial(e.color, 0.95));
+      egg.position.y = 1.55;
+      // speckle pattern: a few bright accent cubes dotted over the shell
+      const speckN = 5;
+      for (let s = 0; s < speckN; s++) {
+        const sa = (s / speckN) * Math.PI * 2;
+        const sp = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), glowMaterial(0xfff6e0, 1.0));
+        sp.position.set(Math.cos(sa) * 0.34, 0.05 + (s % 2) * 0.22, Math.sin(sa) * 0.34);
+        egg.add(sp);
+      }
+      g.add(egg);
+
+      // --- breathing aura shell ---
+      const aura = new THREE.Mesh(new THREE.IcosahedronGeometry(0.62, 1), auraMaterial(e.color, 0.6));
+      (aura.geometry as THREE.BufferGeometry).scale(1, 1.3, 1);
+      aura.position.y = 1.55;
+      g.add(aura);
+
+      // --- rising light shaft ---
+      const beam = new THREE.Mesh(
+        // narrow at the egg, flaring upward — a shaft of rising magic
+        new THREE.CylinderGeometry(0.42, 0.12, 2.4, 8, 1, true),
+        new THREE.MeshStandardMaterial({
+          color: e.color, emissive: e.color, emissiveIntensity: 1.0,
+          transparent: true, opacity: 0.12, depthWrite: false,
+          side: THREE.DoubleSide, toneMapped: false,
+        }),
+      );
+      beam.position.y = 2.6;
+      g.add(beam);
+
+      // --- orbiting sparkles (more on richer tiers) ---
+      const orbit = new THREE.Group();
+      const sparkN = 3 + i; // common 3 → mythic 7
+      for (let s = 0; s < sparkN; s++) {
+        const sa = (s / sparkN) * Math.PI * 2;
+        const rr = 0.7;
+        const spark = new THREE.Mesh(new THREE.OctahedronGeometry(0.08, 0), glowMaterial(0xffffff, 1.3));
+        spark.position.set(Math.cos(sa) * rr, (s % 2 ? 0.15 : -0.1), Math.sin(sa) * rr);
+        orbit.add(spark);
+      }
+      orbit.position.y = 1.55;
+      g.add(orbit);
+
       g.position.copy(pos);
       this.group.add(g);
-      this.eggs.push({ id: e.id, group: g, pos: pos.clone() });
+      this.eggs.push({ id: e.id, group: g, egg, aura, orbit, beam, ringGlow, pos: pos.clone(), phase: i * 1.3, color: e.color, lit: 0 });
       this.zones.push({ id: e.id, kind: "egg", pos: pos.clone(), radius: 1.9, label: e.label, eggId: e.id });
     });
   }
 
   /**
-   * Reactive pads — the pad nearest the player bounce-scales up + brightens its
-   * ring while stood on, easing back to rest otherwise. Cheap (a few pads).
+   * A friendly static greeter NPC near spawn with a welcome speech bubble + name
+   * label, plus a floating arrow over the Duo gate pointing players at the action.
    */
-  reactPads(playerPos: THREE.Vector3, dt: number) {
-    for (const p of this.pads) {
-      const dx = p.pos.x - playerPos.x;
-      const dz = p.pos.z - playerPos.z;
-      const on = dx * dx + dz * dz < 2.2 * 2.2;
-      // ease the "lit" amount toward the target (1 when stood on, else 0)
-      p.lit += ((on ? 1 : 0) - p.lit) * Math.min(1, dt * 8);
-      const s = 1 + p.lit * 0.18 + (on ? Math.sin(this.t * 8) * 0.04 : 0);
-      p.group.scale.set(s, 1 + p.lit * 0.12, s);
-      const m = p.ring.material as THREE.MeshStandardMaterial;
-      m.emissiveIntensity = 0.9 + p.lit * 1.6;
-    }
+  private buildGreeter() {
+    const npc = new VoxelChar({ body: 0x6e4a9e, head: COLORS.playerAccent, eye: 0x222222, hat: 0xffd24a, gun: false });
+    npc.root.position.set(2.6, 0, 6.2);
+    npc.root.rotation.y = Math.PI;
+    npc.play("idle");
+    npc.emote("wave");
+    this.greeter = npc;
+    const label = makeLabel("Guide");
+    npc.root.add(label);
+    const bubble = makeBubble("Hatch pets at the egg shrines, then step into a SOLO / DUO / SQUAD portal to fight! Press T to wave 👋");
+    bubble.scale.set(5.4, 1.4, 1);
+    bubble.position.set(0, 3.1, 0);
+    npc.root.add(bubble);
+    this.group.add(npc.root);
+
+    // a little wooden signpost beside the greeter
+    const signPost = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.4, 0.16), voxelMaterial(VOX.bark));
+    signPost.position.set(3.8, 0.7, 6.2);
+    const signBoard = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 0.1), voxelMaterial(VOX.woodTrim));
+    signBoard.position.set(3.8, 1.4, 6.2);
+    this.group.add(signPost, signBoard);
+
+    const cone = new THREE.ConeGeometry(0.5, 1.0, 4);
+    cone.rotateX(Math.PI);
+    this.arrow = new THREE.Mesh(cone, glowMaterial(0x6ad7ff, 1.2));
+    this.arrow.position.set(0, 3.6, -12);
+    this.group.add(this.arrow);
   }
 
-  /** Spin + bob the floating eggs and pulse the mode rings (called in update). */
-  private animateInteractables() {
-    for (const e of this.eggs) {
-      const egg = e.group.getObjectByName("egg");
-      if (egg) {
-        egg.rotation.y = this.t * 1.2;
-        egg.position.y = 1.15 + Math.sin(this.t * 2 + e.pos.x) * 0.08;
-      }
+  /** Ambient life: drifting glow motes over the plaza + slow clouds overhead. */
+  private buildAtmosphere() {
+    // floating sparkle motes rising over the plaza
+    let seed = 555;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let i = 0; i < 26; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = rnd() * 9;
+      const mote = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.07, 0),
+        new THREE.MeshStandardMaterial({
+          color: 0xfff0b8, emissive: 0xffe08a, emissiveIntensity: 1.2,
+          transparent: true, opacity: 0.6, depthWrite: false, toneMapped: false,
+        }),
+      );
+      const baseY = 0.4 + rnd() * 1.5;
+      mote.position.set(Math.cos(a) * r, baseY + rnd() * 2, Math.sin(a) * r);
+      this.motes.push({ mesh: mote, baseY, phase: rnd() * 6.28, speed: 0.3 + rnd() * 0.5, span: 3 + rnd() * 2 });
+      this.group.add(mote);
     }
-    for (const m of this.modeRings) {
-      const mat = m.ring.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 0.7 + (Math.sin(this.t * 2.5 + m.pos.x) + 1) * 0.25;
+    // chunky drifting clouds high overhead
+    const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: 0.85 });
+    for (let i = 0; i < 6; i++) {
+      const cloud = new THREE.Group();
+      const n = 3 + Math.floor(rnd() * 3);
+      for (let k = 0; k < n; k++) {
+        const w = 1.8 + rnd() * 2.2;
+        const blk = new THREE.Mesh(new THREE.BoxGeometry(w, 1.0, 1.6), cloudMat);
+        blk.position.set((rnd() - 0.5) * 4, (rnd() - 0.5) * 0.6, (rnd() - 0.5) * 2);
+        cloud.add(blk);
+      }
+      const reset = 46;
+      cloud.position.set(-reset + rnd() * reset * 2, 13 + rnd() * 4, -18 + rnd() * 36);
+      this.clouds.push({ mesh: cloud as unknown as THREE.Mesh, speed: 0.4 + rnd() * 0.5, reset });
+      this.group.add(cloud);
     }
   }
 }
 
-/** Default visual set for the 5 egg pedestals; main can override the labels via
- *  setEggLabels but the island ships sensible defaults so it works standalone. */
+/** Default visual set for the 5 egg shrines (id + tier color + walk-up label). */
 const DEFAULT_EGG_VISUALS: { id: string; color: number; label: string }[] = [
   { id: "egg_common", color: 0x8fcf5a, label: "Mossy Egg" },
   { id: "egg_uncommon", color: 0x6ad7ff, label: "River Egg" },
