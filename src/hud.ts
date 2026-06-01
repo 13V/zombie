@@ -1067,15 +1067,16 @@ export class Hud {
       const a0 = i * seg, a1 = (i + 1) * seg;
       return `${div} ${a0}deg ${a0 + 0.8}deg, ${cols[i % cols.length]} ${a0 + 0.8}deg ${a1}deg`;
     }).join(", ");
+    // land the winning segment under the top pointer (with several extra turns)
+    const target = 360 * 5 - (win * seg + seg / 2);
+    // labels are children of the spinning wheel, so counter-rotate them by the
+    // wheel's resting angle (-target) → they read screen-upright when it stops.
     const labelEls = labels.map((l, i) => {
       const ang = i * seg + seg / 2;
-      // rotate out to the slice, then counter-rotate so the text stays upright
-      return `<span class="wh-label" style="transform:rotate(${ang}deg) translateY(-102px) rotate(${-ang}deg)">${l}</span>`;
+      return `<span class="wh-label" style="transform:rotate(${ang}deg) translateY(-102px) rotate(${-ang - target}deg)">${l}</span>`;
     }).join("");
     const pegs = Array.from({ length: 12 }, (_, i) =>
       `<span class="wh-peg" style="transform:rotate(${i * 30}deg) translateY(-164px)"></span>`).join("");
-    // land the winning segment under the top pointer (with several extra turns)
-    const target = 360 * 5 - (win * seg + seg / 2);
     this.wheelEl.innerHTML = `
       <div class="wh-stage">
         <div class="wh-title">🎡 Fortune Wheel</div>
