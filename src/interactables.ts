@@ -623,6 +623,13 @@ class Trap implements Interactable {
 /** Builds and manages all the buyable things in the arena. */
 export class Interactables {
   readonly list: Interactable[] = [];
+  private groups: THREE.Group[] = [];
+
+  /** Hide/show every map prop (perk pads, gum, mystery box, traps, …). Used to
+   *  keep the zombie-map fixtures out of the island hub, which shares world coords. */
+  setVisible(on: boolean) {
+    for (const g of this.groups) g.visible = on;
+  }
 
   constructor(scene: THREE.Scene, half: number) {
     const items: { i: Interactable; group: THREE.Group }[] = [];
@@ -657,6 +664,7 @@ export class Interactables {
 
     for (const { i, group } of items) {
       this.list.push(i);
+      this.groups.push(group);
       scene.add(group);
     }
   }

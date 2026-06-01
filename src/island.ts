@@ -1027,6 +1027,23 @@ export class Island {
         gate.add(tg);
         this.flames.push(flame);
       }
+      // a lantern hanging from the arch + climbing vines up the pillars
+      const hang = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), voxelMaterial(VOX.steelDark));
+      hang.position.set(0, height - 0.3, thick / 2 + 0.2);
+      const hangGlow = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.3), glowMaterial(VOX.lantern, 1.2));
+      hangGlow.position.set(0, height - 0.7, thick / 2 + 0.2);
+      gate.add(hang, hangGlow);
+      this.beacons.push(hangGlow);
+      let vseed = m.grand * 17 + 3;
+      const vrnd = () => ((vseed = (vseed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+      for (const px of [-halfW, halfW]) {
+        const leaves = vrnd() < 0.5 ? VOX.leaf : VOX.leafDark;
+        for (let v = 0; v < 5; v++) {
+          const vine = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.5, 0.18), voxelMaterial(leaves));
+          vine.position.set(px + (vrnd() - 0.5) * 0.5, 0.6 + v * (height / 6), thick / 2 + 0.05);
+          gate.add(vine);
+        }
+      }
       // hang tier banners on the pillar faces (both pillars on grander gates)
       const bannerXs = m.grand >= 1 ? [-halfW, halfW] : [];
       for (const bx of bannerXs) {
@@ -1292,6 +1309,10 @@ export class Island {
     const walls = new THREE.Mesh(new THREE.BoxGeometry(w, wallH, d), wallMat);
     walls.position.y = 0.2 + wallH / 2;
     h.add(walls);
+    // a stone base course wrapping the lower walls (classic cottage masonry)
+    const baseCourse = new THREE.Mesh(new THREE.BoxGeometry(w + 0.14, 0.7, d + 0.14), voxelMaterial(VOX.foundation));
+    baseCourse.position.y = 0.2 + 0.35;
+    h.add(baseCourse);
 
     // Tudor framing: corner posts + a mid + top horizontal band + two front studs
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
@@ -1299,7 +1320,7 @@ export class Island {
       post.position.set((sx * w) / 2, 0.2 + wallH / 2, (sz * d) / 2);
       h.add(post);
     }
-    for (const by of [wallTop - 0.05, 0.2 + wallH * 0.5]) {
+    for (const by of [wallTop - 0.05, 0.2 + wallH * 0.55]) {
       const band = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, 0.2, d + 0.08), trim);
       band.position.y = by;
       h.add(band);
@@ -1308,6 +1329,16 @@ export class Island {
       const stud = new THREE.Mesh(new THREE.BoxGeometry(0.18, wallH, 0.12), trim);
       stud.position.set(sx * (w / 2 - 0.95), 0.2 + wallH / 2, front + 0.01);
       h.add(stud);
+      // diagonal timber brace on the upper front gable section (Tudor look)
+      const brace = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.5, 0.1), trim);
+      brace.position.set(sx * (w / 2 - 0.5), 0.2 + wallH * 0.78, front + 0.01);
+      brace.rotation.z = sx * 0.6;
+      h.add(brace);
+      // eave bracket under the roof overhang
+      const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.46, 0.5), trim);
+      bracket.position.set(sx * (w / 2 - 0.1), wallTop + 0.05, front - 0.1);
+      bracket.rotation.x = 0.45;
+      h.add(bracket);
     }
 
     // a framed window with optional shutters + a flower box (faces +z)
@@ -1317,6 +1348,12 @@ export class Island {
       const pane = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.82, 0.12), winMat);
       pane.position.set(x, y, front + 0.06);
       h.add(frame, pane);
+      // glazing-bar mullions (a cross over the pane)
+      const mullV = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.82, 0.14), trim);
+      mullV.position.set(x, y, front + 0.08);
+      const mullH = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.08, 0.14), trim);
+      mullH.position.set(x, y, front + 0.08);
+      h.add(mullV, mullH);
       for (const sx of [-1, 1]) {
         const shut = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.96, 0.06), wood);
         shut.position.set(x + sx * 0.58, y, front + 0.05);
@@ -1422,6 +1459,17 @@ export class Island {
       this.smokes.push({ mesh: puff, baseY: smokeBaseY, phase: Math.random() * 6.28, speed: 0.4, span: 2.2 });
     }
 
+    // a weathervane on the ridge of storied houses
+    if (story) {
+      const vpost = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.8, 0.08), trim);
+      vpost.position.set(0, ridgeY + 0.5, roofD / 2 - 0.8);
+      const arrow = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.1, 0.08), glowMaterial(VOX.lantern, 0.7));
+      arrow.position.set(0, ridgeY + 0.85, roofD / 2 - 0.8);
+      const cross = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.5), trim);
+      cross.position.set(0, ridgeY + 0.7, roofD / 2 - 0.8);
+      h.add(vpost, arrow, cross);
+    }
+
     // a hanging shop sign on a bracket (big plots only)
     if (big) {
       const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.12, 0.12), trim);
@@ -1431,6 +1479,53 @@ export class Island {
       const icon = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.12), glowMaterial(VOX.lantern, 0.9));
       icon.position.set(-w / 2 + 0.7, 1.95, front + 0.37);
       h.add(bracket, sign, icon);
+    }
+
+    // ---- cottage yard dressing: a wood pile, barrels, a crate, and a bench ----
+    const logMat = voxelMaterial(VOX.bark);
+    // stacked wood pile beside the left wall
+    for (let row = 0; row < 2; row++) for (let c = 0; c < 3; c++) {
+      const log = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.1, 6), logMat);
+      log.rotation.z = Math.PI / 2;
+      log.position.set(-w / 2 - 0.9, 0.36 + row * 0.34, -d / 2 + 0.9 + c * 0.36 - (row * 0.18));
+      h.add(log);
+    }
+    // a couple of barrels by the back-left corner
+    for (let b = 0; b < 2; b++) {
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.36, 0.8, 8), voxelMaterial(VOX.barrel));
+      barrel.position.set(-w / 2 - 0.7, 0.4, -d / 2 - 0.3 - b * 0.8);
+      const hoop = new THREE.Mesh(new THREE.CylinderGeometry(0.37, 0.37, 0.1, 8), voxelMaterial(VOX.steelDark));
+      hoop.position.set(barrel.position.x, 0.55, barrel.position.z);
+      h.add(barrel, hoop);
+    }
+    // a crate by the door step
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), voxelMaterial(VOX.crate));
+    crate.position.set(w / 2 - 0.4, 0.3, front + 0.7);
+    h.add(crate);
+    // a little bench against the front wall
+    const benchSeat = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.12, 0.4), wood);
+    benchSeat.position.set(-w / 4, 0.5, front + 0.55);
+    h.add(benchSeat);
+    for (const bx of [-w / 4 - 0.55, -w / 4 + 0.55]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.32), wood);
+      leg.position.set(bx, 0.25, front + 0.55);
+      h.add(leg);
+    }
+    // big plots get a fenced garden patch with crops on the right
+    if (big) {
+      for (let p = 0; p < 4; p++) {
+        const fp = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.12), voxelMaterial(VOX.fence));
+        fp.position.set(w / 2 + 0.6 + (p % 2) * 1.1, 0.25, -d / 2 + 0.6 + Math.floor(p / 2) * 1.1);
+        h.add(fp);
+      }
+      const soil = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.18, 1.3), voxelMaterial(VOX.tilled));
+      soil.position.set(w / 2 + 1.15, 0.18, -d / 2 + 1.15);
+      h.add(soil);
+      for (let cr = 0; cr < 4; cr++) {
+        const crop = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.4, 0.18), voxelMaterial(VOX.crop));
+        crop.position.set(w / 2 + 0.8 + (cr % 2) * 0.7, 0.45, -d / 2 + 0.8 + Math.floor(cr / 2) * 0.7);
+        h.add(crop);
+      }
     }
     return h;
   }
@@ -1453,6 +1548,22 @@ export class Island {
       stripe.rotation.x = -0.5;
       s.add(stripe);
     }
+    // a back board with hanging wares under the awning
+    const board = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.9, 0.1), voxelMaterial(VOX.woodTrim));
+    board.position.set(0, 1.4, -0.34);
+    s.add(board);
+    const wareCols = [0xffd24a, 0x6ad7ff, 0xff6f7a, 0x7be08a];
+    for (let i = 0; i < 4; i++) {
+      const ware = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.3, 0.12), glowMaterial(wareCols[i], 0.6));
+      ware.position.set(-0.75 + i * 0.5, 1.45, -0.28);
+      s.add(ware);
+    }
+    // crates + a barrel stacked beside the stall
+    const sideCrate = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), voxelMaterial(VOX.crate));
+    sideCrate.position.set(-1.3, 0.3, 0.3);
+    const sideBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.74, 8), voxelMaterial(VOX.barrel));
+    sideBarrel.position.set(1.3, 0.37, 0.3);
+    s.add(sideCrate, sideBarrel);
     // a couple of glowing goods on the counter
     for (const gx of [-0.5, 0.4]) {
       const good = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.28), glowMaterial(gx < 0 ? 0xffd24a : 0x6ad7ff, 0.6));

@@ -67,6 +67,17 @@ export class Drops {
 
   constructor(private scene: THREE.Scene, private audio?: Audio) {}
 
+  /** Despawn every live loot drop (e.g. when leaving a run for the island hub so
+   *  no leftover chests/gems float around the lobby). */
+  clearAll() {
+    for (const d of this.pool) {
+      if (d.active) {
+        d.active = false;
+        this.scene.remove(d.group);
+      }
+    }
+  }
+
   private rollDef(forceGood: boolean): DropDef {
     if (forceGood) {
       // boss/treasure rolls bias to the exciting half of the table

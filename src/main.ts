@@ -937,6 +937,7 @@ class Game implements GameApi {
     // leaving the hub for the zombie world: swap scenes back to the arena
     this.island.setVisible(false);
     this.arena.group.visible = true;
+    this.interactables.setVisible(true); // restore the map fixtures for the run
     this.hud.setIslandMode(false);
     this.hud.hidePrompt();
     this.resetRun();
@@ -1176,6 +1177,7 @@ class Game implements GameApi {
       // guests render the host's authoritative world; no local sim
       this.island.setVisible(false);
       this.arena.group.visible = true;
+      this.interactables.setVisible(true);
       this.hud.setIslandMode(false);
       this.hud.hidePrompt();
       this.resetRun();
@@ -1473,6 +1475,10 @@ class Game implements GameApi {
     this.player.alive = true;
     this.player.pos.set(0, 0, 11); // stand at the front of the village square
     this.camZoomTarget = 1.7; // pull back so the whole village reads (wheel/pinch to adjust)
+    // hide the zombie-map fixtures (perk pads, gum, mystery box, traps) + any
+    // leftover loot — the hub shares world coords with the arena.
+    this.interactables.setVisible(false);
+    this.drops.clearAll();
     this.spawnPets(); // bring the equipped squad into the hub so they follow + flex
     this.player.group.position.copy(this.player.pos);
     this.hud.setIslandMode(true);
