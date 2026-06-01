@@ -1307,3 +1307,91 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
   background: #3a8e5a; border: none; color: #fff; font-weight: 800;
   border-radius: 10px; padding: 9px 22px; cursor: pointer;
 }
+
+/* ============================================================
+   Shop opened as an ISLAND MODAL (no menu/Play chrome) + UI polish
+   ============================================================ */
+.shop-modal {
+  justify-content: center;
+  background: radial-gradient(ellipse at 50% 42%, rgba(44,32,22,0.5), rgba(18,12,8,0.82));
+}
+/* hide the full-menu chrome — you're already in the hub */
+.shop-modal > h1,
+.shop-modal > .tagline,
+.shop-modal > .bestline,
+.shop-modal > .play,
+.shop-modal > .coop,
+.shop-modal > .lobby-status,
+.shop-modal > #daily-board,
+.shop-modal > .controls-fold,
+.shop-modal > .wallet-row { display: none !important; }
+
+/* the shop becomes a clean centered card */
+.shop-modal .shop {
+  width: min(94vw, 640px);
+  background: linear-gradient(180deg, rgba(58,45,32,0.98), rgba(38,29,21,0.98));
+  border: 2px solid var(--gold);
+  border-radius: 20px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08);
+  padding: 16px 16px 12px;
+}
+.shop-modal .tab { max-height: min(62vh, 460px); }
+/* pets-only: drop the tab bar entirely, keep the balance chips */
+.pets-only .shop-tabs { display: none !important; }
+
+/* floating close button — only in the modal */
+.overlay-close { display: none; }
+.shop-modal .overlay-close {
+  display: grid; place-items: center;
+  position: fixed; top: 18px; right: 20px;
+  width: 46px; height: 46px; border-radius: 50%;
+  background: rgba(20,14,10,0.7); color: #fff;
+  border: 2px solid rgba(255,255,255,0.22);
+  font-size: 20px; font-weight: 800; cursor: pointer; z-index: 6;
+  transition: transform 0.12s, border-color 0.12s, background 0.12s;
+}
+.shop-modal .overlay-close:hover { background: rgba(0,0,0,0.82); border-color: var(--gold); transform: scale(1.08); }
+
+/* ---- shop bar / tabs / balance chips polish (applies everywhere) ---- */
+.shop-bar { gap: 8px; align-items: center; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 10px; }
+.shop-tabs { gap: 6px; flex-wrap: wrap; }
+.shop-tab {
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-weight: 700;
+  border: 1.5px solid transparent;
+  background: rgba(255,255,255,0.06);
+  color: #d9cdb8;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.shop-tab:hover { background: rgba(255,255,255,0.14); color: #fff; }
+.shop-tab.active {
+  background: linear-gradient(180deg, rgba(255,210,74,0.28), rgba(255,210,74,0.14));
+  border-color: rgba(255,210,74,0.7);
+  color: #ffe9a8;
+  box-shadow: 0 0 14px rgba(255,210,74,0.25);
+}
+.shop-bar .shop-essence {
+  background: rgba(0,0,0,0.28);
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 14px;
+}
+
+/* ---- pet cards: rounded with a soft rarity glow ---- */
+.pet-card {
+  border-radius: 14px;
+  border-width: 2px;
+  transition: transform 0.13s ease, box-shadow 0.13s ease, background 0.13s ease;
+}
+.pet-card:hover:not(:disabled) {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.4), 0 0 16px color-mix(in srgb, var(--pc) 50%, transparent);
+}
+.pet-card.owned { box-shadow: 0 0 12px color-mix(in srgb, var(--pc) 35%, transparent); }
+
+/* nicer scrollbars inside the shop card */
+.shop-modal .tab::-webkit-scrollbar { width: 10px; }
+.shop-modal .tab::-webkit-scrollbar-thumb { background: rgba(255,210,74,0.35); border-radius: 8px; }
+.shop-modal .tab::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 8px; }

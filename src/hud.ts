@@ -155,6 +155,7 @@ export class Hud {
       <div id="build-bar" class="hidden"></div>
 
       <div class="overlay" id="overlay-start">
+        <button class="overlay-close" id="overlay-close" title="Back to island">✕</button>
         <h1>TINY <span class="dead">DEAD</span></h1>
         <p class="tagline">A cozy little world overrun by ten flavors of undead. Survive, loot, spin for wild guns — every run earns <b>Essence</b>.</p>
         <div class="bestline" id="best-line"></div>
@@ -250,6 +251,9 @@ export class Hud {
     this.overOverlay = this.q("#overlay-over");
     this.overStats = this.q("#over-stats");
 
+    // ✕ on the shop-modal: close back to the island
+    this.q("#overlay-close").addEventListener("click", () => this.hideStart());
+
     // menu shop tab switching
     this.root.querySelectorAll<HTMLButtonElement>(".shop-tab").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -294,10 +298,13 @@ export class Hud {
   onLeaveIsland(cb: () => void) {
     this.q("#btn-leave-island").addEventListener("click", cb);
   }
-  /** Bring the menu/shop overlay back up (used by the island Shop pad). Pass a
-   *  tab id (e.g. "pets") to open straight to it — the Pet Sanctuary uses this. */
-  openShop(tab?: string) {
+  /** Open the shop as a focused MODAL over the island (no menu/Play chrome — you're
+   *  already in the hub). `tab` jumps to a tab; `petsOnly` shows just the Pets
+   *  panel (used by the Pet Sanctuary). A ✕ closes back to the island. */
+  openShop(tab?: string, petsOnly = false) {
     this.startOverlay.classList.remove("hidden");
+    this.startOverlay.classList.add("shop-modal");
+    this.startOverlay.classList.toggle("pets-only", petsOnly);
     if (tab) {
       this.root.querySelectorAll<HTMLButtonElement>(".shop-tab").forEach((b) =>
         b.classList.toggle("active", b.dataset.tab === tab));
@@ -1086,7 +1093,8 @@ export class Hud {
   }
 
   showStart() {
-    this.startOverlay.classList.remove("hidden");
+    // full menu (boot / game-over): drop any shop-modal framing
+    this.startOverlay.classList.remove("hidden", "shop-modal", "pets-only");
   }
   hideStart() {
     this.startOverlay.classList.add("hidden");

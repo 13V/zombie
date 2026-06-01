@@ -1733,10 +1733,12 @@ class Game implements GameApi {
         break;
       }
       case "shop":
+        this.renderShop();
         this.hud.openShop();
         break;
       case "pets":
-        this.hud.openShop("pets"); // straight to the squad-equip tab
+        this.renderShop();
+        this.hud.openShop("pets", true); // pets-ONLY panel (no menu/Play chrome)
         break;
       case "egg":
         this.openEgg(zone.eggId ?? "");
