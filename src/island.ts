@@ -1,17 +1,18 @@
 import * as THREE from "three";
-import { voxelMaterial, glowMaterial, toyMaterial, VOX, COLORS } from "./palette";
+import { voxelMaterial, glowMaterial, VOX, COLORS } from "./palette";
 import { VoxelChar } from "./voxelChar";
 import { makeBubble, makeLabel } from "./islandnet";
 
 /**
  * The Island — a persistent social hub / lobby the player spawns into (think a
  * cozy Roblox-style starting world). You walk around your voxel character here,
- * see other people (multiplayer presence is layered on top via NetPlay), visit
- * house plots, and step onto interactive pads to start co-op runs.
+ * see other people (multiplayer presence is layered on top via NetPlay), hatch
+ * pets at the egg ring in the middle, and step onto game-mode structures to
+ * start a Solo / Duo / Squad run.
  *
  * This module owns ONLY the static world + the interactive "zones" (proximity
- * pads). Movement, camera, presence and house contents are driven by main.ts so
- * the island can reuse the existing Player / NetClient / camera systems.
+ * pads). Movement, camera and presence are driven by main.ts so the island can
+ * reuse the existing Player / NetClient / camera systems.
  */
 
 export const ISLAND = {
@@ -22,12 +23,14 @@ export const ISLAND = {
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
   id: string;
-  kind: "play" | "host" | "join" | "shop" | "plot";
+  kind: "mode" | "join" | "shop" | "egg";
   pos: THREE.Vector3;
   radius: number; // proximity radius that triggers the prompt
   label: string; // shown in the proximity prompt
-  /** house-plot ownership (kind === "plot"): filled in by main from the backend. */
-  plotIndex?: number;
+  /** game-mode portals (kind === "mode"): how many players the structure hosts. */
+  modePlayers?: 1 | 2 | 4;
+  /** egg zones (kind === "egg"): which gacha egg this pedestal hatches. */
+  eggId?: string;
 }
 
 export class Island {
@@ -41,8 +44,9 @@ export class Island {
   // greeter NPC (static voxel figure near spawn) + the floating "go here" arrow
   private greeter?: VoxelChar;
   private arrow?: THREE.Mesh;
-  /** Plot anchor points so houses can be (re)built onto them by main. */
-  readonly plots: { index: number; pos: THREE.Vector3 }[] = [];
+  // egg pedestals (spin + bob in update) and the game-mode portal structures
+  private eggs: { id: string; group: THREE.Group; pos: THREE.Vector3 }[] = [];
+  private modeRings: { ring: THREE.Mesh; pos: THREE.Vector3 }[] = [];
 
   constructor(scene: THREE.Scene) {
     this.buildGround();
@@ -50,7 +54,8 @@ export class Island {
     this.buildDecor();
     this.buildPlaza();
     this.buildZones();
-    this.buildPlots();
+    this.buildModes();
+    this.buildEggs();
     this.buildGreeter();
     scene.add(this.group);
     this.group.visible = false; // shown only while in the island state
@@ -105,6 +110,7 @@ export class Island {
       this.arrow.position.y = 3.1 + Math.sin(this.t * 2.2) * 0.18;
       this.arrow.rotation.y += dt * 1.5;
     }
+    this.animateInteractables();
   }
 
   /**
@@ -120,17 +126,17 @@ export class Island {
     this.greeter = npc;
     const label = makeLabel("Guide");
     npc.root.add(label);
-    const bubble = makeBubble("Walk to the red portal to fight — or hang out! Press T to wave 👋");
-    bubble.scale.set(4.2, 1.4, 1);
+    const bubble = makeBubble("Hatch pets at the eggs, then step into a SOLO / DUO / SQUAD gate to fight! Press T to wave 👋");
+    bubble.scale.set(5.4, 1.4, 1);
     bubble.position.set(0, 3.1, 0);
     npc.root.add(bubble);
     this.group.add(npc.root);
 
-    // floating arrow over the host pad (host pad sits at z = -5.5)
+    // floating arrow over the DUO gate (center-back of the plaza, z = -11)
     const cone = new THREE.ConeGeometry(0.5, 1.0, 4);
     cone.rotateX(Math.PI); // point down
-    this.arrow = new THREE.Mesh(cone, glowMaterial(0xff5a3a, 1.2));
-    this.arrow.position.set(0, 3.1, -5.5);
+    this.arrow = new THREE.Mesh(cone, glowMaterial(0x6ad7ff, 1.2));
+    this.arrow.position.set(0, 3.4, -11);
     this.group.add(this.arrow);
   }
 
@@ -222,14 +228,13 @@ export class Island {
     this.group.add(base, water);
   }
 
-  /** Build the interactive pads (portals) + register their zones. */
+  /** Build the utility pads (join + shop) near the plaza edge. Game-mode
+   *  portals live in buildModes(); egg pedestals in buildEggs(). */
   private buildZones() {
-    // PLAY pad — start / host a co-op run (the "portal to the zombie world")
-    this.addPad("host", "host", new THREE.Vector3(0, 0, -5.5), 0xff5a3a, "Start / Host Co-op Run");
     // JOIN pad — enter a friend's room code
-    this.addPad("join", "join", new THREE.Vector3(5, 0, 2.5), 0x6ad7ff, "Join a Friend's Run");
+    this.addPad("join", "join", new THREE.Vector3(6.5, 0, 4.5), 0x6ad7ff, "Join a Friend's Run");
     // SHOP pad — open the pet/upgrade shop from the hub
-    this.addPad("shop", "shop", new THREE.Vector3(-5, 0, 2.5), 0xffd24a, "Open Shop");
+    this.addPad("shop", "shop", new THREE.Vector3(-6.5, 0, 4.5), 0xffd24a, "Open Shop");
   }
 
   private addPad(id: string, kind: IslandZone["kind"], pos: THREE.Vector3, color: number, label: string) {
@@ -244,6 +249,80 @@ export class Island {
     this.group.add(pad);
     this.pads.push({ id, group: pad, ring, pos: pos.clone(), lit: 0 });
     this.zones.push({ id, kind, pos: pos.clone(), radius: 2.2, label });
+  }
+
+  /**
+   * Game-mode portals — three voxel archway structures the player steps into to
+   * start a Solo (1), Duo (2), or Squad (4) run. Each is a colored gate with a
+   * glowing floor ring + a count of figures, arranged across the back of the
+   * plaza. Difficulty scales with the player count the structure hosts.
+   */
+  private buildModes() {
+    const modes: { id: string; players: 1 | 2 | 4; pos: THREE.Vector3; color: number; label: string }[] = [
+      { id: "mode_solo", players: 1, pos: new THREE.Vector3(-9, 0, -9), color: 0x7be08a, label: "SOLO — 1 player" },
+      { id: "mode_duo", players: 2, pos: new THREE.Vector3(0, 0, -11), color: 0x6ad7ff, label: "DUO — 2 players (2× harder)" },
+      { id: "mode_quad", players: 4, pos: new THREE.Vector3(9, 0, -9), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)" },
+    ];
+    for (const m of modes) {
+      const gate = new THREE.Group();
+      const post = (x: number) => {
+        const p = new THREE.Mesh(new THREE.BoxGeometry(0.5, 3.0, 0.5), glowMaterial(m.color, 0.8));
+        p.position.set(x, 1.5, 0);
+        gate.add(p);
+      };
+      post(-1.4); post(1.4);
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(3.7, 0.5, 0.5), glowMaterial(m.color, 0.9));
+      lintel.position.set(0, 3.05, 0);
+      gate.add(lintel);
+      // glowing floor ring
+      const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 0.18, 28), glowMaterial(m.color, 0.85));
+      ring.position.y = 0.1;
+      gate.add(ring);
+      // little voxel figures showing the party size (1 / 2 / 4 stubby blocks)
+      for (let i = 0; i < m.players; i++) {
+        const a = m.players === 1 ? 0 : (i / m.players) * Math.PI * 2;
+        const fig = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.8, 0.34), glowMaterial(m.color, 1.1));
+        fig.position.set(Math.cos(a) * 0.6, 0.5, Math.sin(a) * 0.6 + 0.1);
+        gate.add(fig);
+      }
+      gate.position.copy(m.pos);
+      gate.lookAt(0, 0, 0); // face the plaza center
+      this.group.add(gate);
+      this.modeRings.push({ ring, pos: m.pos.clone() });
+      this.zones.push({ id: m.id, kind: "mode", pos: m.pos.clone(), radius: 2.6, label: m.label, modePlayers: m.players });
+    }
+  }
+
+  /**
+   * The egg ring — five gacha pedestals around the central fountain. Each holds
+   * a floating, slowly-spinning egg tinted to its tier; walking up lets the
+   * player hatch a random pet (handled in main via the gacha module).
+   */
+  private buildEggs(eggDefs: { id: string; color: number; label: string }[] = DEFAULT_EGG_VISUALS) {
+    const ringR = 4.6;
+    eggDefs.forEach((e, i) => {
+      const a = (i / eggDefs.length) * Math.PI * 2 - Math.PI / 2;
+      const x = Math.cos(a) * ringR;
+      const z = Math.sin(a) * ringR;
+      const pos = new THREE.Vector3(x, 0, z);
+      const g = new THREE.Group();
+      // pedestal
+      const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 0.7, 12), voxelMaterial(VOX.stone ?? 0x9b9b90));
+      ped.position.y = 0.35;
+      g.add(ped);
+      // the egg: a slightly squashed glowing box, spins/bobs in update()
+      const egg = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.7, 0.55), glowMaterial(e.color, 1.0));
+      egg.position.y = 1.15;
+      egg.name = "egg";
+      // a couple of accent speckles
+      const spot = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16), glowMaterial(0xffffff, 1.2));
+      spot.position.set(0.12, 1.25, 0.26);
+      g.add(egg, spot);
+      g.position.copy(pos);
+      this.group.add(g);
+      this.eggs.push({ id: e.id, group: g, pos: pos.clone() });
+      this.zones.push({ id: e.id, kind: "egg", pos: pos.clone(), radius: 1.9, label: e.label, eggId: e.id });
+    });
   }
 
   /**
@@ -264,26 +343,31 @@ export class Island {
     }
   }
 
-  /** Lay out house plots in a ring behind the plaza; main fills them with houses. */
-  private buildPlots() {
-    const count = 8;
-    const ringR = 20;
-    const frame = toyMaterial(0xb6a273);
-    for (let i = 0; i < count; i++) {
-      const a = (i / count) * Math.PI * 2;
-      const x = Math.cos(a) * ringR;
-      const z = Math.sin(a) * ringR;
-      const pos = new THREE.Vector3(x, 0, z);
-      // a flat foundation pad marking the plot
-      const pad = new THREE.Mesh(new THREE.BoxGeometry(6, 0.3, 6), frame);
-      pad.position.set(x, 0.05, z);
-      pad.rotation.y = -a;
-      this.group.add(pad);
-      this.plots.push({ index: i, pos });
-      this.zones.push({ id: `plot${i}`, kind: "plot", pos: pos.clone(), radius: 3.2, label: `House Plot ${i + 1}`, plotIndex: i });
+  /** Spin + bob the floating eggs and pulse the mode rings (called in update). */
+  private animateInteractables() {
+    for (const e of this.eggs) {
+      const egg = e.group.getObjectByName("egg");
+      if (egg) {
+        egg.rotation.y = this.t * 1.2;
+        egg.position.y = 1.15 + Math.sin(this.t * 2 + e.pos.x) * 0.08;
+      }
+    }
+    for (const m of this.modeRings) {
+      const mat = m.ring.material as THREE.MeshStandardMaterial;
+      mat.emissiveIntensity = 0.7 + (Math.sin(this.t * 2.5 + m.pos.x) + 1) * 0.25;
     }
   }
 }
+
+/** Default visual set for the 5 egg pedestals; main can override the labels via
+ *  setEggLabels but the island ships sensible defaults so it works standalone. */
+const DEFAULT_EGG_VISUALS: { id: string; color: number; label: string }[] = [
+  { id: "egg_common", color: 0x8fcf5a, label: "Mossy Egg" },
+  { id: "egg_uncommon", color: 0x6ad7ff, label: "River Egg" },
+  { id: "egg_rare", color: 0x5aa9ff, label: "Storm Egg" },
+  { id: "egg_epic", color: 0xc792ea, label: "Astral Egg" },
+  { id: "egg_legendary", color: 0xffb84a, label: "Mythic Egg" },
+];
 
 /** Re-exported so main can tint prompts consistently with the hub. */
 export const ISLAND_COLORS = COLORS;

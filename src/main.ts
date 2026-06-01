@@ -27,14 +27,11 @@ import { Island, IslandZone } from "./island";
 import { IslandNet, makeBubble } from "./islandnet";
 import { EmoteMenu } from "./emotes";
 import type { EmoteId } from "./voxelChar";
-import { HouseView, HouseData, PartKind, HOUSE_PARTS, PART_CATS, HOUSE_SWATCHES, TROPHY_TIERS, trophyTierForRound, starterHouse, sanitizeHouse } from "./house";
-import { loadHouse, saveHouse, getHouseMeta, likeHouse, localOwnerId } from "./houses";
-import { aimCell, applyBuild, CELL as BUILD_CELL } from "./build";
 import { petThumbnail } from "./petthumb";
-import { rateHouse } from "./houserating";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
-import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, isTrialComplete, RARITY_COLOR, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
+import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, isTrialComplete, RARITY_COLOR, RARITY_LABEL, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
+import { findEgg, rollEgg } from "./gacha";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData, recordScore } from "./save";
 import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
@@ -72,19 +69,6 @@ class Game implements GameApi {
   private islandPop = -1; // last-rendered "N players here" count (-1 = unset)
   private selfBubble?: THREE.Sprite; // my own speech bubble above my head
   private selfBubbleT = 0; // seconds remaining on my speech bubble
-  private houseViews = new Map<number, HouseView>();
-  private editingPlot = -1; // plot index currently in build mode (-1 = none)
-  private editData: HouseData = { parts: [] };
-  private editPart: PartKind = "wall";
-  private editCat = "structure"; // active build-bar category tab
-  private editRot: 0 | 1 | 2 | 3 = 0; // current placement yaw
-  private editColor: number | null = null; // null = part's default color
-  private editPaint = false; // paint mode: clicking recolors existing parts
-  private editPetId = ""; // pet to attach to the next placed "perch"
-  private editReadOnly = false; // visiting someone else's plot (no edits)
-  private undoStack: string[] = []; // JSON snapshots of editData (cap 20)
-  private ghost?: THREE.Object3D; // translucent placement preview
-  private ghostMat?: THREE.MeshBasicMaterial;
   private player: Player;
   private bullets: BulletSystem;
   private rounds: RoundManager;
@@ -639,6 +623,48 @@ class Game implements GameApi {
     this.renderShop();
   }
 
+  /**
+   * Crack a pet egg: spend its gold, roll a weighted-random pet from its rarity
+   * table, and grant it. A NEW pet is added to the collection (with the usual
+   * shiny roll + collection milestones); a DUPLICATE auto-converts into a star
+   * (up to the cap) so a hatch is never wasted. Returns the rolled pet so the
+   * island can play the reveal, or null if the player couldn't afford it.
+   */
+  private hatchEgg(eggId: string): { pet: PetDef; dupe: boolean; shiny: boolean } | null {
+    const egg = findEgg(eggId);
+    if (!egg) return null;
+    if (this.save.gold < egg.cost) { this.audio.deny(); this.hud.toast("Not enough gold"); return null; }
+    this.save.gold -= egg.cost;
+    const pet = rollEgg(egg);
+    const id = pet.id;
+    const owned = this.save.pets.includes(id);
+    let shiny = false;
+    if (!owned) {
+      this.save.pets.push(id);
+      this.save.petLevels[id] = 1;
+      if (Math.random() < PET_DEPTH.cosmetic.shinyOdds) {
+        (this.save.petProgress[id] ??= {})._shiny = 1;
+        shiny = true;
+      }
+      this.grantCollectionMilestones();
+    } else {
+      // duplicate → ascend a star if there's room; otherwise it's a courtesy
+      // refund of part of the egg so a maxed dupe still isn't a total loss.
+      const stars = this.petStars(id);
+      if (stars < PET_DEPTH.stars.maxStars) {
+        (this.save.petProgress[id] ??= {})._stars = stars + 1;
+      } else {
+        const refund = Math.round(egg.cost * 0.25);
+        this.save.gold += refund;
+      }
+    }
+    writeSave(this.save);
+    this.audio.powerup();
+    this.spawnPets();
+    this.renderShop();
+    return { pet, dupe: owned, shiny };
+  }
+
   /** Accumulate this run's "while-equipped" totals into each owned pet's trial. */
   private foldPetTrials() {
     for (const id of this.save.pets) {
@@ -1084,7 +1110,7 @@ class Game implements GameApi {
     throw lastErr ?? new Error("could not reach the server");
   }
 
-  private async hostGame() {
+  private async hostGame(targetPlayers = 2) {
     this.disconnectIslandPresence(); // free the island socket before co-op
     warmServer(); // poke the dyno in case it's cold-starting
     const stop = this.connectingTicker("Connecting");
@@ -1101,7 +1127,8 @@ class Game implements GameApi {
       this.myId = 1;
       this.startRun();
       this.hud.showRoomCode(code);
-      this.hud.setLobbyStatus(`Hosting room ${code} — share the code!`);
+      const word = targetPlayers >= 4 ? "Squad (up to 4)" : "Duo (2)";
+      this.hud.setLobbyStatus(`Hosting ${word} room ${code} — share the code!`);
     } catch (e) {
       stop();
       console.error("[coop] host failed:", e);
@@ -1430,21 +1457,6 @@ class Game implements GameApi {
     // spawn burst: a friendly arrival pop so dropping in feels like an event
     this.portalBurst(this.player.pos);
     this.connectIslandPresence();
-    this.loadIslandHouses();
-  }
-
-  /** Render any saved houses onto their plots when entering the hub. */
-  private async loadIslandHouses() {
-    for (const plot of this.island.plots) {
-      const data = await loadHouse(plot.index, this.plotOwner(plot.index));
-      if (!data) continue;
-      let view = this.houseViews.get(plot.index);
-      if (!view) {
-        view = new HouseView(this.scene, plot.pos);
-        this.houseViews.set(plot.index, view);
-      }
-      view.render(sanitizeHouse(data));
-    }
   }
 
   /** Join the shared island instance so other players appear (best-effort). */
@@ -1476,18 +1488,7 @@ class Game implements GameApi {
 
   /** Leave the island back to the classic menu (arena visible behind it). */
   private leaveIsland() {
-    if (this.editingPlot >= 0) this.exitBuildMode();
     this.disconnectIslandPresence();
-    for (const v of this.houseViews.values()) v.dispose(this.scene);
-    this.houseViews.clear();
-    // free the build-mode ghost preview mesh + material
-    if (this.ghost) {
-      this.scene.remove(this.ghost);
-      (this.ghost as THREE.Mesh).geometry?.dispose();
-      this.ghostMat?.dispose();
-      this.ghost = undefined;
-      this.ghostMat = undefined;
-    }
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.hud.setIslandMode(false);
@@ -1539,26 +1540,7 @@ class Game implements GameApi {
       this.hud.setIslandPopulation(pop);
     }
 
-    // ---- build mode: ghost preview + click to place/paint/remove ----
-    if (this.editingPlot >= 0) {
-      this.hud.showPrompt(
-        this.editReadOnly ? "Visiting — [L] like · [E] to leave" : "Click to build · R rotate · [E] to finish & save",
-        true,
-      );
-      this.updateGhost();
-      if (!this.editReadOnly) {
-        if (this.input.pressed("KeyR")) this.rotateBuild();
-        // Ctrl+Z / Cmd+Z undo (the on-screen button also calls undoBuild)
-        if (this.input.pressed("KeyZ") && (this.input.down("ControlLeft") || this.input.down("MetaLeft"))) this.undoBuild();
-        if (this.input.clicked()) this.placeAtGround(this.input.aimPoint);
-      } else if (this.input.pressed("KeyL")) {
-        this.likeCurrentHouse();
-      }
-      if (this.input.pressed("KeyE")) this.exitBuildMode();
-      return;
-    }
-
-    // proximity prompt for the nearest interactive pad / plot
+    // proximity prompt for the nearest interactive pad / egg / mode gate
     const near = this.island.nearestZone(this.player.pos);
     if (near) this.hud.showPrompt(near.label + "  [E]", true);
     else this.hud.hidePrompt();
@@ -1571,12 +1553,17 @@ class Game implements GameApi {
 
   /** Act on the pad the player triggered. */
   private activateIslandZone(zone: IslandZone) {
-    // co-op pads warp you to the zombie world — give the launch a portal burst.
-    if (zone.kind === "host" || zone.kind === "join") this.portalBurst(zone.pos);
+    // mode/join pads warp you to the zombie world — give the launch a portal burst.
+    if (zone.kind === "mode" || zone.kind === "join") this.portalBurst(zone.pos);
     switch (zone.kind) {
-      case "host":
-        this.hostGame();
+      case "mode": {
+        // SOLO starts a local run immediately. DUO/SQUAD host a co-op room sized
+        // for that many players (difficulty scales with who actually joins).
+        const players = zone.modePlayers ?? 1;
+        if (players <= 1) this.startRun();
+        else this.hostGame(players);
         break;
+      }
       case "join": {
         const code = window.prompt("Enter your friend's 4-letter room code:");
         if (code && code.trim()) this.joinGame(code.trim());
@@ -1585,16 +1572,25 @@ class Game implements GameApi {
       case "shop":
         this.hud.openShop();
         break;
-      case "plot": {
-        const idx = zone.plotIndex ?? 0;
-        // Your own plot is editable; the rest are neighbours you visit read-only.
-        if (this.isOwnPlot(idx)) this.enterBuildMode(idx);
-        else this.enterVisitMode(idx);
+      case "egg":
+        this.openEgg(zone.eggId ?? "");
         break;
-      }
-      case "play":
-        this.startRun();
-        break;
+    }
+  }
+
+  /** Hatch a pet from an egg pedestal with a reveal toast + reward FX. */
+  private openEgg(eggId: string) {
+    const result = this.hatchEgg(eggId);
+    if (!result) return; // couldn't afford (hatchEgg already gave feedback)
+    const { pet, dupe, shiny } = result;
+    const rar = RARITY_LABEL[(pet.rarity ?? "common") as Rarity];
+    this.portalBurst(this.player.pos);
+    if (shiny) {
+      this.hud.toast(`✨ SHINY ${pet.name}! (${rar}) ✨`);
+    } else if (dupe) {
+      this.hud.toast(`${pet.name} again — ★ ascended! (${rar})`);
+    } else {
+      this.hud.toast(`🥚 Hatched ${pet.name}! (${rar})`);
     }
   }
 
@@ -1639,253 +1635,6 @@ class Game implements GameApi {
       (this.selfBubble.material as THREE.SpriteMaterial).map?.dispose();
       (this.selfBubble.material as THREE.SpriteMaterial).dispose();
       this.selfBubble = undefined;
-    }
-  }
-
-  // ---- house building -----------------------------------------------------
-  private static readonly CELL = BUILD_CELL; // plot grid cell size (single source: build.ts)
-
-  // v1: all 8 plots are YOURS to build on, each persisted independently under
-  // your id (build a little neighbourhood). isOwnPlot() ALWAYS returns true ON
-  // PURPOSE for v1 — this is not a bug. The consequence is that the visit-mode
-  // path (enterVisitMode + likeCurrentHouse, reached only when isOwnPlot is
-  // false at main.ts ~activateIslandZone) is intentionally DORMANT: it is fully
-  // wired and ready but unreachable until a real cross-player plot-claim system
-  // with shared identities lands (a backend follow-up). Do NOT remove that code
-  // as "dead" — flipping this to a real ownership check activates it.
-  private isOwnPlot(_plotIndex: number): boolean {
-    return true;
-  }
-  /** Backend owner key for a plot — namespaced per plot so each saves separately.
-   *  Keyed on a STABLE per-device id (not the wallet address): connecting a
-   *  wallet must not change the key and orphan / lose a player's houses. See
-   *  localOwnerId() in houses.ts. */
-  private plotOwner(plotIndex: number): string {
-    return `${localOwnerId()}:p${plotIndex}`;
-  }
-
-  /** Enter build mode for a plot: load its layout + show the build bar. */
-  private async enterBuildMode(plotIndex: number) {
-    if (this.editingPlot >= 0) return; // guard against re-entry during the load await
-    const owner = this.plotOwner(plotIndex);
-    this.editingPlot = plotIndex; // claim immediately so a second E press no-ops
-    const existing = await loadHouse(plotIndex, owner);
-    this.editData = existing ? sanitizeHouse(existing) : starterHouse();
-    this.editReadOnly = false;
-    this.editPart = "wall";
-    this.editCat = "structure"; // reset catalog tab so the active part is visible
-    this.editRot = 0;
-    this.editColor = null;
-    this.editPaint = false;
-    this.undoStack = [];
-    let view = this.houseViews.get(plotIndex);
-    if (!view) {
-      const plot = this.island.plots.find((p) => p.index === plotIndex)!;
-      view = new HouseView(this.scene, plot.pos);
-      this.houseViews.set(plotIndex, view);
-    }
-    view.render(this.editData);
-    this.refreshBuildBar();
-    this.hud.toast(`Building Plot ${plotIndex + 1} — R rotate · Ctrl+Z undo · E to finish`);
-  }
-
-  /** (Re)build the build bar from current tool state — call after any toggle. */
-  private refreshBuildBar() {
-    const tTier = trophyTierForRound(this.save.bestRound);
-    this.hud.showBuildBar({
-      cats: PART_CATS.map((c) => ({ id: c.id, label: c.label })),
-      // the trophy chip advertises the tier the player has unlocked
-      parts: HOUSE_PARTS.map((p) =>
-        p.kind === "trophy"
-          ? { kind: p.kind, label: `${TROPHY_TIERS[tTier].label} Trophy`, color: TROPHY_TIERS[tTier].color, cat: p.cat }
-          : { kind: p.kind, label: p.label, color: p.color, cat: p.cat },
-      ),
-      swatches: HOUSE_SWATCHES,
-      activeCat: this.editCat,
-      activePart: this.editPart,
-      activeColor: this.editColor,
-      paint: this.editPaint,
-      onPickCat: (id) => { this.editCat = id; this.refreshBuildBar(); },
-      onPickPart: (k) => {
-        this.editPart = k as PartKind;
-        this.editPaint = false; // selecting a part leaves paint mode
-        if (k === "perch") this.pickPerchPet();
-        else this.hud.hidePetPicker();
-        this.refreshBuildBar();
-      },
-      onPickColor: (c) => { this.editColor = c; this.refreshBuildBar(); },
-      onRotate: () => this.rotateBuild(),
-      onTogglePaint: () => { this.editPaint = !this.editPaint; this.refreshBuildBar(); },
-      onUndo: () => this.undoBuild(),
-      onDone: () => this.exitBuildMode(),
-    });
-  }
-
-  /** Cycle the placement yaw 0->1->2->3->0. */
-  private rotateBuild() {
-    this.editRot = ((this.editRot + 1) % 4) as 0 | 1 | 2 | 3;
-    this.audio.ui();
-    this.updateGhost();
-  }
-
-  /** Push a JSON snapshot before a mutating edit (cap 20). */
-  private pushUndo() {
-    this.undoStack.push(JSON.stringify(this.editData));
-    if (this.undoStack.length > 20) this.undoStack.shift();
-  }
-  /** Restore the most recent snapshot. */
-  private undoBuild() {
-    const snap = this.undoStack.pop();
-    if (!snap) { this.audio.deny(); return; }
-    try { this.editData = sanitizeHouse(JSON.parse(snap)); } catch { return; }
-    this.houseViews.get(this.editingPlot)?.render(this.editData);
-    this.audio.ui();
-  }
-
-  /** Show a picker of owned pets to attach to the next placed perch. */
-  private pickPerchPet() {
-    const owned = this.save.pets
-      .map((id) => findAnyPet(id))
-      .filter((d): d is PetDef => !!d)
-      .map((d) => ({ id: d.id, name: d.name, color: `#${d.color.toString(16).padStart(6, "0")}` }));
-    if (!owned.length) {
-      this.hud.toast("Buy a pet first to display it!");
-      this.editPetId = "";
-      this.hud.hidePetPicker();
-      return;
-    }
-    if (!this.editPetId || !owned.some((o) => o.id === this.editPetId)) this.editPetId = owned[0].id;
-    this.hud.showPetPicker(owned, this.editPetId, (id) => { this.editPetId = id; });
-  }
-
-  /** Project the aim point to a plot-local grid cell, or null if off the pad.
-   *  (Grid math lives in the pure, tested src/build.ts.) */
-  private aimCell(world: THREE.Vector3): { gx: number; gz: number } | null {
-    const plot = this.island.plots.find((p) => p.index === this.editingPlot);
-    if (!plot) return null;
-    return aimCell(world.x, world.z, plot.pos.x, plot.pos.z);
-  }
-
-  /** Place/paint/remove a part at the plot cell under the click. The data
-   *  transform is the pure, tested `applyBuild`; this method owns the
-   *  side-effects (undo snapshot, re-render, sfx) keyed off its outcome. */
-  private placeAtGround(world: THREE.Vector3) {
-    if (this.editingPlot < 0 || this.editReadOnly) return;
-    const cell = this.aimCell(world);
-    if (!cell) return;
-    const out = applyBuild(this.editData, cell.gx, cell.gz, {
-      paint: this.editPaint,
-      part: this.editPart,
-      color: this.editColor,
-      rot: this.editRot,
-      petId: this.editPetId,
-      trophyTier: trophyTierForRound(this.save.bestRound),
-    });
-    switch (out.result) {
-      case "denied-empty": // paint with nothing under the cursor
-      case "denied-full": // hit the 400-part cap
-        this.audio.deny();
-        return;
-      case "painted":
-        this.pushUndo();
-        this.editData = out.data;
-        this.houseViews.get(this.editingPlot)?.render(this.editData);
-        this.audio.ui();
-        return;
-      case "removed":
-      case "placed":
-        this.pushUndo();
-        this.editData = out.data;
-        this.houseViews.get(this.editingPlot)?.render(this.editData);
-        return;
-    }
-  }
-
-
-  /** Translucent preview at the aim cell — green = valid, red = off-plot,
-   *  amber = paint. */
-  private updateGhost() {
-    if (this.editingPlot < 0 || this.editReadOnly) { this.hideGhost(); return; }
-    const plot = this.island.plots.find((p) => p.index === this.editingPlot);
-    if (!plot) { this.hideGhost(); return; }
-    if (!this.ghost) {
-      this.ghostMat = new THREE.MeshBasicMaterial({ color: 0x55ff66, transparent: true, opacity: 0.4, depthWrite: false });
-      this.ghost = new THREE.Mesh(new THREE.BoxGeometry(Game.CELL, Game.CELL, Game.CELL), this.ghostMat);
-      this.scene.add(this.ghost);
-    }
-    const cell = this.aimCell(this.input.aimPoint);
-    if (cell) {
-      this.ghostMat!.color.set(this.editPaint ? 0xffd24a : 0x55ff66);
-      this.ghost.position.set(plot.pos.x + cell.gx * Game.CELL, plot.pos.y + Game.CELL / 2 + 0.2, plot.pos.z + cell.gz * Game.CELL);
-    } else {
-      this.ghostMat!.color.set(0xff5555);
-      this.ghost.position.set(this.input.aimPoint.x, Game.CELL / 2 + 0.2, this.input.aimPoint.z);
-    }
-    this.ghost.rotation.y = (this.editRot * Math.PI) / 2;
-    this.ghost.visible = true;
-  }
-  private hideGhost() {
-    if (this.ghost) this.ghost.visible = false;
-  }
-
-  /** Visit a neighbour's plot read-only: load it + show its social counters. */
-  private async enterVisitMode(plotIndex: number) {
-    const owner = this.plotOwner(plotIndex);
-    this.editingPlot = plotIndex;
-    this.editReadOnly = true;
-    this.editData = { parts: [] };
-    this.undoStack = [];
-    const data = await loadHouse(plotIndex, owner, true); // counts a visit
-    this.editData = data ?? { parts: [] };
-    let view = this.houseViews.get(plotIndex);
-    if (!view) {
-      const plot = this.island.plots.find((p) => p.index === plotIndex)!;
-      view = new HouseView(this.scene, plot.pos);
-      this.houseViews.set(plotIndex, view);
-    }
-    view.render(this.editData);
-    this.hud.hidePetPicker();
-    const meta = await getHouseMeta(plotIndex, owner);
-    this.hud.showPlotMeta(meta.likes, meta.visits);
-    this.hud.toast(`Visiting Plot ${plotIndex + 1} — [L] to like, [E] to leave`);
-  }
-
-  /** Like the neighbour's house you're currently visiting. */
-  private async likeCurrentHouse() {
-    if (this.editingPlot < 0 || !this.editReadOnly) return;
-    const owner = this.plotOwner(this.editingPlot);
-    const likes = await likeHouse(this.editingPlot, owner);
-    if (likes === null) { this.hud.toast("Likes need the backend online"); return; }
-    this.audio.powerup();
-    const meta = await getHouseMeta(this.editingPlot, owner);
-    this.hud.showPlotMeta(likes, meta.visits);
-    this.hud.toast("❤ Liked!");
-  }
-
-  /** Save the edited house, show the report card, and exit build mode. */
-  private exitBuildMode() {
-    if (this.editingPlot < 0) return;
-    const wasEditing = !this.editReadOnly;
-    let clean: HouseData | null = null;
-    if (wasEditing) {
-      const owner = this.plotOwner(this.editingPlot);
-      clean = sanitizeHouse(this.editData);
-      void saveHouse(this.editingPlot, owner, clean);
-      this.houseViews.get(this.editingPlot)?.render(clean);
-      this.hud.toast(`Plot ${this.editingPlot + 1} saved!`);
-    }
-    this.editingPlot = -1;
-    this.editReadOnly = false;
-    this.undoStack = [];
-    this.hideGhost();
-    this.hud.hideBuildBar();
-    this.hud.hidePetPicker();
-    this.hud.hidePlotMeta();
-    this.hud.hidePrompt();
-    // "Tiny Home Academy" report card for your own (non-empty) house.
-    if (wasEditing && clean && clean.parts.length) {
-      this.audio.powerup();
-      this.hud.showHouseRating(rateHouse(clean), () => {});
     }
   }
 
