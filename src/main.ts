@@ -144,6 +144,7 @@ class Game implements GameApi {
   private powerups = new Powerups();
   private state: State = "menu";
   private bw?: BedWarsMode; // Bed Wars-lite mode controller (lazy)
+  private _bwEndTimer = 0;   // countdown after a BW match ends, then return to hub
 
   // multiplayer (undefined = single-player)
   private net?: NetClient;
@@ -1564,6 +1565,11 @@ class Game implements GameApi {
     this.hud.hideEggPanel();
     this.hud.hidePrompt();
     this.hud.hideCombatHud(true); // hide combat HUD; BW draws its own resource HUD
+    // Arm the raider with a fast auto SMG (own loadout, separate from the run).
+    this.weapons = [new Weapon(WEAPONS.buzzgun)];
+    this.activeSlot = 0;
+    this.bullets.clear();
+    this._bwEndTimer = 0;
     this.bw.enter();
     this.player.pos.copy(this.bw.spawn());
     this.player.group.position.copy(this.player.pos);
@@ -1575,17 +1581,91 @@ class Game implements GameApi {
 
   private leaveBedWars() {
     this.bw?.leave();
+    this.bullets.clear();
+    this.hud.hidePrompt();
     this.enterIsland();
   }
 
-  /** Free-roam your Bed Wars island; Esc/Leave returns to the hub. */
+  /** Raid + defend: move, shoot raiders & enemy beds, shop at your base, win/lose. */
   private simulateBedwars(dt: number) {
+    const bw = this.bw;
+    if (!bw) return;
+
+    // Win/lose already decided: run the leave countdown and freeze the loop.
+    if (bw.result.over) {
+      if (this._bwEndTimer > 0) {
+        this._bwEndTimer -= dt;
+        if (this._bwEndTimer <= 0) this.leaveBedWars();
+      }
+      this.player.idle(dt);
+      bw.tick(dt);
+      return;
+    }
+
+    // The shop modal owns input while open — freeze movement/fire, allow Esc out.
+    if (bw.shopOpen) {
+      this.player.idle(dt);
+      bw.tick(dt);
+      return;
+    }
+
+    // --- movement + aim (mirrors simulate()) ---
     const axis = this.input.moveAxis(this._axis);
-    this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, false);
-    this.bw?.clamp(this.player.pos);
+    if (this.input.touchAim) {
+      this.input.aimPoint.set(
+        this.player.pos.x + this.input.touchAim.x * 6, 0,
+        this.player.pos.z + this.input.touchAim.y * 6,
+      );
+    }
+    const aiming = this.input.firing || this.input.touchAim != null;
+    this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, aiming);
+    bw.clamp(this.player.pos);
     this.player.group.position.copy(this.player.pos);
     this.pets.forEach((p, i) => p.update(dt, this.player.pos.x, this.player.pos.z, i, this.pets.length, null));
-    this.bw?.tick(dt);
+
+    // --- weapon fire ---
+    const w = this.weapon;
+    w.update(dt, this.player.reloadMul);
+    const wantFire = this.input.touchAim ? true : w.def.auto ? this.input.firing : this.input.clicked();
+    if (wantFire) {
+      const f = this._fire;
+      f.fireRateMul = 1; f.bonusPellets = 0; f.pierceBonus = 0;
+      f.scaleMul = 1; f.homing = 0; f.bounces = 0;
+      if (w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, f)) {
+        this.player.flash();
+        this.audio.shoot(0.4);
+      }
+    }
+    if (this.input.pressed("KeyR")) w.reload();
+
+    this.bullets.update(dt);
+    // Per-bullet: hand the impact point to BW, which damages raiders / enemy beds.
+    for (const b of this.bullets.bullets) {
+      if (!b.alive) continue;
+      const hit = bw.resolveHit(b.mesh.position, b.damage);
+      if (hit) {
+        const col = hit === "bed" ? 0xff5a4a : 0xffe14a;
+        this.sparks.burst(b.mesh.position, col, 5, { speed: 8, spread: 2, streak: true });
+        this.bullets.retire(b);
+      }
+    }
+
+    // --- shop near base (press E) ---
+    const nearBase = this.player.pos.distanceTo(bw.shopSpot()) < 4;
+    if (nearBase) this.hud.showPrompt("Press E — Shop", true);
+    else this.hud.hidePrompt();
+    if (nearBase && this.input.pressed("KeyE")) bw.openShop();
+
+    bw.tick(dt);
+
+    // --- win / lose ---
+    if (bw.result.over) {
+      this.hud.hidePrompt();
+      this.hud.toast(bw.result.win ? "🏆 Victory! All beds destroyed." : "💀 Defeat — your bed fell.");
+      this.audio.shoot(bw.result.win ? 0.9 : 0.2);
+      this._bwEndTimer = 3.2;
+    }
+
     if (this.input.pressed("Escape")) this.leaveBedWars();
   }
 
