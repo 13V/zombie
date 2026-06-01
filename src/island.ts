@@ -208,9 +208,9 @@ export class Island {
     }
     // warm haze hugging the island + a soft peach sky, dimmed IBL so the warm
     // lights & lantern bloom carry the cozy golden-hour mood.
-    this.scene.fog = new THREE.Fog(0xf0bb7a, 22, 70);
+    this.scene.fog = new THREE.Fog(0xf0bb7a, 34, 110);
     this.scene.background = new THREE.Color(0xf6cf94);
-    this.scene.environmentIntensity = 0.3;
+    this.scene.environmentIntensity = 0.34;
     // dim + warm the shared daylight so the scene actually reads golden-hour
     // rather than washing out under the bright neutral arena sun.
     for (const [l, o] of this.lightOrig) {
@@ -1201,66 +1201,73 @@ export class Island {
     this.zones.push({ id: "pets", kind: "pets", pos: SANCTUARY.clone(), radius: 2.5, label: "Pet Sanctuary — equip & flex your pets" });
   }
 
-  /** A wooden notice board in the plaza showing the hub's top survivors; the face
-   *  is a canvas sprite redrawn by main via setLeaderboard(). */
+  /** A giant leaderboard billboard floating in the sky behind the village. It's
+   *  fog-immune (so the warm haze doesn't wash it out) and glows; the face is a
+   *  canvas sprite redrawn by main via setLeaderboard(). */
   private buildLeaderboard() {
+    const noFog = (m: THREE.MeshStandardMaterial) => { m.fog = false; return m; };
     const g = new THREE.Group();
-    for (const px of [-1.4, 1.4]) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.24, 3.4, 0.24), voxelMaterial(VOX.bark));
-      post.position.set(px, 1.7, 0);
-      g.add(post);
+    const W = 13, H = 8;
+    // backing panel + dark inset + a glowing frame, all immune to the warm fog
+    const back = new THREE.Mesh(new THREE.BoxGeometry(W, H, 0.5), noFog(voxelMaterial(VOX.woodTrim)));
+    const inset = new THREE.Mesh(new THREE.BoxGeometry(W - 1.0, H - 1.0, 0.6),
+      noFog(new THREE.MeshStandardMaterial({ color: 0x241a12, roughness: 1 })));
+    inset.position.z = 0.06;
+    g.add(back, inset);
+    for (const [w, h, x, y] of [[W + 0.6, 0.5, 0, H / 2], [W + 0.6, 0.5, 0, -H / 2], [0.5, H + 0.6, -W / 2, 0], [0.5, H + 0.6, W / 2, 0]] as const) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.7), noFog(glowMaterial(VOX.lantern, 1.1)));
+      bar.position.set(x, y, 0.1);
+      g.add(bar);
     }
-    const board = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.2, 0.18), voxelMaterial(VOX.woodTrim));
-    board.position.set(0, 2.5, 0);
-    const header = new THREE.Mesh(new THREE.BoxGeometry(3.3, 0.3, 0.22), glowMaterial(VOX.lantern, 0.8));
-    header.position.set(0, 3.7, 0);
-    g.add(board, header);
-    // canvas-sprite face
+    // a couple of glowing finials on top
+    for (const fx of [-W / 2, W / 2]) {
+      const fin = new THREE.Mesh(new THREE.OctahedronGeometry(0.6, 0), noFog(glowMaterial(0xffd24a, 1.3)));
+      fin.position.set(fx, H / 2 + 0.7, 0.1);
+      g.add(fin);
+    }
+    // canvas-sprite face (hi-res for big crisp text; fog disabled)
     this.lbCanvas = document.createElement("canvas");
-    this.lbCanvas.width = 320;
-    this.lbCanvas.height = 224;
+    this.lbCanvas.width = 512;
+    this.lbCanvas.height = 320;
     this.lbTex = new THREE.CanvasTexture(this.lbCanvas);
     this.lbTex.colorSpace = THREE.SRGBColorSpace;
     this.lbTex.generateMipmaps = false;
     this.lbTex.minFilter = THREE.LinearFilter;
-    const face = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.lbTex, transparent: true, depthTest: true, depthWrite: false, toneMapped: false }));
-    face.scale.set(2.9, 2.0, 1);
-    face.position.set(0, 2.5, 0.12);
+    const face = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.lbTex, transparent: true, depthTest: true, depthWrite: false, toneMapped: false, fog: false }));
+    face.scale.set(W - 1.2, H - 1.2, 1);
+    face.position.set(0, 0, 0.4);
     g.add(face);
-    this.setLeaderboard([]); // initial placeholder
-    g.position.set(-7.5, 0, 9.8);
-    g.rotation.y = Math.atan2(7.5, -9.8); // face the plaza center
+    this.setLeaderboard([]);
+    // float it high in the sky at the back of the map, facing the plaza (+z)
+    g.position.set(0, 15, -32);
     this.group.add(g);
   }
 
   /** Redraw the leaderboard face with the current top survivors. */
   setLeaderboard(entries: { name: string; best: number }[]) {
     if (!this.lbCanvas || !this.lbTex) return;
+    const W = this.lbCanvas.width, H = this.lbCanvas.height;
     const g = this.lbCanvas.getContext("2d")!;
-    g.clearRect(0, 0, 320, 224);
-    g.fillStyle = "rgba(40,30,20,0.85)";
-    g.fillRect(0, 0, 320, 224);
+    g.clearRect(0, 0, W, H);
     g.textAlign = "center";
     g.textBaseline = "middle";
-    g.font = "bold 26px system-ui, sans-serif";
+    g.font = "bold 44px system-ui, sans-serif";
     g.fillStyle = "#ffd24a";
-    g.fillText("🏆 TOP SURVIVORS", 160, 24);
-    g.font = "bold 20px system-ui, sans-serif";
-    g.textAlign = "left";
+    g.fillText("🏆 TOP SURVIVORS", W / 2, 38);
+    g.font = "bold 32px system-ui, sans-serif";
     const top = entries.filter((e) => e.best > 0).sort((a, b) => b.best - a.best).slice(0, 5);
     if (!top.length) {
-      g.textAlign = "center";
-      g.fillStyle = "#cbd";
-      g.fillText("No runs yet — go make a mess!", 160, 120);
+      g.fillStyle = "#e8dcc8";
+      g.fillText("No runs yet — go make a mess!", W / 2, H / 2 + 10);
     } else {
       top.forEach((e, i) => {
-        const y = 64 + i * 32;
+        const y = 100 + i * 44;
         g.fillStyle = ["#ffd24a", "#cfe0ff", "#e0b070", "#ffffff", "#ffffff"][i] ?? "#fff";
         const nm = e.name.length > 14 ? e.name.slice(0, 13) + "…" : e.name;
-        g.fillText(`${i + 1}. ${nm}`, 16, y);
-        g.textAlign = "right";
-        g.fillText(`R${e.best}`, 304, y);
         g.textAlign = "left";
+        g.fillText(`${i + 1}. ${nm}`, 30, y);
+        g.textAlign = "right";
+        g.fillText(`R${e.best}`, W - 30, y);
       });
     }
     this.lbTex.needsUpdate = true;
