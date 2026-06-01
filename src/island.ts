@@ -208,9 +208,9 @@ export class Island {
     }
     // warm haze hugging the island + a soft peach sky, dimmed IBL so the warm
     // lights & lantern bloom carry the cozy golden-hour mood.
-    this.scene.fog = new THREE.Fog(0xf0bb7a, 34, 110);
+    this.scene.fog = new THREE.Fog(0xf0bb7a, 26, 82);
     this.scene.background = new THREE.Color(0xf6cf94);
-    this.scene.environmentIntensity = 0.34;
+    this.scene.environmentIntensity = 0.32;
     // dim + warm the shared daylight so the scene actually reads golden-hour
     // rather than washing out under the bright neutral arena sun.
     for (const [l, o] of this.lightOrig) {
@@ -1210,10 +1210,7 @@ export class Island {
     const W = 13, H = 8;
     // backing panel + dark inset + a glowing frame, all immune to the warm fog
     const back = new THREE.Mesh(new THREE.BoxGeometry(W, H, 0.5), noFog(voxelMaterial(VOX.woodTrim)));
-    const inset = new THREE.Mesh(new THREE.BoxGeometry(W - 1.0, H - 1.0, 0.6),
-      noFog(new THREE.MeshStandardMaterial({ color: 0x241a12, roughness: 1 })));
-    inset.position.z = 0.06;
-    g.add(back, inset);
+    g.add(back);
     for (const [w, h, x, y] of [[W + 0.6, 0.5, 0, H / 2], [W + 0.6, 0.5, 0, -H / 2], [0.5, H + 0.6, -W / 2, 0], [0.5, H + 0.6, W / 2, 0]] as const) {
       const bar = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.7), noFog(glowMaterial(VOX.lantern, 1.1)));
       bar.position.set(x, y, 0.1);
@@ -1233,9 +1230,10 @@ export class Island {
     this.lbTex.colorSpace = THREE.SRGBColorSpace;
     this.lbTex.generateMipmaps = false;
     this.lbTex.minFilter = THREE.LinearFilter;
-    const face = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.lbTex, transparent: true, depthTest: true, depthWrite: false, toneMapped: false, fog: false }));
-    face.scale.set(W - 1.2, H - 1.2, 1);
+    const face = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.lbTex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false, fog: false }));
+    face.scale.set(W - 1.0, H - 1.0, 1);
     face.position.set(0, 0, 0.4);
+    face.renderOrder = 5; // draw the face over the panel
     g.add(face);
     this.setLeaderboard([]);
     // float it high in the sky at the back of the map, facing the plaza (+z)
@@ -1249,6 +1247,9 @@ export class Island {
     const W = this.lbCanvas.width, H = this.lbCanvas.height;
     const g = this.lbCanvas.getContext("2d")!;
     g.clearRect(0, 0, W, H);
+    // self-contained dark "screen" so the face reads over the wooden panel
+    g.fillStyle = "rgba(26, 18, 12, 0.92)";
+    g.fillRect(0, 0, W, H);
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.font = "bold 44px system-ui, sans-serif";
