@@ -58,6 +58,7 @@ class Game implements GameApi {
   private viewSize = 15; // half-height of the orthographic view, in world units
   private camZoom = 1; // live zoom multiplier (eased toward camZoomTarget)
   private camZoomTarget = 1; // player-set zoom (wheel / +- keys); >1 = zoomed out
+  private _hatching = false; // an egg-hatch reveal is on screen (blocks re-hatch)
   private composer: EffectComposer;
   private clock = new THREE.Clock();
 
@@ -647,7 +648,7 @@ class Game implements GameApi {
    * (up to the cap) so a hatch is never wasted. Returns the rolled pet so the
    * island can play the reveal, or null if the player couldn't afford it.
    */
-  private hatchEgg(eggId: string): { pet: PetDef; dupe: boolean; shiny: boolean } | null {
+  private hatchEgg(eggId: string): { pet: PetDef; dupe: boolean; shiny: boolean; stars: number } | null {
     const egg = findEgg(eggId);
     if (!egg) return null;
     if (this.save.gold < egg.cost) { this.audio.deny(); this.hud.toast("Not enough gold"); return null; }
@@ -656,6 +657,7 @@ class Game implements GameApi {
     const id = pet.id;
     const owned = this.save.pets.includes(id);
     let shiny = false;
+    let stars = 0; // new star count when a dupe ascends (0 = refunded/maxed)
     if (!owned) {
       this.save.pets.push(id);
       this.save.petLevels[id] = 1;
@@ -667,9 +669,10 @@ class Game implements GameApi {
     } else {
       // duplicate → ascend a star if there's room; otherwise it's a courtesy
       // refund of part of the egg so a maxed dupe still isn't a total loss.
-      const stars = this.petStars(id);
-      if (stars < PET_DEPTH.stars.maxStars) {
-        (this.save.petProgress[id] ??= {})._stars = stars + 1;
+      const cur = this.petStars(id);
+      if (cur < PET_DEPTH.stars.maxStars) {
+        stars = cur + 1;
+        (this.save.petProgress[id] ??= {})._stars = stars;
       } else {
         const refund = Math.round(egg.cost * 0.25);
         this.save.gold += refund;
@@ -679,7 +682,7 @@ class Game implements GameApi {
     this.audio.powerup();
     this.spawnPets();
     this.renderShop();
-    return { pet, dupe: owned, shiny };
+    return { pet, dupe: owned, shiny, stars };
   }
 
   /** Accumulate this run's "while-equipped" totals into each owned pet's trial. */
@@ -1576,6 +1579,9 @@ class Game implements GameApi {
       this.hud.setIslandPopulation(pop);
     }
 
+    // while a hatch reveal is on screen, keep the world prompts hidden behind it
+    if (this._hatching) { this.hud.hideEggPanel(); this.hud.hidePrompt(); return; }
+
     // proximity prompt for the nearest interactive pad / egg / mode gate
     const near = this.island.nearestZone(this.player.pos);
     const egg = near?.kind === "egg" ? findEgg(near.eggId ?? "") : undefined;
@@ -1599,8 +1605,9 @@ class Game implements GameApi {
       else this.hud.hidePrompt();
     }
 
-    // E (or tap-confirm) activates whatever you're standing on
-    if (near && (this.input.pressed("KeyE") || this.input.pressed("Space"))) {
+    // E (or tap-confirm) activates whatever you're standing on (blocked while a
+    // hatch reveal is playing so you can't spam eggs).
+    if (!this._hatching && near && (this.input.pressed("KeyE") || this.input.pressed("Space"))) {
       this.activateIslandZone(near);
     }
   }
@@ -1637,18 +1644,26 @@ class Game implements GameApi {
 
   /** Hatch a pet from an egg pedestal with a reveal toast + reward FX. */
   private openEgg(eggId: string) {
+    const egg = findEgg(eggId);
     const result = this.hatchEgg(eggId);
-    if (!result) return; // couldn't afford (hatchEgg already gave feedback)
-    const { pet, dupe, shiny } = result;
-    const rar = RARITY_LABEL[(pet.rarity ?? "common") as Rarity];
+    if (!result || !egg) return; // couldn't afford (hatchEgg already gave feedback)
+    const { pet, dupe, shiny, stars } = result;
+    const rarity = (pet.rarity ?? "common") as Rarity;
     this.portalBurst(this.player.pos);
-    if (shiny) {
-      this.hud.toast(`✨ SHINY ${pet.name}! (${rar}) ✨`);
-    } else if (dupe) {
-      this.hud.toast(`${pet.name} again — ★ ascended! (${rar})`);
-    } else {
-      this.hud.toast(`🥚 Hatched ${pet.name}! (${rar})`);
-    }
+    // Cinematic reveal modal with the pet preview thumbnail + rarity glow.
+    const status: "new" | "dupe" | "shiny" = shiny ? "shiny" : dupe ? "dupe" : "new";
+    const statusText = shiny ? "✨ SHINY ✨" : dupe ? (stars ? `★ Ascended to ${stars}★` : "Duplicate — refunded") : "NEW!";
+    this._hatching = true;
+    this.hud.showEggReveal({
+      eggColor: `#${egg.color.toString(16).padStart(6, "0")}`,
+      petName: pet.name,
+      petThumb: petThumbnail(pet.id, this.save.petLevels[pet.id] ?? 1),
+      rarityLabel: RARITY_LABEL[rarity],
+      rarityColor: RARITY_COLOR[rarity],
+      status,
+      statusText,
+      onDone: () => { this._hatching = false; },
+    });
   }
 
   /** A juicy warp/portal pop at a pad (flash + pillar + sparks + sfx). */

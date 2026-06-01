@@ -921,6 +921,64 @@ export class Hud {
     this.eggPanelEl?.classList.remove("show");
   }
 
+  private eggRevealEl?: HTMLElement;
+  private eggRevealTimer = 0;
+  /** Cinematic hatch reveal: the egg shakes, cracks with a flash, then the pet
+   *  thumbnail bursts in with its rarity glow + status. Dismisses on click or
+   *  after a few seconds; `onDone` fires once when it closes. */
+  showEggReveal(opts: {
+    eggColor: string;
+    petName: string;
+    petThumb: string;
+    rarityLabel: string;
+    rarityColor: string;
+    status: "new" | "dupe" | "shiny";
+    statusText: string;
+    onDone?: () => void;
+  }) {
+    if (!this.eggRevealEl) {
+      this.eggRevealEl = document.createElement("div");
+      this.eggRevealEl.id = "egg-reveal";
+      this.root.appendChild(this.eggRevealEl);
+    }
+    const el = this.eggRevealEl;
+    el.style.setProperty("--egg-color", opts.eggColor);
+    el.style.setProperty("--rarity-color", opts.rarityColor);
+    // Rebuild the stage (re-triggers the CSS animations each hatch).
+    el.innerHTML = `
+      <div class="er-stage">
+        <div class="er-egg"></div>
+        <div class="er-flash"></div>
+        <div class="er-pet">
+          <div class="er-thumb-wrap">
+            <div class="er-ring"></div>
+            <img class="er-thumb" src="${opts.petThumb}" alt="">
+          </div>
+          <div class="er-rarity" style="color:${opts.rarityColor}">${opts.rarityLabel}</div>
+          <div class="er-name">${opts.petName}</div>
+          <div class="er-status ${opts.status}">${opts.statusText}</div>
+        </div>
+        <div class="er-hint">tap to continue</div>
+      </div>`;
+    el.classList.add("show");
+    const close = () => {
+      if (!el.classList.contains("show")) return;
+      el.classList.remove("show");
+      el.onclick = null;
+      if (this.eggRevealTimer) clearTimeout(this.eggRevealTimer);
+      opts.onDone?.();
+    };
+    // ignore clicks until the reveal has actually popped (so you can't skip blind)
+    el.onclick = () => { if (performance.now() - start > 1700) close(); };
+    const start = performance.now();
+    if (this.eggRevealTimer) clearTimeout(this.eggRevealTimer);
+    this.eggRevealTimer = window.setTimeout(close, 4200);
+  }
+  /** True while a hatch reveal is on screen (main blocks re-hatching). */
+  get eggRevealOpen(): boolean {
+    return !!this.eggRevealEl?.classList.contains("show");
+  }
+
   private popEl?: HTMLElement;
   /** "N players here" social chip on the island; pass <= 0 to hide it. */
   setIslandPopulation(n: number) {
