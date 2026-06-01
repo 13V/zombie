@@ -683,13 +683,21 @@ export class Pet {
     this.baseScale = baseSize * (1 + Math.min(0.6, (this.level - 1) * 0.06)) * (1 + stage * PET_STAGES.scalePerStage);
     this.group.scale.setScalar(this.baseScale);
     this.rebuildStageFlourish(stage);
-    // Restyle the whole body per stage: a warm brighten when Evolved, a gild
-    // toward gold when Ascended — so each of the 3 forms reads as a distinct
-    // model, not just the base with bigger wings. Re-tints from the base colour.
-    const tint = stage >= 2 ? { to: 0xffd24a, amt: 0.4 } : stage >= 1 ? { to: 0xfff2c0, amt: 0.24 } : null;
+    // Restyle the whole body per evolution stage with a real COLOUR shift, so an
+    // Evolved/Ascended pet reads as a different creature, not just bigger. We
+    // rotate the hue + boost saturation/lightness in HSL (a clear, per-pet colour
+    // change), then add a gold sheen at the Ascended tier to match its crown.
     for (const r of this._stageRecolor) {
       const c = new THREE.Color(r.base);
-      if (tint) c.lerp(new THREE.Color(tint.to), tint.amt);
+      if (stage >= 1) {
+        const hsl = { h: 0, s: 0, l: 0 };
+        c.getHSL(hsl);
+        hsl.h = (hsl.h + (stage >= 2 ? 0.55 : 0.3) + 1) % 1; // rotate around the wheel
+        hsl.s = Math.min(1, hsl.s * (stage >= 2 ? 1.5 : 1.3) + 0.12); // richer
+        hsl.l = Math.min(0.82, hsl.l + (stage >= 2 ? 0.14 : 0.08)); // brighter
+        c.setHSL(hsl.h, hsl.s, hsl.l);
+        if (stage >= 2) c.lerp(new THREE.Color(0xffd24a), 0.14); // ascended gold sheen
+      }
       r.mat.color.copy(c);
       r.mat.emissive.copy(c);
     }

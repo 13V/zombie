@@ -539,27 +539,83 @@ export class Island {
       CLEAR_PTS.some((p) => (p.x - x) ** 2 + (p.z - z) ** 2 < pad * pad);
 
     // autumn-mixed canopies (green / gold / amber / russet) like the reference —
-    // each paired with a lighter "lit top" tone for that sun-kissed crown.
-    const canopies: [number, number][] = [
-      [VOX.leaf, VOX.leafLight], [VOX.leaf, VOX.leafLight],
-      [0xe8a23c, 0xffc861], // gold
-      [0xd9762e, 0xf0a24a], // amber
-      [0xc24a35, 0xe0734f], // russet
+    // each [main, lit-top, dark-underside] for shaded, sun-kissed crowns.
+    const canopies: [number, number, number][] = [
+      [VOX.leaf, VOX.leafLight, VOX.leafDark],
+      [VOX.leaf, VOX.leafLight, VOX.leafDark],
+      [0xe8a23c, 0xffc861, 0xb87a1f], // gold
+      [0xd9762e, 0xf0a24a, 0xa9551c], // amber
+      [0xc24a35, 0xe0734f, 0x923122], // russet
     ];
+    const pines: [number, number][] = [[0x4f8a3a, 0x6fae4a], [0x3f7a4a, 0x5a9a5e]];
+
     const makeTree = (x: number, z: number) => {
       const tree = new THREE.Group();
-      const [cMain, cTop] = canopies[Math.floor(rnd() * canopies.length)];
-      const main = voxelMaterial(cMain);
-      const th = 2.0 + rnd() * 2.2;
-      const tk = new THREE.Mesh(new THREE.BoxGeometry(0.6, th, 0.6), rnd() < 0.5 ? trunk : trunkDark);
-      tk.position.y = th / 2;
-      const c1 = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 2.4), main);
-      c1.position.y = th + 0.55;
-      const c2 = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.3, 1.7), main);
-      c2.position.y = th + 1.6;
-      const c3 = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.9, 1.0), voxelMaterial(cTop));
-      c3.position.y = th + 2.45;
-      tree.add(tk, c1, c2, c3);
+      const conifer = rnd() < 0.3;
+      const trunkMat = rnd() < 0.5 ? trunk : trunkDark;
+      if (conifer) {
+        // a stacked-tier pine: tapering green skirts up a slim trunk
+        const [pMain, pTop] = pines[Math.floor(rnd() * pines.length)];
+        const th = 1.2 + rnd() * 1.0;
+        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.4, th, 0.4), trunkMat);
+        tk.position.y = th / 2;
+        tree.add(tk);
+        const tiers = 4 + Math.floor(rnd() * 2);
+        for (let k = 0; k < tiers; k++) {
+          const w = 2.3 - k * (1.8 / tiers);
+          const tier = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, w), voxelMaterial(k === tiers - 1 ? pTop : pMain));
+          tier.position.y = th + 0.2 + k * 0.62;
+          tree.add(tier);
+        }
+      } else {
+        // a leafy broadleaf: tapered trunk with root flares, an irregular bushy
+        // crown (offset chunks, not a neat stack), a branch stub, + maybe blossoms
+        const [cMain, cTop, cDark] = canopies[Math.floor(rnd() * canopies.length)];
+        const main = voxelMaterial(cMain);
+        const th = 2.2 + rnd() * 2.4;
+        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.65, th, 0.65), trunkMat);
+        tk.position.y = th / 2;
+        const tkTop = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.5), trunkMat);
+        tkTop.position.y = th + 0.2;
+        tree.add(tk, tkTop);
+        // root flares at the base
+        for (let r = 0; r < 4; r++) {
+          const a = (r / 4) * Math.PI * 2;
+          const root = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.3), trunkMat);
+          root.position.set(Math.cos(a) * 0.4, 0.18, Math.sin(a) * 0.4);
+          tree.add(root);
+        }
+        // a low branch stub
+        if (rnd() < 0.6) {
+          const br = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.24, 0.24), trunkMat);
+          const ba = rnd() * Math.PI * 2;
+          br.position.set(Math.cos(ba) * 0.5, th * 0.62, Math.sin(ba) * 0.5);
+          br.rotation.y = ba;
+          tree.add(br);
+        }
+        // bushy crown: a darker base, offset mid clumps, and a lit top knob
+        const cBase = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.4, 2.6), voxelMaterial(cDark));
+        cBase.position.y = th + 0.5;
+        tree.add(cBase);
+        for (let c = 0; c < 3; c++) {
+          const s = 1.3 + rnd() * 0.9;
+          const clump = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.85, s), main);
+          clump.position.set((rnd() - 0.5) * 1.7, th + 1.2 + rnd() * 0.8, (rnd() - 0.5) * 1.7);
+          tree.add(clump);
+        }
+        const top = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.9, 1.0), voxelMaterial(cTop));
+        top.position.y = th + 2.5;
+        tree.add(top);
+        // spring blossoms / berries dotted on the crown
+        if (rnd() < 0.4) {
+          const bcol = rnd() < 0.5 ? VOX.flowerPink : VOX.flowerWhite;
+          for (let b = 0; b < 5; b++) {
+            const bl = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), glowMaterial(bcol, 0.35));
+            bl.position.set((rnd() - 0.5) * 2.4, th + 1.0 + rnd() * 1.6, (rnd() - 0.5) * 2.4);
+            tree.add(bl);
+          }
+        }
+      }
       tree.position.set(x, 0, z);
       tree.rotation.y = rnd() * Math.PI;
       this.group.add(tree);
@@ -637,39 +693,76 @@ export class Island {
   /** Big layered rock outcrops near the shore — a craggy skyline that frames the
    *  village like the cliffs in the reference (placed behind the tree band). */
   private buildBackdrop() {
-    const tones = [VOX.rock, VOX.rockDark, VOX.stone, VOX.stoneDark];
+    const tones = [VOX.rock, VOX.rockDark, VOX.stone, VOX.stoneDark, 0x8a8d86];
     let seed = 24680;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const tone = () => voxelMaterial(tones[Math.floor(rnd() * tones.length)]);
+
+    // One craggy peak: a stepped, jittered stack of stone blocks with mossy
+    // ledges, a shadowed back face, scree at the foot, and a snow/grass cap.
+    const makePeak = (cx: number, cz: number, scale: number, snowy: boolean) => {
+      const peak = new THREE.Group();
+      const layers = 4 + Math.floor(rnd() * 3);
+      let w = (4 + rnd() * 4) * scale;
+      let y = 0;
+      for (let k = 0; k < layers; k++) {
+        const h = (1.4 + rnd() * 2.0) * scale;
+        const dep = w * (0.7 + rnd() * 0.5);
+        const blk = new THREE.Mesh(new THREE.BoxGeometry(w, h, dep), tone());
+        blk.position.set((rnd() - 0.5) * 1.6 * scale, y + h / 2, (rnd() - 0.5) * 1.6 * scale);
+        blk.rotation.y = rnd() * 0.5;
+        peak.add(blk);
+        // a darker shadow slab tucked on the back/side for craggy depth
+        if (rnd() < 0.7) {
+          const sh = new THREE.Mesh(new THREE.BoxGeometry(w * 0.6, h * 0.8, dep * 0.5), voxelMaterial(VOX.rockDark));
+          sh.position.set(blk.position.x - w * 0.3, y + h * 0.4, blk.position.z - dep * 0.3);
+          peak.add(sh);
+        }
+        // a mossy/grass ledge on lower steps
+        if (k < layers - 1 && rnd() < 0.55) {
+          const moss = new THREE.Mesh(new THREE.BoxGeometry(w * 0.7, 0.3 * scale, dep * 0.7), voxelMaterial(rnd() < 0.5 ? VOX.grass : VOX.grassDark));
+          moss.position.set(blk.position.x + (rnd() - 0.5) * w * 0.3, y + h - 0.1, blk.position.z + (rnd() - 0.5) * dep * 0.3);
+          peak.add(moss);
+        }
+        y += h * (0.66 + rnd() * 0.2);
+        w *= 0.66 + rnd() * 0.13;
+      }
+      // stepped snow (or grass) cap — 2 decreasing blocks for a real summit
+      const capCol = snowy ? 0xeef2f6 : VOX.grass;
+      for (let c = 0; c < 2; c++) {
+        const cw = (w + 0.6) * (1 - c * 0.4);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(cw, 0.6 * scale, cw), voxelMaterial(c === 0 ? capCol : (snowy ? 0xffffff : VOX.grassLight)));
+        cap.position.y = y + 0.2 + c * 0.5 * scale;
+        peak.add(cap);
+      }
+      // scree boulders scattered at the foot
+      for (let b = 0; b < 3 + Math.floor(rnd() * 3); b++) {
+        const s = (0.6 + rnd() * 1.1) * scale;
+        const rk = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.7, s), tone());
+        const ba = rnd() * Math.PI * 2;
+        rk.position.set(Math.cos(ba) * (w + 2) * scale * 0.6, s * 0.35, Math.sin(ba) * (w + 2) * scale * 0.6);
+        rk.rotation.y = rnd() * Math.PI;
+        peak.add(rk);
+      }
+      peak.position.set(cx, 0, cz);
+      return peak;
+    };
+
     const count = 9;
     for (let i = 0; i < count; i++) {
-      // bias outcrops toward the back/sides so they read as a backdrop, not clutter
       const a = (i / count) * Math.PI * 2 + (rnd() - 0.5) * 0.4;
       const r = ISLAND.shore - 3 - rnd() * 4;
       const cx = Math.cos(a) * r;
       const cz = Math.sin(a) * r;
-      const outcrop = new THREE.Group();
-      // a craggy stack: a few large blocks of decreasing size piled + jittered
-      const layers = 3 + Math.floor(rnd() * 3);
-      let w = 4 + rnd() * 4;
-      let y = 0;
-      for (let k = 0; k < layers; k++) {
-        const h = 1.6 + rnd() * 2.2;
-        const blk = new THREE.Mesh(
-          new THREE.BoxGeometry(w, h, w * (0.7 + rnd() * 0.5)),
-          voxelMaterial(tones[Math.floor(rnd() * tones.length)]),
-        );
-        blk.position.set((rnd() - 0.5) * 1.4, y + h / 2, (rnd() - 0.5) * 1.4);
-        blk.rotation.y = rnd() * 0.6;
-        outcrop.add(blk);
-        y += h * (0.7 + rnd() * 0.2);
-        w *= 0.66 + rnd() * 0.14;
+      // a main peak flanked by a smaller sister peak → a craggy multi-summit massif
+      const big = rnd() < 0.5;
+      const main = makePeak(cx, cz, big ? 1.25 : 1.0, big);
+      this.group.add(main);
+      if (rnd() < 0.6) {
+        const off = 4 + rnd() * 3;
+        const sa = a + (rnd() - 0.5) * 0.6;
+        this.group.add(makePeak(cx + Math.cos(sa) * off, cz + Math.sin(sa) * off, 0.6, false));
       }
-      // a little snow/grass cap on the tallest for a peak
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.7, w + 0.4), voxelMaterial(rnd() < 0.5 ? 0xeef2f6 : VOX.grass));
-      cap.position.y = y + 0.3;
-      outcrop.add(cap);
-      outcrop.position.set(cx, 0, cz);
-      this.group.add(outcrop);
     }
   }
 
