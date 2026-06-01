@@ -24,8 +24,9 @@ export const MAIN_R = 40.8;
 export const BRIDGE_HW = 3.2;
 /** How far a bridge reaches back INTO the main disc (overlap for a seamless join). */
 export const BRIDGE_OVERLAP = 5;
-/** Distance from world origin to each satellite centre. */
-const SAT_DIST = 58;
+/** Distance from world origin to each satellite centre (clears the main island,
+ *  whose ground reaches ~48, leaving open water for a bridge to span). */
+const SAT_DIST = 64;
 
 /** Place a satellite centre `d` units out along direction (dx,dz). */
 function out(dx: number, dz: number, d = SAT_DIST): HVec {
@@ -37,7 +38,7 @@ function out(dx: number, dz: number, d = SAT_DIST): HVec {
 // Matches the sketch: ZOMBIES upper-left, TOWER DEFENSE upper-centre, COMING
 // SOON to the right.
 export const SATELLITES: Satellite[] = [
-  { id: "sat_zombies", label: "ZOMBIES", color: 0x8be36b, kind: "zombies", center: out(-0.62, -0.78), radius: 15 },
+  { id: "sat_zombies", label: "ZOMBIES", color: 0x8be36b, kind: "zombies", center: out(-0.62, -0.78), radius: 14 },
   { id: "sat_td", label: "TOWER DEFENSE", color: 0x7fd4ff, kind: "td", center: out(0.12, -1), radius: 13 },
   { id: "sat_soon", label: "COMING SOON", color: 0xc9b6ff, kind: "soon", center: out(1, -0.3), radius: 13 },
 ];

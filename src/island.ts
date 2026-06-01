@@ -920,28 +920,31 @@ export class Island {
       this.group.add(cap, trimTop, under, underTop, rim);
 
       // ---- plank bridge from the main island edge to the platform ----
+      // Planks ride ON TOP of the grass (top surface ≈ y0.5), spanning the open
+      // water out to the platform lip so the bridge reads clearly.
       const d = Math.hypot(cx, cz) || 1;
       const dir = { x: cx / d, z: cz / d };
       const perp = { x: -dir.z, z: dir.x };
-      const start = ISLAND.shore - 4;   // begin on the main shore
-      const end = d - s.radius + 1.5;   // land on the platform lip
+      const PLANK_Y = 0.45;             // box top ≈ 0.56, just above the lawn
+      const start = ISLAND.half - 6;    // begin on the island's grassy rim
+      const end = d - s.radius + 2;     // land on the platform lip
       const ang = Math.atan2(dir.x, dir.z);
       let row = 0;
       for (let r = start; r <= end; r += 1.7, row++) {
         for (const off of [-1.4, 0, 1.4]) {
           const px = dir.x * r + perp.x * off;
           const pz = dir.z * r + perp.z * off;
-          const tile = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.22, 1.6), row % 2 ? plank : plankDark);
-          tile.position.set(px, 0.0, pz);
+          const tile = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.22, 1.65), row % 2 ? plank : plankDark);
+          tile.position.set(px, PLANK_Y, pz);
           tile.rotation.y = ang;
           tile.userData.noCast = true;
           this.group.add(tile);
         }
-        // low rope-posts every few planks
+        // rope-posts every few planks for a hand-rail read
         if (row % 2 === 0) {
           for (const off of [-2.3, 2.3]) {
-            const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.0, 0.18), rockDark);
-            post.position.set(dir.x * r + perp.x * off, 0.4, dir.z * r + perp.z * off);
+            const post = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.2, 0.2), rockDark);
+            post.position.set(dir.x * r + perp.x * off, PLANK_Y + 0.5, dir.z * r + perp.z * off);
             this.group.add(post);
           }
         }
