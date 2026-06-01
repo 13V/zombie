@@ -98,13 +98,11 @@ interface EggShrine {
   color: number;
   lit: number; // eased proximity highlight 0..1
 }
-interface PortalGate {
+interface CoopRoom {
   group: THREE.Group;
-  slats: THREE.Mesh[]; // scrolling energy bars inside the arch
-  veil: THREE.Mesh; // soft backdrop glow plane
-  rune: THREE.Mesh; // rotating ground rune ring
-  figures: THREE.Object3D[]; // bobbing party-size figures
-  veilH: number;
+  floor: THREE.Mesh; // glowing floor rune you stand on (pulses)
+  rune: THREE.Mesh; // rotating rune ring on the floor
+  figures: THREE.Object3D[]; // bobbing party-size figures inside
   pos: THREE.Vector3;
   color: number;
   lit: number;
@@ -129,7 +127,7 @@ export class Island {
   private arrow?: THREE.Mesh;
   // animation registries
   private eggs: EggShrine[] = [];
-  private gates: PortalGate[] = [];
+  private rooms: CoopRoom[] = [];
   private flames: Flame[] = [];
   private banners: Banner[] = [];
   private motes: Mote[] = [];
@@ -302,7 +300,7 @@ export class Island {
 
     this.animateFountain(dt);
     this.animateEggs(dt);
-    this.animateGates(dt);
+    this.animateRooms(dt);
     this.animateFlames();
     this.animateBanners();
     this.animateAtmosphere(dt);
@@ -361,22 +359,14 @@ export class Island {
     }
   }
 
-  private animateGates(dt: number) {
+  private animateRooms(dt: number) {
     const t = this.t;
-    for (const g of this.gates) {
-      g.group.scale.setScalar(1 + g.lit * 0.03);
-      // scroll the energy bars upward, wrapping + fading near the top/bottom
-      for (const s of g.slats) {
-        s.position.y += dt * (1.1 + g.lit * 1.0);
-        if (s.position.y > g.veilH) s.position.y -= g.veilH;
-        const f = s.position.y / g.veilH; // 0..1 up the arch
-        const fade = Math.sin(f * Math.PI); // dim at both ends
-        (s.material as THREE.MeshStandardMaterial).opacity = (0.45 + g.lit * 0.4) * fade;
-      }
-      // the dark void backdrop just shimmers a touch brighter when approached
-      const vm = g.veil.material as THREE.MeshStandardMaterial;
-      vm.emissiveIntensity = 0.45 + (Math.sin(t * 2 + g.pos.x) + 1) * 0.12 + g.lit * 0.5;
-      // ground rune slowly rotates + pulses
+    for (const g of this.rooms) {
+      g.group.scale.setScalar(1 + g.lit * 0.02);
+      // glowing floor rune pulses (brighter when a player is standing in)
+      (g.floor.material as THREE.MeshStandardMaterial).emissiveIntensity =
+        0.5 + (Math.sin(t * 2 + g.pos.x) + 1) * 0.2 + g.lit * 0.9;
+      // rune ring slowly rotates + pulses
       g.rune.rotation.y += dt * 0.4;
       (g.rune.material as THREE.MeshStandardMaterial).emissiveIntensity =
         0.7 + (Math.sin(t * 2.3 + g.pos.x) + 1) * 0.4 + g.lit * 1.2;
@@ -459,8 +449,8 @@ export class Island {
       const on = e.pos.distanceToSquared(playerPos) < 1.9 * 1.9;
       e.lit += ((on ? 1 : 0) - e.lit) * ease;
     }
-    for (const g of this.gates) {
-      const on = g.pos.distanceToSquared(playerPos) < 2.6 * 2.6;
+    for (const g of this.rooms) {
+      const on = g.pos.distanceToSquared(playerPos) < 3.2 * 3.2;
       g.lit += ((on ? 1 : 0) - g.lit) * ease;
     }
   }
@@ -917,162 +907,110 @@ export class Island {
   }
 
   /**
-   * The three portal gates — Solo / Duo / Squad — each a distinct piece of
-   * architecture so the party size reads at a glance: a humble single arch, a
-   * balanced twin-pillar gate, and an imposing four-pillar fortress. Every gate
-   * has a shimmering scroll-energy veil, flickering torches, waving banners, a
-   * rotating ground rune, and bobbing figures counting the party size.
+   * The three co-op ROOMS — Solo / Duo / Squad — open-top stone enclosures you
+   * walk into (the iso camera sees over the walls). Each has a glowing tier-
+   * coloured floor rune, a doorway facing the plaza flanked by torches + banners,
+   * battlements, a sign plaque, and bobbing party-size figures inside. Standing
+   * inside pools players for the gather (count shown on the HUD); walk out to
+   * cancel. Bigger + grander per tier so the party size reads at a glance.
    */
   private buildModes() {
     for (const m of GATES) {
-      const gate = new THREE.Group();
-      // big stone arches — width/height scale up with grandeur (solo/duo/squad)
-      const halfW = 1.9 + m.grand * 0.7;
-      const height = 4.2 + m.grand * 1.2;
-      const thick = 0.95;
+      const g = new THREE.Group();
+      const interior = 3.2 + m.grand * 1.1; // floor span (solo→squad)
+      const half = interior / 2;
+      const h = 2.2 + m.grand * 0.35; // wall height
+      const wt = 0.4; // wall thickness
+      const doorGap = 1.9;
       const stone = voxelMaterial(VOX.stone);
       const stoneDark = voxelMaterial(VOX.stoneDark);
+      const trim = glowMaterial(m.color, 0.5);
+      const outer = interior + 0.8;
 
-      // a stacked-stone column with a wider plinth foot + a darker cap block
-      const column = (px: number) => {
-        const plinth = new THREE.Mesh(new THREE.BoxGeometry(thick + 0.5, 0.5, thick + 0.5), stoneDark);
-        plinth.position.set(px, 0.25, 0);
-        gate.add(plinth);
-        // stack blocks (slight size jitter) so the shaft reads as hand-laid masonry
-        const blocks = Math.round((height - 0.5) / 0.7);
-        let seed = Math.floor(px * 97) + m.grand * 13 + 1;
-        const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-        for (let b = 0; b < blocks; b++) {
-          const bw = thick + (rnd() - 0.5) * 0.16;
-          const blk = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.7, thick), b % 2 ? stoneDark : stone);
-          blk.position.set(px + (rnd() - 0.5) * 0.06, 0.5 + 0.35 + b * 0.7, 0);
-          gate.add(blk);
-        }
-        const cap = new THREE.Mesh(new THREE.BoxGeometry(thick + 0.5, 0.45, thick + 0.5), stoneDark);
-        cap.position.set(px, height + 0.05, 0);
-        gate.add(cap);
+      // ---- floor: tinted slab + a glowing rune you stand on ----
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(outer, 0.2, outer), stoneDark);
+      slab.position.y = 0.0;
+      const floor = new THREE.Mesh(new THREE.CylinderGeometry(half + 0.1, half + 0.1, 0.12, 24), glowMaterial(m.color, 0.7));
+      floor.position.y = 0.12;
+      const rune = new THREE.Mesh(new THREE.TorusGeometry(half - 0.3, 0.08, 6, 28), glowMaterial(m.color, 0.9));
+      rune.rotation.x = Math.PI / 2;
+      rune.position.y = 0.2;
+      g.add(slab, floor, rune);
+
+      // ---- walls (open top): back + sides solid, front split for a doorway ----
+      const wallWithTrim = (w: number, d: number, x: number, z: number) => {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stone);
+        wall.position.set(x, h / 2 + 0.1, z);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.05, 0.18, d + 0.05), trim);
+        cap.position.set(x, h + 0.1, z);
+        g.add(wall, cap);
       };
-      [-halfW, halfW].forEach(column);
-
-      // layered ziggurat arch crowning the gate (stacked beams stepping inward)
-      const archLayers = 2 + m.grand;
-      for (let k = 0; k < archLayers; k++) {
-        const lw = halfW * 2 + 0.9 - k * 0.9;
-        const beam = new THREE.Mesh(new THREE.BoxGeometry(Math.max(0.8, lw), 0.5, thick + 0.3), k % 2 ? stone : stoneDark);
-        beam.position.set(0, height + 0.35 + k * 0.5, 0);
-        gate.add(beam);
+      wallWithTrim(outer, wt, 0, -half - wt / 2); // back (-z)
+      wallWithTrim(wt, outer, -half - wt / 2, 0); // left
+      wallWithTrim(wt, outer, half + wt / 2, 0); // right
+      // front (+z): two segments leaving a central doorway
+      const segW = (outer - doorGap) / 2;
+      for (const sx of [-1, 1]) {
+        wallWithTrim(segW, wt, sx * (doorGap / 2 + segW / 2), half + wt / 2);
       }
-      const archTopY = height + 0.35 + archLayers * 0.5;
-      // battlements on top
+      // doorway header + a glowing sign plaque over it
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(doorGap + 0.5, 0.4, wt + 0.1), stoneDark);
+      lintel.position.set(0, h - 0.1, half + wt / 2);
+      const plaque = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.7, 0.12), glowMaterial(m.color, 1.0));
+      plaque.position.set(0, h + 0.35, half + wt / 2 + 0.06);
+      g.add(lintel, plaque);
+      // corner posts + battlement merlons along the back wall
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(wt + 0.2, h + 0.3, wt + 0.2), stoneDark);
+        post.position.set(sx * (half + wt / 2), (h + 0.3) / 2 + 0.1, sz * (half + wt / 2));
+        g.add(post);
+      }
       const merlonN = 3 + m.grand;
       for (let i = 0; i < merlonN; i++) {
-        const mer = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, thick + 0.3), stone);
-        mer.position.set(-halfW + 0.5 + (i / (merlonN - 1)) * (halfW * 2 - 1.0), archTopY, 0);
-        gate.add(mer);
-      }
-      // a big glowing keystone gem at the apex, front + back
-      for (const kz of [thick / 2 + 0.18, -(thick / 2 + 0.18)]) {
-        const key = new THREE.Mesh(new THREE.OctahedronGeometry(0.46, 0), glowMaterial(m.color, 1.4));
-        (key.geometry as THREE.BufferGeometry).scale(1, 1.3, 1);
-        key.position.set(0, height + 0.6, kz);
-        gate.add(key);
+        const mer = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, wt + 0.1), stone);
+        mer.position.set(-half + 0.4 + (i / (merlonN - 1)) * (outer - 0.8), h + 0.35, -half - wt / 2);
+        g.add(mer);
       }
 
-      // ---- portal: a dark doorway "void" with bright energy bars flowing up ----
-      // The dark backdrop (normal-blended) reads as a real opening; the additive
-      // tier-colored bars + bloom turn it into a glowing portal rather than a
-      // flat pale sheet.
-      const veilH = height;
-      const openW = halfW * 2 - thick - 0.15; // clear span between the pillar faces
-      const veil = new THREE.Mesh(
-        new THREE.PlaneGeometry(openW, veilH),
-        new THREE.MeshStandardMaterial({
-          color: darken(m.color, 0.22), emissive: darken(m.color, 0.3), emissiveIntensity: 0.5,
-          transparent: true, opacity: 0.82, depthWrite: false,
-          side: THREE.DoubleSide,
-        }),
-      );
-      veil.position.set(0, veilH / 2, -0.04);
-      gate.add(veil);
-      const slats: THREE.Mesh[] = [];
-      const slatN = 7;
-      for (let i = 0; i < slatN; i++) {
-        const slat = new THREE.Mesh(
-          new THREE.PlaneGeometry(openW - 0.15, 0.24),
-          new THREE.MeshStandardMaterial({
-            color: m.color, emissive: m.color, emissiveIntensity: 1.8,
-            transparent: true, opacity: 0.55, depthWrite: false,
-            side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false,
-          }),
-        );
-        slat.position.set(0, (i / slatN) * veilH, 0.02);
-        slats.push(slat);
-        gate.add(slat);
-      }
-
-      // ground rune ring (two discs: solid + a thinner accent that rotates)
-      const runeBase = new THREE.Mesh(new THREE.CylinderGeometry(halfW + 0.5, halfW + 0.5, 0.1, 28), glowMaterial(m.color, 0.5));
-      runeBase.position.y = 0.06;
-      gate.add(runeBase);
-      const rune = new THREE.Mesh(new THREE.TorusGeometry(halfW + 0.1, 0.08, 6, 24), glowMaterial(m.color, 0.9));
-      rune.rotation.x = Math.PI / 2;
-      rune.position.y = 0.14;
-      gate.add(rune);
-
-      // torches flanking the gate
-      const torchXs = [-halfW - 0.5, halfW + 0.5];
-      for (const tx of torchXs) {
+      // ---- torches flanking the doorway + banners on the front wall ----
+      for (const sx of [-1, 1]) {
         const { group: tg, flame } = this.makeTorch(0xffa53a);
-        tg.position.set(tx, 0, 0.2);
-        gate.add(tg);
+        tg.position.set(sx * (doorGap / 2 + 0.4), 0.1, half + wt / 2 + 0.2);
+        g.add(tg);
         this.flames.push(flame);
-      }
-      // a lantern hanging from the arch + climbing vines up the pillars
-      const hang = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), voxelMaterial(VOX.steelDark));
-      hang.position.set(0, height - 0.3, thick / 2 + 0.2);
-      const hangGlow = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.3), glowMaterial(VOX.lantern, 1.2));
-      hangGlow.position.set(0, height - 0.7, thick / 2 + 0.2);
-      gate.add(hang, hangGlow);
-      this.beacons.push(hangGlow);
-      let vseed = m.grand * 17 + 3;
-      const vrnd = () => ((vseed = (vseed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-      for (const px of [-halfW, halfW]) {
-        const leaves = vrnd() < 0.5 ? VOX.leaf : VOX.leafDark;
-        for (let v = 0; v < 5; v++) {
-          const vine = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.5, 0.18), voxelMaterial(leaves));
-          vine.position.set(px + (vrnd() - 0.5) * 0.5, 0.6 + v * (height / 6), thick / 2 + 0.05);
-          gate.add(vine);
-        }
-      }
-      // hang tier banners on the pillar faces (both pillars on grander gates)
-      const bannerXs = m.grand >= 1 ? [-halfW, halfW] : [];
-      for (const bx of bannerXs) {
-        const banner = this.makeBanner(m.color, height);
-        banner.group.position.set(bx, height - 0.6, thick / 2 + 0.1);
-        gate.add(banner.group);
+        const banner = this.makeBanner(m.color, h);
+        banner.group.position.set(sx * (half - 0.3), h - 0.2, half + wt / 2 + 0.08);
+        g.add(banner.group);
         this.banners.push(banner.rec);
       }
+      // a warm lantern on each front corner post
+      for (const sx of [-1, 1]) {
+        const lan = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.34, 0.26), glowMaterial(VOX.lantern, 1.2));
+        lan.position.set(sx * (half + wt / 2), h + 0.1, half + wt / 2);
+        g.add(lan);
+        this.beacons.push(lan);
+      }
 
-      // bobbing figures showing the party size, lined up before the gate
+      // ---- bobbing party-size figures standing on the floor inside ----
       const figures: THREE.Object3D[] = [];
       for (let i = 0; i < m.players; i++) {
-        const spread = m.players === 1 ? 0 : (i - (m.players - 1) / 2) * 0.7;
+        const a = m.players === 1 ? 0 : (i / m.players) * Math.PI * 2;
+        const rr = m.players === 1 ? 0 : half * 0.42;
         const fig = new THREE.Group();
         const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.55, 0.34), glowMaterial(m.color, 1.0));
         const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), glowMaterial(0xfff2d6, 0.6));
         head.position.y = 0.42;
         fig.add(body, head);
-        fig.position.set(spread, 0.5, 1.3);
-        fig.rotation.y = Math.PI; // face out toward the player
-        gate.add(fig);
+        fig.position.set(Math.cos(a) * rr, 0.5, Math.sin(a) * rr - half * 0.2);
         figures.push(fig);
+        g.add(fig);
       }
 
-      gate.position.copy(m.pos);
-      gate.lookAt(0, 0, 0); // face the plaza center
-      this.group.add(gate);
-      this.gates.push({ group: gate, slats, veil, rune, figures, veilH, pos: m.pos.clone(), color: m.color, lit: 0 });
-      this.zones.push({ id: m.id, kind: "mode", pos: m.pos.clone(), radius: 2.6, label: m.label, modePlayers: m.players });
+      g.position.copy(m.pos);
+      g.rotation.y = Math.atan2(-m.pos.x, -m.pos.z); // doorway (+z) faces the plaza
+      this.group.add(g);
+      this.rooms.push({ group: g, floor, rune, figures, pos: m.pos.clone(), color: m.color, lit: 0 });
+      this.zones.push({ id: m.id, kind: "mode", pos: m.pos.clone(), radius: half + 0.6, label: m.label, modePlayers: m.players });
     }
   }
 
@@ -1651,7 +1589,7 @@ export class Island {
     this.greeter = npc;
     const label = makeLabel("Guide");
     npc.root.add(label);
-    const bubble = makeBubble("Hatch pets at the egg shrines, then step into a SOLO / DUO / SQUAD portal to fight! Press T to wave 👋");
+    const bubble = makeBubble("Hatch pets at the egg shrines, then step into a SOLO / DUO / SQUAD room to fight together! Press T to wave 👋");
     bubble.scale.set(5.4, 1.4, 1);
     bubble.position.set(0, 3.1, 0);
     npc.root.add(bubble);
