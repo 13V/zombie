@@ -51,12 +51,23 @@ interface Raider {
  * `spawn()` waves, `update(dt)` each frame, and `damageNear()` from bullet
  * impacts. Everything is removed + disposed on `clear()` (mode leave).
  */
+/** A block (or other barrier) sitting in a raider's path: walk to it + chew. */
+export type BwObstacle = { pos: THREE.Vector3; onHit: (dmg: number) => void } | null;
+
 export class BwBots {
   readonly group = new THREE.Group();
   private raiders: Raider[] = [];
+  /** Optional barrier lookup (placed blocks). When it returns a hit for a
+   *  raider's position, the raider attacks THAT instead of advancing to its bed. */
+  private obstacleFn?: (pos: THREE.Vector3, toward: THREE.Vector3) => BwObstacle;
 
   constructor(scene: THREE.Scene) {
     scene.add(this.group);
+  }
+
+  /** Register a barrier provider (e.g. BwBlocks.obstacle). */
+  setObstacleProvider(fn: (pos: THREE.Vector3, toward: THREE.Vector3) => BwObstacle): void {
+    this.obstacleFn = fn;
   }
 
   /** Number of live raiders. */
@@ -102,10 +113,15 @@ export class BwBots {
    */
   update(dt: number): void {
     for (const r of this.raiders) {
-      const targetAlive = r.target.alive();
+      // A wall in the way takes priority: walk to it + chew through before the
+      // raider can resume its march to the bed.
+      const ob = this.obstacleFn?.(r.pos, r.target.pos) ?? null;
+      const goalPos = ob ? ob.pos : r.target.pos;
+      const goalAlive = ob ? true : r.target.alive();
+      const onHit = ob ? ob.onHit : r.target.onHit;
 
-      // steer toward the target on the ground plane
-      _tmp.copy(r.target.pos).sub(r.pos);
+      // steer toward the active goal on the ground plane
+      _tmp.copy(goalPos).sub(r.pos);
       _tmp.y = 0;
       const dist = _tmp.length();
       if (dist > 0.0001) _tmp.divideScalar(dist); // normalize
@@ -113,12 +129,12 @@ export class BwBots {
       if (r.swingCd > 0) r.swingCd -= dt;
 
       const inRange = dist <= RAIDER_REACH;
-      if (targetAlive && inRange) {
+      if (goalAlive && inRange) {
         // in range: stop closing, swing on the cooldown
         r.attacking = true;
         if (r.swingCd <= 0) {
           r.swingCd = RAIDER_SWING_CD;
-          r.target.onHit(RAIDER_SWING_DMG);
+          onHit(RAIDER_SWING_DMG);
           // re-trigger the attack anim each swing (once-shot, falls back to idle)
           r.char.play("attack", { once: true });
         }

@@ -2,9 +2,10 @@ import * as THREE from "three";
 import { BedWarsMap, type BwTeamId } from "./bwmap";
 import { makeGenerator, tickGenerator, upgradeGenerator, emptyWallet, addToWallet, type BwGenerator, type BwResource, type BwWallet } from "./bwresources";
 import { createMatch, breakBed, killPlayer, respawnPlayer, isTeamOut, aliveTeams, type BwMatch } from "./bwteams";
-import { BwBots } from "./bwbots";
+import { BwBots, RAIDER_REACH } from "./bwbots";
 import { BwGolems } from "./bwgolem";
 import { BwDragons } from "./bwdragon";
+import { BwBlocks, bwBlockMat } from "./bwblocks";
 import { BwShopUI } from "./bwshopui";
 import { BwUpgradeUI } from "./bwupgradeui";
 import { bwBuy, bwCanAfford, type BwShopItem } from "./bwshop";
@@ -60,6 +61,7 @@ export class BedWarsMode {
   private bots: BwBots;
   private golems: BwGolems;
   private dragons: BwDragons;
+  private blocks: BwBlocks;
   private gens: { team: BwTeamId; gen: BwGenerator }[] = [];
   private gems: GemGen[] = [];
   private gemGroup = new THREE.Group();
@@ -77,7 +79,12 @@ export class BedWarsMode {
   private upgrades: BwUpgradeState = bwInitUpgrades();
   private traps: BwTrapQueue = bwInitTraps();
   private trapCd = 0;       // cooldown gate so a single raid pops one trap
-  private speedBuff = 0;    // Counter-Offensive trap → brief move-speed boost
+  private speedBuff = 0;    // Counter-Offensive trap / speed potion → move-speed boost
+
+  // ---- permanent gear bought at the item shop ----
+  private meleeMul = 1;        // Sword tier → bullet damage multiplier
+  private armorReduction = 0;  // Armor tier → incoming damage reduction (0..0.6)
+  private rangedMul = 1;       // Bow/Crossbow tier → fire-rate multiplier
 
   // ---- your life ----
   playerHp = PLAYER_HP;
@@ -101,6 +108,7 @@ export class BedWarsMode {
     this.bots = new BwBots(scene);
     this.golems = new BwGolems(scene);
     this.dragons = new BwDragons(scene);
+    this.blocks = new BwBlocks(scene);
     scene.add(this.gemGroup);
   }
 
@@ -116,7 +124,9 @@ export class BedWarsMode {
   consumeRespawn(): boolean { const r = this.respawnReady; this.respawnReady = false; return r; }
 
   /** Fire-rate multiplier from Maniac Miner (haste) — main applies it on fire. */
-  fireRateMul(): number { return bwFireRateMul(this.upgrades); }
+  fireRateMul(): number { return bwFireRateMul(this.upgrades) * this.rangedMul; }
+  /** Combined incoming-damage reduction: best of armor gear and Protection. */
+  private incomingReduction(): number { return Math.max(this.armorReduction, bwDamageReduction(this.upgrades)); }
   /** Move-speed multiplier (Counter-Offensive trap buff while it lasts). */
   playerSpeedMul(): number { return this.speedBuff > 0 ? 1.4 : 1; }
   /** Seconds until sudden death (0 once it's begun) — for the HUD clock. */
@@ -146,11 +156,18 @@ export class BedWarsMode {
     this.buildGemGens();
     this.match = createMatch(this.map.teams.map((t, i) => ({ id: i + 1, team: t.id, bot: t.id !== this.playerTeam })));
     this.spawnGuardians();
+    this.blocks.clear();
+    // raiders must break any wall you've stacked between them and your bed.
+    const myBedPos = this.beds.get(this.playerTeam)!.pos;
+    this.bots.setObstacleProvider((pos) => this.blocks.obstacle(pos, myBedPos, RAIDER_REACH));
     this.wallet = emptyWallet();
     this.upgrades = bwInitUpgrades();
     this.traps = bwInitTraps();
     this.trapCd = 0;
     this.speedBuff = 0;
+    this.meleeMul = 1;
+    this.armorReduction = 0;
+    this.rangedMul = 1;
     this.elapsed = 0;
     this.suddenDeath = false;
     this.bedDestruction = false;
@@ -180,6 +197,7 @@ export class BedWarsMode {
     this.bots.clear();
     this.golems.clear();
     this.dragons.clear();
+    this.blocks.clear();
     this.shop?.close();
     this.upgUI?.close();
     this.hud?.remove();
@@ -258,7 +276,7 @@ export class BedWarsMode {
   /** A bullet impacted at `pos`. Sharpness scales the damage. Priority:
    *  raiders → enemy guardian → enemy bed. */
   resolveHit(pos: THREE.Vector3, dmg: number): "bot" | "guard" | "bed" | null {
-    const d = dmg * bwDamageMul(this.upgrades);
+    const d = dmg * bwDamageMul(this.upgrades) * this.meleeMul;
     for (const r of this.bots.positions()) {
       const dx = r.pos.x - pos.x, dz = r.pos.z - pos.z;
       if (dx * dx + dz * dz < 0.9 * 0.9) { this.bots.damageNear(pos, 0.9, d); return "bot"; }
@@ -338,6 +356,7 @@ export class BedWarsMode {
     this.updateGems(dt, playerPos);
 
     this.bots.update(dt);
+    this.blocks.update(dt);
     this.updateGuardians(dt);
     this.updateGolems(dt);
 
@@ -487,7 +506,7 @@ export class BedWarsMode {
     const targets = playerPos ? [{ pos: playerPos }] : [];
     const hits = this.dragons.update(dt, targets);
     if (!playerPos || this.respawnTimer > 0) return;
-    const reduce = 1 - bwDamageReduction(this.upgrades);
+    const reduce = 1 - this.incomingReduction();
     for (const h of hits) {
       const dx = h.pos.x - playerPos.x, dz = h.pos.z - playerPos.z;
       if (dx * dx + dz * dz < 2.4 * 2.4) this.hurtPlayer(h.dmg * DRAGON_DMG_MUL * reduce);
@@ -517,7 +536,7 @@ export class BedWarsMode {
       const dx = r.pos.x - playerPos.x, dz = r.pos.z - playerPos.z;
       if (dx * dx + dz * dz < RAIDER_TOUCH * RAIDER_TOUCH) dps += RAIDER_DPS;
     }
-    if (dps > 0) this.hurtPlayer(dps * dt * (1 - bwDamageReduction(this.upgrades)));
+    if (dps > 0) this.hurtPlayer(dps * dt * (1 - this.incomingReduction()));
   }
   private hurtPlayer(dmg: number) {
     if (this.respawnTimer > 0) return;
@@ -543,16 +562,33 @@ export class BedWarsMode {
   }
   private applyEffect(item: BwShopItem) {
     const k = item.effect.kind;
+    const v = item.effect.value ?? 0;
+    const tier = item.effect.tier ?? 1;
     if (k === "block") {
+      // lay/upgrade a real wall ring around your bed (raiders must break it).
       const b = this.beds.get(this.playerTeam);
-      if (b && !b.dead) { b.max += item.effect.value ?? 20; b.hp = Math.min(b.max, b.hp + (item.effect.value ?? 20)); }
+      if (b && !b.dead) this.blocks.placeRing(b.pos, bwBlockMat(tier), Math.max(12, v));
+    } else if (k === "melee") {
+      // sword tier → bullet-damage multiplier (1.15 / 1.30 / 1.50)
+      this.meleeMul = Math.max(this.meleeMul, 1 + tier * 0.16);
+    } else if (k === "armor") {
+      // armor tier → incoming damage reduction (15/30/45/60 → 0.15..0.60)
+      this.armorReduction = Math.max(this.armorReduction, Math.min(0.6, v / 100));
+    } else if (k === "ranged") {
+      // bow/crossbow tier → faster fire (stacks with Maniac Miner haste)
+      this.rangedMul = Math.max(this.rangedMul, 1 + tier * 0.18);
     } else if (k === "heal") {
-      this.playerHp = Math.min(this.playerMax, this.playerHp + (item.effect.value ?? 40));
+      this.playerHp = Math.min(this.playerMax, this.playerHp + (v || 40));
+    } else if (k === "speed") {
+      this.speedBuff = 8;
     } else if (k === "guardian") {
       this.golems.spawn(this.beds.get(this.playerTeam)?.color ?? 0xbfc6cf, this.spawn());
+    } else if (k === "trap") {
+      this.traps = bwQueueTrap(this.traps, "alarm"); // the item-shop alarm trap
     } else if (k === "tnt" || k === "fireball") {
+      // blast the nearest enemy bed AND chew a hole in its defenses
       const foe = this.enemyBeds()[0];
-      if (foe) this.damageBed(foe.team, k === "tnt" ? 45 : 28);
+      if (foe) { this.damageBed(foe.team, k === "tnt" ? 45 : 28); this.blocks.damageNear(foe.pos, 2, 200); }
     }
   }
 
@@ -611,6 +647,7 @@ export class BedWarsMode {
     const hpTxt = this.respawnTimer > 0 ? `💀 ${Math.ceil(this.respawnTimer)}s` : `❤ ${Math.round(this.playerHp)}`;
     const clock = this.nextEventLabel();
     const traps = this.traps.slots.length > 0 ? `🪤 ${this.traps.slots.length}` : "";
+    const walls = this.blocks.count > 0 ? `🧱 ${this.blocks.count}` : "";
     this.hud.innerHTML =
       `<span class="bw-r bw-hp">${hpTxt}</span>` +
       `<span class="bw-r bw-iron">⛓ ${w.iron}</span>` +
@@ -619,6 +656,7 @@ export class BedWarsMode {
       `<span class="bw-r bw-emerald">✦ ${w.emerald}</span>` +
       `<span class="bw-r bw-bed">${bedTxt}</span>` +
       `<span class="bw-r bw-foes">⚔ ${enemies}</span>` +
+      (walls ? `<span class="bw-r bw-walls">${walls}</span>` : "") +
       (traps ? `<span class="bw-r bw-traps">${traps}</span>` : "") +
       `<span class="bw-r bw-clock">${clock}</span>` +
       `<span class="bw-r bw-trap-flash"></span>`;

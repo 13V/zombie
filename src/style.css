@@ -1607,6 +1607,7 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 #bw-res .bw-emerald { color: #7be08a; }
 #bw-res .bw-bed { color: #ffb4ac; }
 #bw-res .bw-foes { color: #ffd9a0; }
+#bw-res .bw-walls { color: #d2c2a6; }
 #bw-res .bw-traps { color: #ff9d5c; }
 #bw-res .bw-clock { color: #c9b6ff; }
 #bw-res .bw-trap-flash { color: #ffd24a; background: rgba(90,40,10,0.85) !important; }
