@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { voxelMaterial, glowMaterial } from "./palette";
 import { AnimState, CharacterRig } from "./assets";
 import { GunStyle, buildGun } from "./gunModels";
+import { ATLAS, ATLAS_SIZE } from "./skintex";
 
 /** The cute social emotes a voxel figure can play in the island hub. */
 export type EmoteId = "wave" | "dance" | "sit" | "cheer";
@@ -27,6 +28,25 @@ export interface OutfitSpec {
   belt?: number;
   gloves?: number;
   emblem?: number;
+}
+
+type AtlasFaces = { top: number[]; bottom: number[]; right: number[]; front: number[]; left: number[]; back: number[] };
+/** Remap a BoxGeometry's UVs so each face samples its region of the skin atlas
+ *  (THREE box group order is px,nx,py,ny,pz,nz → right,left,top,bottom,front,back). */
+function setAtlasUV(geo: THREE.BoxGeometry, faces: AtlasFaces) {
+  const uv = geo.attributes.uv as THREE.BufferAttribute;
+  const S = ATLAS_SIZE;
+  const order = [faces.right, faces.left, faces.top, faces.bottom, faces.front, faces.back];
+  for (let fi = 0; fi < 6; fi++) {
+    const [x, y, w, h] = order[fi];
+    const u0 = x / S, u1 = (x + w) / S, v0 = 1 - y / S, v1 = 1 - (y + h) / S;
+    const o = fi * 4;
+    uv.setXY(o + 0, u0, v0);
+    uv.setXY(o + 1, u1, v0);
+    uv.setXY(o + 2, u0, v1);
+    uv.setXY(o + 3, u1, v1);
+  }
+  uv.needsUpdate = true;
 }
 
 export interface VoxelCharOpts {
@@ -71,6 +91,12 @@ export class VoxelChar implements CharacterRig {
   private headMat: THREE.MeshStandardMaterial;
   private legMat!: THREE.MeshStandardMaterial; // pants
   private outfit: THREE.Object3D[] = []; // skin detail pieces (belt/shoes/mouth/emblem)
+  private torsoMesh!: THREE.Mesh;
+  private headMesh!: THREE.Mesh;
+  private armMeshes: THREE.Mesh[] = [];
+  private legMeshes: THREE.Mesh[] = [];
+  private skinMat?: THREE.MeshStandardMaterial; // textured pixel-skin material
+  private uvSet = false; // box UVs remapped to the skin atlas (once)
   private baseEmissive = 0x000000;
   private gunHolder?: THREE.Group;
   private gunStyle?: GunStyle;
@@ -90,11 +116,13 @@ export class VoxelChar implements CharacterRig {
     const torso = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.9, 0.5), bodyMat);
     torso.position.y = 1.05;
     torso.castShadow = true;
+    this.torsoMesh = torso;
     this.upper.add(torso);
 
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.74, 0.74), headMat);
     head.position.y = 1.85;
     head.castShadow = true;
+    this.headMesh = head;
     this.upper.add(head);
 
     const eyeMat = voxelMaterial(opts.eye);
@@ -141,6 +169,7 @@ export class VoxelChar implements CharacterRig {
     // arms/legs don't cast shadow — halves shadow draw calls for the horde;
     // torso+head shadow already reads the silhouette fine.
     g.add(arm);
+    this.armMeshes.push(arm);
     return g;
   }
 
@@ -150,6 +179,7 @@ export class VoxelChar implements CharacterRig {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.62, 0.32), mat);
     leg.position.y = -0.31;
     g.add(leg); // no shadow caster (see makeArm)
+    this.legMeshes.push(leg);
     return g;
   }
 
@@ -210,6 +240,31 @@ export class VoxelChar implements CharacterRig {
     add(this.upper, 0.26, 0.06, 0.06, 0, 1.7, 0.39, trim);
     // optional glowing chest emblem
     if (spec.emblem !== undefined) add(this.upper, 0.32, 0.32, 0.06, 0, 1.16, 0.27, spec.emblem, true);
+  }
+
+  /** Apply a true pixel-skin TEXTURE to the body parts (Minecraft-style). Remaps
+   *  each box's UVs to the skin atlas once, then maps the texture across head /
+   *  torso / arms / legs. Used by skins (zombies stay flat-coloured). `glow` adds
+   *  a high-rarity emissive sheen. The 3D cosmetic kit (hat/cape) still overlays. */
+  applyTexture(tex: THREE.Texture, glow = 0x000000) {
+    if (!this.uvSet) {
+      setAtlasUV(this.headMesh.geometry as THREE.BoxGeometry, ATLAS.head);
+      setAtlasUV(this.torsoMesh.geometry as THREE.BoxGeometry, ATLAS.body);
+      for (const a of this.armMeshes) setAtlasUV(a.geometry as THREE.BoxGeometry, ATLAS.arm);
+      for (const l of this.legMeshes) setAtlasUV(l.geometry as THREE.BoxGeometry, ATLAS.leg);
+      this.uvSet = true;
+    }
+    if (!this.skinMat) this.skinMat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, flatShading: false });
+    this.skinMat.map = tex;
+    this.skinMat.color.set(0xffffff);
+    this.skinMat.emissive.set(glow);
+    this.skinMat.emissiveIntensity = glow === 0x000000 ? 0 : 0.4;
+    this.baseEmissive = glow;
+    this.skinMat.needsUpdate = true;
+    this.headMesh.material = this.skinMat;
+    this.torsoMesh.material = this.skinMat;
+    for (const a of this.armMeshes) a.material = this.skinMat;
+    for (const l of this.legMeshes) l.material = this.skinMat;
   }
 
   /** (Re)build the cosmetic kit (skin hat + back accessory). Cheap voxel boxes;
@@ -332,6 +387,7 @@ export class VoxelChar implements CharacterRig {
       this.headMat.emissive.set(0x000000);
       this.bodyMat.emissiveIntensity = this.baseEmissive === 0x000000 ? 1 : 0.5;
       this.headMat.emissiveIntensity = 1;
+      if (this.skinMat) { this.skinMat.emissive.set(this.baseEmissive); this.skinMat.emissiveIntensity = this.baseEmissive === 0x000000 ? 0 : 0.4; }
       return;
     }
     // flash RED on damage so hits read clearly (was white)
@@ -339,6 +395,7 @@ export class VoxelChar implements CharacterRig {
     this.headMat.emissive.setRGB(amount, amount * 0.05, amount * 0.05);
     this.bodyMat.emissiveIntensity = 1.6;
     this.headMat.emissiveIntensity = 1.6;
+    if (this.skinMat) { this.skinMat.emissive.setRGB(amount, amount * 0.05, amount * 0.05); this.skinMat.emissiveIntensity = 1.6; }
   }
 
   play(state: AnimState, _opts: { once?: boolean } = {}) {

@@ -142,6 +142,11 @@ export class Player {
     if (this.char instanceof VoxelChar) this.char.setOutfit(spec);
   }
 
+  /** Apply a true pixel-skin texture (Minecraft-style) to the hero. */
+  applyTexture(tex: THREE.Texture, glow = 0x000000) {
+    if (this.char instanceof VoxelChar) this.char.applyTexture(tex, glow);
+  }
+
   /** Swap the held weapon model to match the active weapon (cheap if unchanged). */
   setWeaponModel(style: GunStyle) {
     if (this.char instanceof VoxelChar) this.char.setGun(style);

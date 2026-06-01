@@ -39,6 +39,7 @@ import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
 import { skinThumbnail } from "./skinthumb";
+import { skinTexture } from "./skintex";
 import { makeItem, rollRarity, rollRarityPity, resetPity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, AffixCode, warmServer, getServerUrl, setServerUrl } from "./net";
@@ -809,12 +810,18 @@ class Game implements GameApi {
     this.renderShop();
   }
 
-  /** Apply the equipped skin to the live hero: colours + glow + cosmetic kit + outfit. */
+  /** Apply the equipped skin to the live hero: true pixel TEXTURE + glow + the
+   *  3D cosmetic kit (hat/cape). Falls back to flat colour if textures are off. */
   private applyPlayerSkin() {
     const skin = findSkin(this.save.skin);
-    this.player.setSkin(skin.body, skin.head, skin.glow ?? 0x000000);
+    const tex = skinTexture(skin.id);
+    if (tex) {
+      this.player.applyTexture(tex, skin.glow ?? 0x000000);
+    } else {
+      this.player.setSkin(skin.body, skin.head, skin.glow ?? 0x000000);
+      this.player.setOutfit({ body: skin.body, pants: skin.pants, shoes: skin.shoes, belt: skin.belt, gloves: skin.gloves, emblem: skin.emblem });
+    }
     this.player.setCosmetic({ hat: skin.hat, hatColor: skin.hatColor, back: skin.back, backColor: skin.backColor });
-    this.player.setOutfit({ body: skin.body, pants: skin.pants, shoes: skin.shoes, belt: skin.belt, gloves: skin.gloves, emblem: skin.emblem });
   }
 
   /** Equip an owned skin, or buy it with Essence then equip. */

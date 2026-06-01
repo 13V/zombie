@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { VoxelChar } from "./voxelChar";
 import { findSkin } from "./cosmetics";
+import { skinTexture } from "./skintex";
 
 /**
  * Offscreen thumbnails of the voxel hero wearing each skin, for the Skins tab —
@@ -66,8 +67,9 @@ export function skinThumbnail(skinId: string): string {
     body: skin.body, head: skin.head, eye: 0x222222, gun: true,
     cosmetic: { hat: skin.hat, hatColor: skin.hatColor, back: skin.back, backColor: skin.backColor },
   });
-  if (skin.glow) char.setColor(skin.body, skin.head, skin.glow); // high-rarity sheen
-  char.setOutfit({ body: skin.body, pants: skin.pants, shoes: skin.shoes, belt: skin.belt, gloves: skin.gloves, emblem: skin.emblem });
+  const tex = skinTexture(skin.id);
+  if (tex) char.applyTexture(tex, skin.glow ?? 0x000000);
+  else if (skin.glow) char.setColor(skin.body, skin.head, skin.glow);
   char.root.rotation.y = -Math.PI * 0.12;
   scene.add(char.root);
   let url = "";
