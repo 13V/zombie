@@ -202,6 +202,9 @@ export interface PresenceMsg {
   /** True while this player has the emote wheel / quick-chat menu open (shows a
    *  "…" thinking bubble to peers, like a typing indicator). */
   menuOpen?: boolean;
+  /** Mode-portal the player is currently standing in (e.g. "mode_quad"), for the
+   *  co-op gather/matchmaking count. Omitted/empty when not in a portal. */
+  portal?: string;
 }
 
 /** Island social — a played emote (wave/dance/sit/cheer). Broadcast once on
@@ -220,6 +223,14 @@ export interface ChatMsg {
   text: string;
 }
 
+/** Co-op gather — the elected leader (lowest id in a full portal) broadcasts the
+ *  freshly-hosted room code to the other occupants so they all join together. */
+export interface PortalStartMsg {
+  t: "portal-start";
+  portal: string; // which mode portal this start is for
+  code: string; // the co-op room share-code to join
+}
+
 /** Island social — broadcast when a player hatches an egg, so everyone in the
  *  lobby sees the celebration (burst + confetti for high grades) over the sender. */
 export interface HatchMsg {
@@ -232,7 +243,7 @@ export interface HatchMsg {
   shiny?: number;
 }
 
-export type NetMsg = SnapMsg | ShotMsg | InputMsg | ToastMsg | PresenceMsg | EmoteMsg | ChatMsg | HatchMsg;
+export type NetMsg = SnapMsg | ShotMsg | InputMsg | ToastMsg | PresenceMsg | EmoteMsg | ChatMsg | HatchMsg | PortalStartMsg;
 
 // ---- transport envelopes (to/from the relay server) ----
 

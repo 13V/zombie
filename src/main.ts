@@ -59,6 +59,8 @@ class Game implements GameApi {
   private camZoom = 1; // live zoom multiplier (eased toward camZoomTarget)
   private camZoomTarget = 1; // player-set zoom (wheel / +- keys); >1 = zoomed out
   private _hatching = false; // an egg-hatch reveal is on screen (blocks re-hatch)
+  private _gatherPortal = ""; // mode portal I'm currently standing in (co-op gather)
+  private _portalStarting = false; // a portal match is being launched (host or guest)
   private composer: EffectComposer;
   private clock = new THREE.Clock();
 
@@ -1159,6 +1161,49 @@ class Game implements GameApi {
     }
   }
 
+  private modeName(players: number): string {
+    return players >= 4 ? "Squad" : players === 2 ? "Duo" : "Solo";
+  }
+
+  /**
+   * Co-op gather leader: host a fresh room on a SECOND connection (so we can keep
+   * the island socket alive long enough to share the code), broadcast it to the
+   * portal's other occupants, then transition ourselves into the match as host.
+   */
+  private async startPortalMatchAsHost(portalId: string, target: number) {
+    const stop = this.connectingTicker("Starting match");
+    try {
+      const coopNet = new NetClient();
+      const { code } = await coopNet.host();
+      coopNet.onClose = (r) => this.onNetClose(r);
+      // tell the other occupants which room to join, then give the relay a beat
+      this.islandNet?.sendPortalStart(portalId, code);
+      await new Promise((r) => setTimeout(r, 220));
+      stop();
+      this.disconnectIslandPresence(); // closes the island socket (not coopNet)
+      this.net = coopNet;
+      this.netplay = new NetPlay(this.net, this.scene, this.assets, this.bullets);
+      this.netplay.onRosterChange = (players) => this.announceCoopDifficulty(players);
+      this.myId = 1;
+      this.startRun();
+      this.hud.showRoomCode(code);
+      this.hud.setLobbyStatus(`${this.modeName(target)} match — share ${code} for friends!`);
+    } catch (e) {
+      stop();
+      console.error("[gather] host failed:", e);
+      this._portalStarting = false;
+      this.hud.toast("Couldn't start the match — try again.");
+    }
+  }
+
+  /** A gather leader hosted a room — join it if I'm waiting in that same portal. */
+  private onPortalStart(portal: string, code: string) {
+    if (this._portalStarting) return; // I'm the host, or already joining
+    if (this._gatherPortal !== portal) return; // not my portal
+    this._portalStarting = true;
+    this.joinGame(code);
+  }
+
   private async joinGame(code: string) {
     if (!code.trim()) {
       this.hud.setLobbyStatus("Enter a room code");
@@ -1482,6 +1527,8 @@ class Game implements GameApi {
     // leftover loot — the hub shares world coords with the arena.
     this.interactables.setVisible(false);
     this.drops.clearAll();
+    this._portalStarting = false; // fresh gather state on (re)entering the hub
+    this._gatherPortal = "";
     this.spawnPets(); // bring the equipped squad into the hub so they follow + flex
     this.player.group.position.copy(this.player.pos);
     this.hud.setIslandMode(true);
@@ -1504,6 +1551,8 @@ class Game implements GameApi {
       this.islandNet = new IslandNet(this.net, this.scene, skin.body, skin.head);
       // a peer hatched an egg → play the celebration over their figure for us too
       this.islandNet.onHatch = (x, z, rarity, shiny, petId) => this.hatchCelebration(x, z, rarity, shiny, petId, true);
+      // the co-op gather leader hosted a room → join it if I'm in that portal
+      this.islandNet.onPortalStart = (portal, code) => this.onPortalStart(portal, code);
       this.islandNet.setMenuOpen(this.emoteMenu?.isOpen ?? false);
       this.hud.toast("Island: press T to emote 👋");
     } catch {
@@ -1583,9 +1632,42 @@ class Game implements GameApi {
 
     // while a hatch reveal is on screen, keep the world prompts hidden behind it
     if (this._hatching) { this.hud.hideEggPanel(); this.hud.hidePrompt(); return; }
+    // a portal match is launching — hold prompts until we transition out
+    if (this._portalStarting) { this.hud.hideEggPanel(); this.hud.hidePrompt(); return; }
 
     // proximity prompt for the nearest interactive pad / egg / mode gate
     const near = this.island.nearestZone(this.player.pos);
+
+    // Co-op GATHER: standing in a Duo/Squad portal (online) pools players; when it
+    // hits the target the lowest-id occupant hosts a room, shares the code over
+    // the relay, and everyone jumps into the match together. Walk off to cancel.
+    const gatherZone = near && near.kind === "mode" && (near.modePlayers ?? 1) >= 2 ? near : null;
+    if (gatherZone && this.islandNet) {
+      const target = gatherZone.modePlayers!;
+      this._gatherPortal = gatherZone.id;
+      this.islandNet.setPortal(gatherZone.id);
+      const occ = [this.islandNet.localId, ...this.islandNet.occupants(gatherZone.id)];
+      const count = occ.length;
+      this.hud.hideEggPanel();
+      this.hud.showPrompt(`🚪 ${this.modeName(target)} — waiting ${Math.min(count, target)}/${target}…  (walk off to cancel)`, true);
+      if (count >= target) {
+        this._portalStarting = true;
+        // deterministic leader: lowest id hosts; everyone else waits for the code
+        if (this.islandNet.localId === Math.min(...occ)) {
+          this.startPortalMatchAsHost(gatherZone.id, target);
+        } else {
+          // waiting on the leader's code — recover if it never arrives (e.g. the
+          // leader walked off the pad at the last instant) so we don't soft-lock.
+          window.setTimeout(() => {
+            if (this._portalStarting && this.state === "island") this._portalStarting = false;
+          }, 5000);
+        }
+      }
+      return; // gather portals don't use the normal [E] activation
+    }
+    // left the portal — clear my gather state
+    if (this._gatherPortal) { this._gatherPortal = ""; this.islandNet?.setPortal(null); }
+
     const egg = near?.kind === "egg" ? findEgg(near.eggId ?? "") : undefined;
     if (egg) {
       // egg pedestal: a drop-rate panel + an affordability-aware [E] prompt.

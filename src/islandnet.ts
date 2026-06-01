@@ -58,11 +58,15 @@ class PeerFigure {
     scene.add(this.group);
   }
 
+  /** Mode-portal this peer is standing in (for the co-op gather count), or "". */
+  portal = "";
+
   setTarget(p: PresenceMsg) {
     this.tx = p.x;
     this.tz = p.z;
     this.ty = p.ry;
     this.walking = p.moving;
+    this.portal = typeof p.portal === "string" ? p.portal.slice(0, 16) : "";
     this.setTyping(!!p.menuOpen);
   }
 
@@ -133,9 +137,12 @@ export class IslandNet {
   private head: number;
   private name?: string;
   private menuOpen = false;
+  private portal = ""; // mode portal I'm standing in (broadcast in my pose)
   /** Fired when a peer hatches an egg, so main can play the lobby celebration at
    *  their position. (x,z) = peer's current spot; rarity 0..6; shiny flag. */
   onHatch?: (x: number, z: number, rarity: number, shiny: boolean, petId: string) => void;
+  /** Fired when the co-op gather leader broadcasts a room to join. */
+  onPortalStart?: (portal: string, code: string) => void;
 
   constructor(private net: NetClient, private scene: THREE.Scene, body: number, head = 0xfff4d6, name?: string) {
     this.body = body;
@@ -174,6 +181,28 @@ export class IslandNet {
     this.net.send({ t: "hatch", pet: petId.slice(0, 24), rarity, shiny: shiny ? 1 : 0 });
   }
 
+  /** My own id in this island instance (server-assigned). */
+  get localId(): number {
+    return this.net.id;
+  }
+
+  /** Set which mode portal I'm standing in (broadcast in my pose); "" = none. */
+  setPortal(id: string | null) {
+    this.portal = id ?? "";
+  }
+
+  /** Ids of OTHER players currently standing in the given portal. */
+  occupants(portalId: string): number[] {
+    const ids: number[] = [];
+    for (const [id, f] of this.peers) if (f.portal === portalId) ids.push(id);
+    return ids;
+  }
+
+  /** Leader broadcasts the hosted room code to the portal's other occupants. */
+  sendPortalStart(portal: string, code: string) {
+    this.net.send({ t: "portal-start", portal, code });
+  }
+
   /** Broadcast my pose on a fixed cadence + smooth every peer figure. */
   update(dt: number, me: { x: number; z: number; ry: number; moving: boolean }) {
     for (const f of this.peers.values()) f.update(dt);
@@ -183,6 +212,7 @@ export class IslandNet {
       const msg: PresenceMsg = {
         t: "presence", x: me.x, z: me.z, ry: me.ry, moving: me.moving,
         skin: this.body, head: this.head, name: this.name, menuOpen: this.menuOpen,
+        portal: this.portal || undefined,
       };
       this.net.send(msg); // broadcast to the whole instance
     }
@@ -226,6 +256,12 @@ export class IslandNet {
       const rarity = Math.max(0, Math.min(6, Math.floor(msg.rarity)));
       if (f && Number.isFinite(msg.rarity) && typeof msg.pet === "string") {
         this.onHatch?.(f.group.position.x, f.group.position.z, rarity, !!msg.shiny, msg.pet.slice(0, 24));
+      }
+    } else if (msg.t === "portal-start") {
+      // a gather leader is starting a match — validate the share-code shape
+      const code = typeof msg.code === "string" ? msg.code.trim().toUpperCase() : "";
+      if (typeof msg.portal === "string" && /^[A-Z0-9]{3,8}$/.test(code)) {
+        this.onPortalStart?.(msg.portal.slice(0, 16), code);
       }
     }
   }
