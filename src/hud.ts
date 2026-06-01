@@ -1070,7 +1070,7 @@ export class Hud {
     const labelEls = labels.map((l, i) => {
       const ang = i * seg + seg / 2;
       // rotate out to the slice, then counter-rotate so the text stays upright
-      return `<span class="wh-label" style="transform:rotate(${ang}deg) translateY(-100px) rotate(${-ang}deg) translate(-50%,-50%)">${l}</span>`;
+      return `<span class="wh-label" style="transform:rotate(${ang}deg) translateY(-102px) rotate(${-ang}deg)">${l}</span>`;
     }).join("");
     const pegs = Array.from({ length: 12 }, (_, i) =>
       `<span class="wh-peg" style="transform:rotate(${i * 30}deg) translateY(-164px)"></span>`).join("");
