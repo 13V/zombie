@@ -254,6 +254,10 @@ export class Hud {
 
     // ✕ on the shop-modal: close back to the island
     this.q("#overlay-close").addEventListener("click", () => this.hideStart());
+    // clicking the dark backdrop (outside the card) also closes the shop modal
+    this.startOverlay.addEventListener("click", (e) => {
+      if (e.target === this.startOverlay && this.startOverlay.classList.contains("shop-modal")) this.hideStart();
+    });
 
     // menu shop tab switching
     this.root.querySelectorAll<HTMLButtonElement>(".shop-tab").forEach((btn) => {
@@ -1101,6 +1105,21 @@ export class Hud {
   }
   hideStart() {
     this.startOverlay.classList.add("hidden");
+  }
+
+  /** Is a dismissable menu overlay currently up (shop modal or pet index)? */
+  isMenuOpen(): boolean {
+    const shop = !this.startOverlay.classList.contains("hidden") && this.startOverlay.classList.contains("shop-modal");
+    const index = !!this.petIndexEl?.classList.contains("show");
+    return shop || index;
+  }
+
+  /** Close the topmost open menu (pet index, then shop modal). Returns true if
+   *  one was closed. Egg-hatch / wheel modals manage their own lifecycle. */
+  closeTopMenu(): boolean {
+    if (this.petIndexEl?.classList.contains("show")) { this.petIndexEl.classList.remove("show"); return true; }
+    if (!this.startOverlay.classList.contains("hidden") && this.startOverlay.classList.contains("shop-modal")) { this.hideStart(); return true; }
+    return false;
   }
 
   showGameOver(

@@ -1661,6 +1661,15 @@ class Game implements GameApi {
       this.island.setLeaderboard([me, ...(this.islandNet?.standings() ?? [])]);
     }
 
+    // a dismissable menu (shop / pet index) is up → E / Space / Esc closes it,
+    // and nothing else happens behind it this frame.
+    if (this.hud.isMenuOpen()) {
+      if (this.input.pressed("KeyE") || this.input.pressed("Space") || this.input.pressed("Escape")) this.hud.closeTopMenu();
+      this.hud.hidePrompt();
+      this.hud.hideEggPanel();
+      return;
+    }
+
     // while a hatch reveal is on screen, keep the world prompts hidden behind it
     if (this._hatching) { this.hud.hideEggPanel(); this.hud.hidePrompt(); return; }
     // a portal match is launching — hold prompts until we transition out
