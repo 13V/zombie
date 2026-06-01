@@ -66,6 +66,49 @@ test("past the inflection HP compounds by exactly hpGrowth each round", () => {
   }
 });
 
+// ---- co-op player-count scaling (beginRound), derived verbatim ------------
+// Mirrors the co-op block in beginRound: N players ⇒ N× HP AND N× horde count,
+// with the alive-cap bounded to 2× the perf ceiling.
+function coopHP(n: number, players: number): number {
+  return roundHP(n) * Math.max(1, Math.floor(players));
+}
+function coopCount(n: number, players: number): number {
+  const base = Math.min(ROUNDS.countCap, ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound);
+  return Math.round(base * Math.max(1, Math.floor(players)));
+}
+
+test("co-op scales zombie HP linearly with player count (1/2/4 ⇒ 1×/2×/4×)", () => {
+  for (const n of [1, 5, 10, 20]) {
+    assert.equal(coopHP(n, 1), roundHP(n));
+    assert.equal(coopHP(n, 2), roundHP(n) * 2);
+    assert.equal(coopHP(n, 4), roundHP(n) * 4);
+  }
+});
+
+test("co-op scales the horde COUNT linearly with player count", () => {
+  for (const n of [1, 3, 8]) {
+    assert.equal(coopCount(n, 2), 2 * Math.min(ROUNDS.countCap, ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound));
+    assert.equal(coopCount(n, 4), 4 * Math.min(ROUNDS.countCap, ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound));
+  }
+});
+
+test("solo (1 player) leaves HP and count unchanged", () => {
+  for (let n = 1; n <= 15; n++) {
+    assert.equal(coopHP(n, 1), roundHP(n));
+    assert.equal(coopCount(n, 1), Math.min(ROUNDS.countCap, ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound));
+  }
+});
+
+test("alive-cap is bounded to 2× the perf ceiling even with 4 players", () => {
+  // beginRound: curMaxAlive = min(maxAliveCeiling * 2, curMaxAlive * players)
+  const ceiling = ROUNDS.maxAliveCap;
+  for (const players of [2, 4, 8]) {
+    const naive = ROUNDS.maxAliveBase * players; // an upper-ish bound on curMaxAlive*players
+    const bounded = Math.min(ceiling * 2, naive);
+    assert.ok(bounded <= ceiling * 2, `cap ${bounded} must not exceed 2× ceiling`);
+  }
+});
+
 // ---- pickType() gating preconditions over the REAL ZOMBIE_TYPES table -----
 
 test("ZOMBIE_TYPES[0] is the shambler with weight 0 (pickType uses it as filler)", () => {

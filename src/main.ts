@@ -901,8 +901,18 @@ class Game implements GameApi {
     this.hud.hideGameOver();
     this._runGoldStart = this.save.goldEarned; // baseline for the daily "earn gold" quest
     this.state = "playing";
+    // Co-op difficulty: scale by player count (host + guests). Refreshed each
+    // frame in simulate() so a mid-run join ramps difficulty at the next round.
+    this.rounds.setPlayerCount(1 + (this.netplay?.hostGuestSlots().length ?? 0));
     this.rounds.start();
     this.audio.startMusic(0);
+  }
+
+  /** Toast the current co-op difficulty multiplier (host-side). Fires on every
+   *  roster change so the squad sees the horde scale as friends join/leave. */
+  private announceCoopDifficulty(players: number) {
+    if (players <= 1) { this.hud.toast("Solo — standard difficulty"); return; }
+    this.hud.toast(`👥 ${players} players — zombies ×${players} HP & ×${players} horde!`);
   }
 
   private gameOver() {
@@ -1086,6 +1096,8 @@ class Game implements GameApi {
       });
       stop();
       this.netplay = new NetPlay(this.net!, this.scene, this.assets, this.bullets);
+      // Announce the co-op difficulty whenever the roster changes (join/leave).
+      this.netplay.onRosterChange = (players) => this.announceCoopDifficulty(players);
       this.myId = 1;
       this.startRun();
       this.hud.showRoomCode(code);
@@ -1944,6 +1956,9 @@ class Game implements GameApi {
     this.steerHomingBullets(dt);
     this.bullets.update(dt);
     const targets = this.netplay ? this.netplay.hostPlayerPositions(this.player) : [this.player.pos];
+    // Keep co-op difficulty in sync with the live roster (guests can join/leave
+    // mid-run); the new factor takes effect at the next round's beginRound().
+    if (this.netplay) this.rounds.setPlayerCount(1 + this.netplay.hostGuestSlots().length);
     this.rounds.update(dt, this.arena, targets);
     this.updatePets(dt);
     // XP level-ups can push a pet past its evolve gate; re-check now (outside the

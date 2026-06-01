@@ -245,6 +245,9 @@ export class NetPlay {
   myReloading = false;
   /** Set by main: show a toast pushed from the host. */
   onToast?: (msg: string) => void;
+  /** Host-only: fired when the guest roster changes (join/leave) so main can
+   *  re-announce the co-op difficulty. Arg is the new TOTAL player count. */
+  onRosterChange?: (players: number) => void;
 
   constructor(
     net: NetClient,
@@ -280,6 +283,7 @@ export class NetPlay {
       pendingInteract: false,
       wantInteract: false,
     });
+    this.onRosterChange?.(1 + this.guests.size);
   }
 
   /** Simulate every guest's Player from their last input. Call inside host sim. */
@@ -511,6 +515,7 @@ export class NetPlay {
     if (slot) {
       this.scene.remove(slot.player.group);
       this.guests.delete(id);
+      this.onRosterChange?.(1 + this.guests.size);
     }
     this.remote.get(id)?.dispose();
     this.remote.delete(id);

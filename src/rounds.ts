@@ -53,6 +53,10 @@ export class RoundManager {
   private curMaxAlive = ROUNDS.maxAliveBase;
   private curSpawnInterval = ROUNDS.spawnIntervalBase;
   private isSwarm = false;
+  /** Number of players in this run (host + guests). Co-op scales enemy HP AND
+   *  count by this factor — 2 players = 2× HP & 2× zombies, 4 = 4×. Set by main
+   *  when a run starts (see setPlayerCount); 1 = solo, no scaling. */
+  private playerCount = 1;
   /** Lowered on mobile to protect the frame budget (set from main.ts). */
   maxAliveCeiling = ROUNDS.maxAliveCap;
 
@@ -132,6 +136,15 @@ export class RoundManager {
    *  round). main multiplies this into kill rewards. */
   get specialRewardMul(): number {
     return this.special?.rewardMul ?? 1;
+  }
+
+  /** Co-op difficulty: set the number of players in this run (host + guests).
+   *  Clamped to >=1. Applied in beginRound — scales enemy HP and count by N. */
+  setPlayerCount(n: number) {
+    this.playerCount = Math.max(1, Math.floor(n));
+  }
+  get players(): number {
+    return this.playerCount;
   }
 
   /** Nudge the Curse up/down by `dir` steps, clamped to [min,max]. Returns the
@@ -264,6 +277,21 @@ export class RoundManager {
       this.curHealth *= 1 + c * CURSE.hpScale;
       this.curSpeed = Math.min(ZOMBIE.speedCap * 1.3, this.curSpeed * (1 + c * CURSE.speedScale));
       this.curSpawnInterval = Math.max(ROUNDS.spawnIntervalMin * 0.5, this.curSpawnInterval / (1 + c * CURSE.spawnScale));
+    }
+
+    // Co-op scaling: N players ⇒ N× zombie HP AND N× the horde size. Speed is
+    // left alone (a faster horde with N× the bodies is unfair); instead the
+    // alive-cap and spawn rate rise so the bigger wave actually fills the arena
+    // rather than trickling in. Folded in last so it multiplies curse/swarm too.
+    const pc = this.playerCount;
+    if (pc > 1) {
+      this.curHealth *= pc;
+      this.toSpawn = Math.round(this.toSpawn * pc); // N× the TOTAL horde this round
+      // Let more be on-screen at once so the bigger wave actually fills the
+      // arena, but bound it to 2× the perf ceiling (more players = more machines
+      // sharing the sim, yet the host renders all of it — don't tank its FPS).
+      this.curMaxAlive = Math.min(this.maxAliveCeiling * 2, Math.round(this.curMaxAlive * pc));
+      this.curSpawnInterval = Math.max(ROUNDS.spawnIntervalMin * 0.4, this.curSpawnInterval / pc);
     }
 
     this.spawnTimer = 0;
