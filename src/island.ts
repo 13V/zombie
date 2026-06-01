@@ -19,9 +19,44 @@ import { makeBubble, makeLabel } from "./islandnet";
  */
 
 export const ISLAND = {
-  half: 34, // half-extent of the island ground (bigger than the arena)
-  shore: 30, // grass radius; beyond this is sand, then water
+  half: 48, // half-extent of the island ground — a big village square for ~50 players
+  shore: 42, // grass radius; beyond this is sand, then water
 };
+
+// Shared hub layout (so every builder agrees on where things go as it scales).
+const PLAZA_R = 13; // stone town-square radius
+const EGG_R = 7.2; // egg-shrine ring radius around the fountain
+const GATES = [
+  { id: "mode_solo", players: 1 as const, pos: new THREE.Vector3(-15, 0, -13), color: 0x7be08a, label: "SOLO — 1 player", grand: 0 },
+  { id: "mode_duo", players: 2 as const, pos: new THREE.Vector3(0, 0, -20), color: 0x6ad7ff, label: "DUO — 2 players (2× harder)", grand: 1 },
+  { id: "mode_quad", players: 4 as const, pos: new THREE.Vector3(15, 0, -13), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)", grand: 2 },
+];
+const PADS = [
+  { id: "join" as const, pos: new THREE.Vector3(12, 0, 8), color: 0x6ad7ff, label: "Join a Friend's Run" },
+  { id: "shop" as const, pos: new THREE.Vector3(-12, 0, 8), color: 0xffd24a, label: "Open Shop" },
+];
+// The village ring — cottages framing the square. `big`/`story` drive size +
+// a second storey so the rooftops vary like a real town. xz in world space.
+const HOUSES = [
+  { x: -15.5, z: 11.5, wall: VOX.plasterWarm, roof: VOX.roofRed, trim: VOX.bark, big: 1, story: 1 }, // Shop
+  { x: 15.5, z: 11.5, wall: VOX.houseWall, roof: VOX.roofBlue, trim: VOX.bark, big: 1, story: 1 }, // Inn
+  { x: -23, z: 2.5, wall: VOX.plasterSage, roof: VOX.roofDark, trim: VOX.barkDark, big: 0, story: 0 },
+  { x: 23, z: 2.5, wall: VOX.plasterWarm, roof: VOX.roofPurple, trim: VOX.barkDark, big: 1, story: 0 },
+  { x: -21, z: -7, wall: VOX.houseWall, roof: VOX.roofRed, trim: VOX.bark, big: 0, story: 0 },
+  { x: 21, z: -7, wall: VOX.plasterSage, roof: VOX.roofBlue, trim: VOX.barkDark, big: 0, story: 1 },
+  { x: -10, z: 18.5, wall: VOX.plasterWarm, roof: VOX.roofPurple, trim: VOX.bark, big: 1, story: 0 },
+  { x: 10, z: 18.5, wall: VOX.houseWall, roof: VOX.roofDark, trim: VOX.barkDark, big: 0, story: 1 },
+];
+const STALLS = [
+  { x: -5.5, z: 17, color: VOX.toolbox },
+  { x: 0, z: 18.5, color: VOX.barrel },
+  { x: 5.5, z: 17, color: VOX.rvStripe },
+];
+// every structure footprint foliage must avoid
+const CLEAR_PTS = [...GATES, ...PADS].map((d) => d.pos).concat(
+  HOUSES.map((h) => new THREE.Vector3(h.x, 0, h.z)),
+  STALLS.map((s) => new THREE.Vector3(s.x, 0, s.z)),
+);
 
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
@@ -265,7 +300,7 @@ export class Island {
     const t = this.t;
     if (this.fountainSpire) {
       this.fountainSpire.rotation.y += dt * 0.6;
-      this.fountainSpire.position.y = 2.5 + Math.sin(t * 1.4) * 0.12;
+      this.fountainSpire.position.y = this.fountainSpireBaseY + Math.sin(t * 1.4) * 0.14;
       const m = this.fountainSpire.material as THREE.MeshStandardMaterial;
       m.emissiveIntensity = 1.1 + (Math.sin(t * 2) + 1) * 0.35;
     }
@@ -276,7 +311,7 @@ export class Island {
     // jets rise + fall on staggered phases, fading as they peak
     this.fountainJets.forEach((j, i) => {
       const ph = (t * 1.3 + i * 0.5) % 1;
-      j.position.y = 1.3 + ph * 1.7;
+      j.position.y = (j.userData.baseY as number) + ph * 2.0;
       j.scale.y = 0.4 + (1 - ph) * 1.2;
       const m = j.material as THREE.MeshStandardMaterial;
       m.opacity = 0.55 * (1 - ph);
@@ -424,7 +459,7 @@ export class Island {
     const grassDark = voxelMaterial(VOX.grassDark);
     const grassLight = voxelMaterial(VOX.grassLight);
     const sand = voxelMaterial(0xe6d9a8);
-    const TILE = 2;
+    const TILE = 2.5; // slightly chunkier tiles keep the count sane on the bigger island
     const n = Math.ceil(ISLAND.half / TILE);
     let seed = 7;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
@@ -484,13 +519,8 @@ export class Island {
     let seed = 1337;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
 
-    // points to keep clear so foliage never grows into a structure
-    const clearPts = [
-      new THREE.Vector3(-9, 0, -8), new THREE.Vector3(0, 0, -12), new THREE.Vector3(9, 0, -8),
-      new THREE.Vector3(8, 0, 5), new THREE.Vector3(-8, 0, 5),
-    ];
     const tooClose = (x: number, z: number, pad: number) =>
-      clearPts.some((p) => (p.x - x) ** 2 + (p.z - z) ** 2 < pad * pad);
+      CLEAR_PTS.some((p) => (p.x - x) ** 2 + (p.z - z) ** 2 < pad * pad);
 
     // autumn-mixed canopies (green / gold / amber / russet) like the reference —
     // each paired with a lighter "lit top" tone for that sun-kissed crown.
@@ -519,14 +549,15 @@ export class Island {
       this.group.add(tree);
     };
 
-    // OUTER RING — big trees + rock clusters well clear of the play area, so the
-    // plaza/structures read clean. Trees only live from r≈17 out to the shore.
-    for (let i = 0; i < 64; i++) {
+    // OUTER RING — big trees + rock clusters ringing the village, well clear of
+    // the play area. Sparser than before (bigger gaps) so it frames, not crowds.
+    for (let i = 0; i < 70; i++) {
       const a = rnd() * Math.PI * 2;
-      const r = 17 + rnd() * (ISLAND.shore - 18);
+      const r = 26 + rnd() * (ISLAND.shore - 28);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
-      if (rnd() < 0.78) {
+      if (tooClose(x, z, 4)) continue;
+      if (rnd() < 0.8) {
         makeTree(x, z);
       } else {
         const cl = new THREE.Group();
@@ -544,14 +575,13 @@ export class Island {
     }
 
     // INNER BAND — only LOW dressing (flowers, tufts, mushrooms, pebbles) in the
-    // ring just outside the plaza, skipping anywhere near a gate/pad. Keeps the
-    // lawn around the hub lively without burying the structures.
-    for (let i = 0; i < 70; i++) {
+    // ring around the plaza + among the houses, skipping near any structure.
+    for (let i = 0; i < 120; i++) {
       const a = rnd() * Math.PI * 2;
-      const r = 9.5 + rnd() * 6.5; // 9.5 .. 16
+      const r = PLAZA_R + 1 + rnd() * 12; // 14 .. 26
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
-      if (tooClose(x, z, 3.2)) continue;
+      if (tooClose(x, z, 4.2)) continue;
       const roll = rnd();
       if (roll < 0.45) {
         const patch = new THREE.Group();
@@ -640,8 +670,8 @@ export class Island {
       for (let i = 0; i < tones.length; i++) { r -= wts[i]; if (r < 0) return tones[i]; }
       return tones[0];
     };
-    const R = 8.7;
-    const step = 1.45;
+    const R = PLAZA_R;
+    const step = 1.5;
     const n = Math.ceil(R / step);
     for (let ix = -n; ix <= n; ix++) {
       for (let iz = -n; iz <= n; iz++) {
@@ -663,26 +693,24 @@ export class Island {
     this.group.add(kerb);
   }
 
-  /** Cobble spoke paths from the plaza out to each portal gate. */
+  /** Wide cobble spoke paths from the plaza out to each portal gate. */
   private buildPaths() {
     const path = voxelMaterial(VOX.path);
-    const targets = [
-      new THREE.Vector3(-9, 0, -8),
-      new THREE.Vector3(0, 0, -12),
-      new THREE.Vector3(9, 0, -8),
-    ];
-    for (const tg of targets) {
-      const dir = tg.clone().normalize();
-      const start = 7.5;
-      const end = tg.length() - 1.6;
-      for (let r = start; r <= end; r += 1.0) {
-        const x = dir.x * r;
-        const z = dir.z * r;
-        const tile = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.2, 1.6), path);
-        tile.position.set(x, 0.0, z);
-        tile.rotation.y = Math.atan2(dir.x, dir.z);
-        tile.userData.noCast = true;
-        this.group.add(tile);
+    const pathDark = voxelMaterial(VOX.dirtDark);
+    for (const g of GATES) {
+      const dir = g.pos.clone().normalize();
+      const perp = new THREE.Vector3(-dir.z, 0, dir.x);
+      const start = PLAZA_R - 1;
+      const end = g.pos.length() - 1.6;
+      for (let r = start; r <= end; r += 0.95) {
+        for (const off of [-0.85, 0.85]) {
+          const c = dir.clone().multiplyScalar(r).add(perp.clone().multiplyScalar(off));
+          const tile = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.2, 1.7), (Math.round(r) + (off > 0 ? 1 : 0)) % 2 ? path : pathDark);
+          tile.position.set(c.x, 0.0, c.z);
+          tile.rotation.y = Math.atan2(dir.x, dir.z);
+          tile.userData.noCast = true;
+          this.group.add(tile);
+        }
       }
     }
   }
@@ -695,26 +723,39 @@ export class Island {
     const stone = voxelMaterial(VOX.stone);
     const stoneDark = voxelMaterial(VOX.stoneDark);
 
-    // stacked basins (wide → narrow), each with a glowing water disc on top
+    // a wide base pool with a low carved rim, then stacked basins narrowing up
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(3.9, 0.28, 6, 32), stoneDark);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.55;
+    this.group.add(rim);
+    // little kerb posts around the pool
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.7, 0.4), stone);
+      post.position.set(Math.cos(a) * 3.9, 0.35, Math.sin(a) * 3.9);
+      this.group.add(post);
+    }
     const tiers = [
-      { r: 2.0, y: 0.5, h: 0.7 },
-      { r: 1.35, y: 1.2, h: 0.6 },
-      { r: 0.8, y: 1.8, h: 0.5 },
+      { r: 3.7, y: 0.35, h: 0.6 },
+      { r: 2.4, y: 1.1, h: 0.7 },
+      { r: 1.55, y: 1.9, h: 0.6 },
+      { r: 0.95, y: 2.6, h: 0.5 },
     ];
     tiers.forEach((tr, i) => {
-      const basin = new THREE.Mesh(new THREE.CylinderGeometry(tr.r, tr.r + 0.2, tr.h, 16), i % 2 ? stoneDark : stone);
+      const basin = new THREE.Mesh(new THREE.CylinderGeometry(tr.r, tr.r + 0.22, tr.h, 18), i % 2 ? stoneDark : stone);
       basin.position.y = tr.y;
       this.group.add(basin);
-      const water = new THREE.Mesh(new THREE.CylinderGeometry(tr.r - 0.18, tr.r - 0.18, 0.12, 16), this.fountainWaterMat());
+      const water = new THREE.Mesh(new THREE.CylinderGeometry(tr.r - 0.2, tr.r - 0.2, 0.12, 18), this.fountainWaterMat());
       water.position.y = tr.y + tr.h / 2 + 0.02;
       this.fountainDiscs.push(water);
       this.group.add(water);
     });
 
     // crystal spire on top — a faceted glowing octahedron
-    const spire = new THREE.Mesh(new THREE.OctahedronGeometry(0.5, 0), glowMaterial(0x9fe8ff, 1.2));
-    (spire.geometry as THREE.BufferGeometry).scale(1, 1.6, 1);
-    spire.position.y = 2.5;
+    const spire = new THREE.Mesh(new THREE.OctahedronGeometry(0.7, 0), glowMaterial(0x9fe8ff, 1.2));
+    (spire.geometry as THREE.BufferGeometry).scale(1, 1.7, 1);
+    this.fountainSpireBaseY = 3.7;
+    spire.position.y = this.fountainSpireBaseY;
     this.fountainSpire = spire;
     this.group.add(spire);
 
@@ -724,14 +765,16 @@ export class Island {
         color: VOX.water, emissive: VOX.water, emissiveIntensity: 0.8,
         transparent: true, opacity: 0.5, depthWrite: false, toneMapped: false,
       });
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      const jet = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.4, 0.12), jetMat());
-      jet.position.set(Math.cos(a) * 0.9, 1.5, Math.sin(a) * 0.9);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const jet = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.8, 0.14), jetMat());
+      jet.position.set(Math.cos(a) * 1.7, 2.2, Math.sin(a) * 1.7);
+      jet.userData.baseY = 2.2;
       this.fountainJets.push(jet);
       this.group.add(jet);
     }
   }
+  private fountainSpireBaseY = 3.7;
 
   private fountainWaterMat() {
     return new THREE.MeshStandardMaterial({
@@ -742,8 +785,7 @@ export class Island {
 
   /** Build the utility pads (join + shop) just outside the plaza. */
   private buildZones() {
-    this.addPad("join", "join", new THREE.Vector3(8, 0, 5), 0x6ad7ff, "Join a Friend's Run");
-    this.addPad("shop", "shop", new THREE.Vector3(-8, 0, 5), 0xffd24a, "Open Shop");
+    for (const p of PADS) this.addPad(p.id, p.id, p.pos.clone(), p.color, p.label);
   }
 
   private addPad(id: string, kind: IslandZone["kind"], pos: THREE.Vector3, color: number, label: string) {
@@ -773,12 +815,7 @@ export class Island {
    * rotating ground rune, and bobbing figures counting the party size.
    */
   private buildModes() {
-    const modes = [
-      { id: "mode_solo", players: 1 as const, pos: new THREE.Vector3(-9, 0, -8), color: 0x7be08a, label: "SOLO — 1 player", grand: 0 },
-      { id: "mode_duo", players: 2 as const, pos: new THREE.Vector3(0, 0, -12), color: 0x6ad7ff, label: "DUO — 2 players (2× harder)", grand: 1 },
-      { id: "mode_quad", players: 4 as const, pos: new THREE.Vector3(9, 0, -8), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)", grand: 2 },
-    ];
-    for (const m of modes) {
+    for (const m of GATES) {
       const gate = new THREE.Group();
       // big stone arches — width/height scale up with grandeur (solo/duo/squad)
       const halfW = 1.9 + m.grand * 0.7;
@@ -958,7 +995,7 @@ export class Island {
    * at a glance. Pure visuals; hatching is handled in main via the gacha module.
    */
   private buildEggs(eggDefs = DEFAULT_EGG_VISUALS) {
-    const ringR = 4.4;
+    const ringR = EGG_R;
     eggDefs.forEach((e, i) => {
       const a = (i / eggDefs.length) * Math.PI * 2 - Math.PI / 2;
       const x = Math.cos(a) * ringR;
@@ -1046,99 +1083,187 @@ export class Island {
    * open field into a Hypixel-style courtyard.
    */
   private buildHouses() {
-    const cottages: { x: number; z: number; wall: number; roof: number; trim: number }[] = [
-      { x: -11, z: 7, wall: VOX.plasterWarm, roof: VOX.roofRed, trim: VOX.bark }, // Shop
-      { x: 11, z: 7, wall: VOX.houseWall, roof: VOX.roofBlue, trim: VOX.bark }, // Inn
-      { x: -15.5, z: -1, wall: VOX.plasterSage, roof: VOX.roofDark, trim: VOX.barkDark },
-      { x: 15.5, z: -1, wall: VOX.plasterWarm, roof: VOX.roofPurple, trim: VOX.barkDark },
-    ];
-    for (const c of cottages) {
-      const house = this.makeCottage(c.wall, c.roof, c.trim);
+    for (const c of HOUSES) {
+      const house = this.makeCottage(c.wall, c.roof, c.trim, c.big > 0, c.story > 0);
       house.position.set(c.x, 0, c.z);
       house.rotation.y = Math.atan2(-c.x, -c.z); // door (built on +z) faces the square
       this.group.add(house);
     }
-    // market stalls flanking the front entry path
-    for (const sx of [-4.5, 4.5]) {
-      const stall = this.makeStall(sx < 0 ? VOX.toolbox : VOX.rvStripe);
-      stall.position.set(sx, 0, 10.5);
-      stall.rotation.y = Math.atan2(-sx, -10.5);
+    for (const s of STALLS) {
+      const stall = this.makeStall(s.color);
+      stall.position.set(s.x, 0, s.z);
+      stall.rotation.y = Math.atan2(-s.x, -s.z);
       this.group.add(stall);
     }
   }
 
-  /** One timber-framed cottage: stone footing, plaster walls with corner beams,
-   *  a stepped gable roof, warm glowing windows, a door, and a smoking chimney. */
-  private makeCottage(wallColor: number, roofColor: number, trimColor: number): THREE.Group {
+  /** A detailed timber-framed cottage: stone footing + porch step, plaster walls
+   *  with Tudor framing, framed windows with shutters & flower boxes, a doorway
+   *  with awning, a stepped gable roof with eaves, an optional second storey +
+   *  dormer, a smoking chimney, and (for big plots) a hanging shop sign. */
+  private makeCottage(wallColor: number, roofColor: number, trimColor: number, big: boolean, story: boolean): THREE.Group {
     const h = new THREE.Group();
-    const w = 3.4, d = 4.2, wallH = 2.4;
+    const w = big ? 4.6 : 3.6;
+    const d = big ? 5.4 : 4.4;
+    const wallH = 2.6;
     const wallTop = 0.2 + wallH;
-
-    const foundation = new THREE.Mesh(new THREE.BoxGeometry(w + 0.6, 0.5, d + 0.6), voxelMaterial(VOX.foundation));
-    foundation.position.y = 0.05;
-    const walls = new THREE.Mesh(new THREE.BoxGeometry(w, wallH, d), voxelMaterial(wallColor));
-    walls.position.y = 0.2 + wallH / 2;
-    h.add(foundation, walls);
-
-    // corner timber posts + a header beam under the eaves
     const trim = voxelMaterial(trimColor);
+    const wallMat = voxelMaterial(wallColor);
+    const roofMat = voxelMaterial(roofColor);
+    const roofMat2 = voxelMaterial(darken(roofColor, 0.82));
+    const winMat = glowMaterial(VOX.windowGlow, 0.95);
+    const wood = voxelMaterial(VOX.woodTrim);
+    const front = d / 2;
+
+    // stone footing + a front porch step
+    const foundation = new THREE.Mesh(new THREE.BoxGeometry(w + 0.7, 0.5, d + 0.7), voxelMaterial(VOX.foundation));
+    foundation.position.y = 0.05;
+    const step = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.26, 0.8), voxelMaterial(VOX.stone));
+    step.position.set(0, 0.18, front + 0.45);
+    h.add(foundation, step);
+
+    const walls = new THREE.Mesh(new THREE.BoxGeometry(w, wallH, d), wallMat);
+    walls.position.y = 0.2 + wallH / 2;
+    h.add(walls);
+
+    // Tudor framing: corner posts + a mid + top horizontal band + two front studs
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.26, wallH, 0.26), trim);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, wallH, 0.3), trim);
       post.position.set((sx * w) / 2, 0.2 + wallH / 2, (sz * d) / 2);
       h.add(post);
     }
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(w + 0.1, 0.22, d + 0.1), trim);
-    beam.position.y = wallTop - 0.05;
-    h.add(beam);
-
-    // stepped gable roof (narrows along x as it rises → triangular street-facing gable)
-    const L = 5, layerH = 0.34, inset = 0.36;
-    for (let k = 0; k < L; k++) {
-      const lw = Math.max(0.5, w + 0.8 - k * 2 * inset);
-      const layer = new THREE.Mesh(new THREE.BoxGeometry(lw, layerH, d + 0.9), voxelMaterial(roofColor));
-      layer.position.y = wallTop + 0.1 + k * layerH + layerH / 2;
-      h.add(layer);
+    for (const by of [wallTop - 0.05, 0.2 + wallH * 0.5]) {
+      const band = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, 0.2, d + 0.08), trim);
+      band.position.y = by;
+      h.add(band);
     }
-    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.3, d + 1.0), voxelMaterial(trimColor));
-    ridge.position.y = wallTop + 0.1 + L * layerH + 0.1;
-    h.add(ridge);
+    for (const sx of [-1, 1]) {
+      const stud = new THREE.Mesh(new THREE.BoxGeometry(0.18, wallH, 0.12), trim);
+      stud.position.set(sx * (w / 2 - 0.95), 0.2 + wallH / 2, front + 0.01);
+      h.add(stud);
+    }
 
-    // door on the +z (front) face
-    const door = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.5, 0.14), voxelMaterial(VOX.doorWood));
-    door.position.set(0, 0.2 + 0.75, d / 2 + 0.04);
-    h.add(door);
-    // warm wall lamp beside the door (gentle pulse via the beacon loop)
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.3, 0.22), glowMaterial(VOX.lantern, 1.1));
-    lamp.position.set(0.95, 1.9, d / 2 + 0.05);
+    // a framed window with optional shutters + a flower box (faces +z)
+    const frontWindow = (x: number, y: number, withBox: boolean) => {
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.94, 1.06, 0.1), trim);
+      frame.position.set(x, y, front + 0.02);
+      const pane = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.82, 0.12), winMat);
+      pane.position.set(x, y, front + 0.06);
+      h.add(frame, pane);
+      for (const sx of [-1, 1]) {
+        const shut = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.96, 0.06), wood);
+        shut.position.set(x + sx * 0.58, y, front + 0.05);
+        h.add(shut);
+      }
+      if (withBox) {
+        const box = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.22, 0.26), wood);
+        box.position.set(x, y - 0.62, front + 0.14);
+        h.add(box);
+        const cols = [VOX.flowerPink, VOX.flowerYellow, VOX.flowerRed, VOX.flowerWhite];
+        for (let f = 0; f < 3; f++) {
+          const fl = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.16), glowMaterial(cols[(f + x) & 3] ?? VOX.flowerPink, 0.4));
+          fl.position.set(x - 0.26 + f * 0.26, y - 0.46, front + 0.16);
+          h.add(fl);
+        }
+      }
+    };
+    frontWindow(-w / 2 + 0.85, 1.55, true);
+    frontWindow(w / 2 - 0.85, 1.55, true);
+    // simple side windows
+    for (const sx of [-1, 1]) for (const sz of [-0.8, 0.9]) {
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.0, 0.92), trim);
+      frame.position.set((sx * w) / 2 + sx * 0.02, 1.55, sz);
+      const pane = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.76, 0.66), winMat);
+      pane.position.set((sx * w) / 2 + sx * 0.05, 1.55, sz);
+      h.add(frame, pane);
+    }
+
+    // doorway: framed door + a little pitched awning + a wall lantern
+    const door = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.7, 0.14), voxelMaterial(VOX.doorWood));
+    door.position.set(0, 0.2 + 0.85, front + 0.05);
+    const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(1.3, 2.0, 0.1), trim);
+    doorFrame.position.set(0, 0.2 + 1.0, front + 0.02);
+    const knob = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), glowMaterial(VOX.lantern, 0.6));
+    knob.position.set(0.35, 0.95, front + 0.12);
+    h.add(doorFrame, door, knob);
+    for (let k = 0; k < 2; k++) {
+      const awn = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.12, 0.4), roofMat);
+      awn.position.set(0, 0.2 + 2.05 + k * 0.16, front + 0.2 + k * 0.18);
+      awn.rotation.x = -0.5;
+      h.add(awn);
+    }
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.32, 0.22), glowMaterial(VOX.lantern, 1.2));
+    lamp.position.set(w / 2 - 0.5, 2.1, front + 0.06);
     h.add(lamp);
     this.beacons.push(lamp);
 
-    // glowing windows: two flanking the door + one on each side wall
-    const winMat = glowMaterial(VOX.windowGlow, 0.95);
-    const front1 = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.8, 0.12), winMat);
-    front1.position.set(-1.1, 1.55, d / 2 + 0.02);
-    const front2 = front1.clone();
-    front2.position.x = 1.1;
-    h.add(front1, front2);
-    for (const sx of [-1, 1]) {
-      const side = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.8, 0.8), winMat);
-      side.position.set((sx * w) / 2 + sx * 0.02, 1.55, 0.6);
-      h.add(side);
+    // optional second storey (set back a touch) with its own framed windows
+    let roofBase = wallTop;
+    if (story) {
+      const sH = 1.8;
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(w - 0.4, sH, d - 0.4), wallMat);
+      upper.position.y = wallTop + sH / 2;
+      h.add(upper);
+      const uband = new THREE.Mesh(new THREE.BoxGeometry(w - 0.32, 0.18, d - 0.32), trim);
+      uband.position.y = wallTop + sH - 0.04;
+      h.add(uband);
+      for (const sx of [-1, 1]) {
+        const frame = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.9, 0.1), trim);
+        frame.position.set(sx * (w / 2 - 1.0), wallTop + sH / 2, d / 2 - 0.2 + 0.02);
+        const pane = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.66, 0.12), winMat);
+        pane.position.set(sx * (w / 2 - 1.0), wallTop + sH / 2, d / 2 - 0.2 + 0.05);
+        h.add(frame, pane);
+      }
+      roofBase = wallTop + sH;
     }
 
-    // chimney with rising smoke
-    const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.7, 0.5), voxelMaterial(VOX.stoneDark));
-    chimney.position.set(w / 2 - 0.5, wallTop + 0.5, -d / 2 + 0.6);
-    h.add(chimney);
+    // stepped gable roof with an eaves overhang (narrows in x → street-facing gable)
+    const L = 5, layerH = 0.36, inset = 0.4;
+    const roofW = (story ? w - 0.4 : w) + 1.1;
+    const roofD = (story ? d - 0.4 : d) + 1.0;
+    for (let k = 0; k < L; k++) {
+      const lw = Math.max(0.5, roofW - k * 2 * inset);
+      const layer = new THREE.Mesh(new THREE.BoxGeometry(lw, layerH, roofD), k % 2 ? roofMat2 : roofMat);
+      layer.position.y = roofBase + 0.1 + k * layerH + layerH / 2;
+      h.add(layer);
+    }
+    const ridgeY = roofBase + 0.1 + L * layerH + 0.1;
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.32, roofD + 0.1), trim);
+    ridge.position.y = ridgeY;
+    h.add(ridge);
+    // a roof dormer on storied houses
+    if (story) {
+      const dormer = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.7, 0.6), wallMat);
+      dormer.position.set(0, roofBase + 0.5, roofD / 2 - 0.5);
+      const dWin = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.1), winMat);
+      dWin.position.set(0, roofBase + 0.55, roofD / 2 - 0.2);
+      h.add(dormer, dWin);
+    }
+
+    // chimney (with a cap) + rising smoke
+    const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.9, 0.55), voxelMaterial(VOX.stoneDark));
+    chimney.position.set(w / 2 - 0.6, roofBase + 0.7, -d / 2 + 0.7);
+    const chimCap = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.22, 0.75), voxelMaterial(VOX.stone));
+    chimCap.position.set(chimney.position.x, roofBase + 1.6, chimney.position.z);
+    h.add(chimney, chimCap);
     const smokeMat = () => new THREE.MeshStandardMaterial({ color: VOX.smoke, transparent: true, opacity: 0.5, depthWrite: false });
-    const smokeBaseY = wallTop + 1.5;
+    const smokeBaseY = roofBase + 1.7;
     for (let s = 0; s < 3; s++) {
-      const puff = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), smokeMat());
+      const puff = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.34), smokeMat());
       puff.position.set(chimney.position.x, smokeBaseY + s * 0.6, chimney.position.z);
-      // smoke is placed in cottage-local space; add to the cottage so it rotates
-      // with the house, and track it for the rising drift.
       h.add(puff);
       this.smokes.push({ mesh: puff, baseY: smokeBaseY, phase: Math.random() * 6.28, speed: 0.4, span: 2.2 });
+    }
+
+    // a hanging shop sign on a bracket (big plots only)
+    if (big) {
+      const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.12, 0.12), trim);
+      bracket.position.set(-w / 2 + 0.35, 2.3, front + 0.3);
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 0.1), wood);
+      sign.position.set(-w / 2 + 0.7, 1.95, front + 0.3);
+      const icon = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.12), glowMaterial(VOX.lantern, 0.9));
+      icon.position.set(-w / 2 + 0.7, 1.95, front + 0.37);
+      h.add(bracket, sign, icon);
     }
     return h;
   }
@@ -1173,18 +1298,13 @@ export class Island {
   /** Warm lanterns lining the paths + the square, and braziers at the corners —
    *  the glow (with bloom) that gives the courtyard its cozy Hypixel mood. */
   private buildLighting() {
-    const gateTargets = [
-      new THREE.Vector3(-9, 0, -8),
-      new THREE.Vector3(0, 0, -12),
-      new THREE.Vector3(9, 0, -8),
-    ];
-    // lantern posts flanking each spoke path
-    for (const tg of gateTargets) {
-      const dir = tg.clone().normalize();
+    // lantern posts flanking each spoke path out to the gates
+    for (const g of GATES) {
+      const dir = g.pos.clone().normalize();
       const perp = new THREE.Vector3(-dir.z, 0, dir.x);
-      for (let r = 7.6; r <= tg.length() - 1.4; r += 2.4) {
+      for (let r = PLAZA_R - 1; r <= g.pos.length() - 2.2; r += 3.0) {
         for (const side of [-1, 1]) {
-          const p = dir.clone().multiplyScalar(r).add(perp.clone().multiplyScalar(side * 1.7));
+          const p = dir.clone().multiplyScalar(r).add(perp.clone().multiplyScalar(side * 2.0));
           const lan = this.makeLantern();
           lan.position.set(p.x, 0, p.z);
           this.group.add(lan);
@@ -1192,17 +1312,17 @@ export class Island {
       }
     }
     // a ring of lanterns just inside the kerb
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2 + 0.4;
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 + 0.26;
       const lan = this.makeLantern();
-      lan.position.set(Math.cos(a) * 7.6, 0, Math.sin(a) * 7.6);
+      lan.position.set(Math.cos(a) * (PLAZA_R - 1), 0, Math.sin(a) * (PLAZA_R - 1));
       this.group.add(lan);
     }
     // braziers framing the fountain
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
       const { group, flame } = this.makeBrazier();
-      group.position.set(Math.cos(a) * 2.9, 0, Math.sin(a) * 2.9);
+      group.position.set(Math.cos(a) * 4.4, 0, Math.sin(a) * 4.4);
       this.group.add(group);
       this.flames.push(flame);
     }
@@ -1246,7 +1366,7 @@ export class Island {
    */
   private buildGreeter() {
     const npc = new VoxelChar({ body: 0x6e4a9e, head: COLORS.playerAccent, eye: 0x222222, hat: 0xffd24a, gun: false });
-    npc.root.position.set(2.6, 0, 6.2);
+    npc.root.position.set(3.2, 0, PLAZA_R - 2);
     npc.root.rotation.y = Math.PI;
     npc.play("idle");
     npc.emote("wave");
@@ -1261,15 +1381,15 @@ export class Island {
 
     // a little wooden signpost beside the greeter
     const signPost = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.4, 0.16), voxelMaterial(VOX.bark));
-    signPost.position.set(3.8, 0.7, 6.2);
+    signPost.position.set(4.6, 0.7, PLAZA_R - 2);
     const signBoard = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 0.1), voxelMaterial(VOX.woodTrim));
-    signBoard.position.set(3.8, 1.4, 6.2);
+    signBoard.position.set(4.6, 1.4, PLAZA_R - 2);
     this.group.add(signPost, signBoard);
 
     const cone = new THREE.ConeGeometry(0.5, 1.0, 4);
     cone.rotateX(Math.PI);
     this.arrow = new THREE.Mesh(cone, glowMaterial(0x6ad7ff, 1.2));
-    this.arrow.position.set(0, 3.6, -12);
+    this.arrow.position.copy(GATES[1].pos).setY(3.8); // hover over the Duo gate
     this.group.add(this.arrow);
   }
 
@@ -1278,9 +1398,9 @@ export class Island {
     // floating sparkle motes rising over the plaza
     let seed = 555;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 40; i++) {
       const a = rnd() * Math.PI * 2;
-      const r = rnd() * 9;
+      const r = rnd() * (PLAZA_R + 2);
       const mote = new THREE.Mesh(
         new THREE.OctahedronGeometry(0.07, 0),
         new THREE.MeshStandardMaterial({

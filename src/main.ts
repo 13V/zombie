@@ -56,6 +56,8 @@ class Game implements GameApi {
   private scene = new THREE.Scene();
   private camera: THREE.OrthographicCamera;
   private viewSize = 15; // half-height of the orthographic view, in world units
+  private camZoom = 1; // live zoom multiplier (eased toward camZoomTarget)
+  private camZoomTarget = 1; // player-set zoom (wheel / +- keys); >1 = zoomed out
   private composer: EffectComposer;
   private clock = new THREE.Clock();
 
@@ -222,6 +224,21 @@ class Game implements GameApi {
       document.body.classList.add("touch");
       this.touch = new TouchControls(this.input);
     }
+    // Mouse-wheel zoom (scroll up = zoom in, down = zoom out); the hub allows a
+    // wider range so you can survey the whole village.
+    canvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      this.nudgeZoom(e.deltaY > 0 ? 1.12 : 1 / 1.12);
+    }, { passive: false });
+    // Pinch-to-zoom on touch.
+    let pinchDist = 0;
+    canvas.addEventListener("touchmove", (e) => {
+      if (e.touches.length !== 2) return;
+      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      if (pinchDist > 0 && Math.abs(d - pinchDist) > 1) this.nudgeZoom(pinchDist / d);
+      pinchDist = d;
+    }, { passive: true });
+    canvas.addEventListener("touchend", () => { pinchDist = 0; });
     this.arena = new Arena(this.scene);
     this.island = new Island(this.scene);
     this.player = new Player(this.scene, this.assets);
@@ -926,6 +943,7 @@ class Game implements GameApi {
     this.hud.hideStart();
     this.hud.hideGameOver();
     this._runGoldStart = this.save.goldEarned; // baseline for the daily "earn gold" quest
+    this.camZoomTarget = 1; // reset hub zoom-out for the run
     this.state = "playing";
     // Co-op difficulty: scale by player count (host + guests). Refreshed each
     // frame in simulate() so a mid-run join ramps difficulty at the next round.
@@ -1402,6 +1420,10 @@ class Game implements GameApi {
 
     this.input.updateAim(this.camera);
 
+    // Keyboard zoom (+/= zoom in, -/_ zoom out); mirrors the wheel/pinch.
+    if (this.input.pressed("Equal") || this.input.pressed("NumpadAdd")) this.nudgeZoom(1 / 1.15);
+    if (this.input.pressed("Minus") || this.input.pressed("NumpadSubtract")) this.nudgeZoom(1.15);
+
     // Hit-stop: briefly freeze the sim (not rendering/FX) for impact weight.
     if (this.hitStop > 0) {
       this.hitStop -= dt;
@@ -1449,7 +1471,8 @@ class Game implements GameApi {
     this.arena.group.visible = false;
     this.island.setVisible(true);
     this.player.alive = true;
-    this.player.pos.set(0, 0, 6); // stand just south of the plaza
+    this.player.pos.set(0, 0, 11); // stand at the front of the village square
+    this.camZoomTarget = 1.7; // pull back so the whole village reads (wheel/pinch to adjust)
     this.player.group.position.copy(this.player.pos);
     this.hud.setIslandMode(true);
     this.emoteMenu?.setAvailable(true);
@@ -3217,26 +3240,33 @@ class Game implements GameApi {
       this.shake *= Math.pow(0.0001, dt); // fast decay
     }
 
-    // punch-zoom: briefly zoom the ortho view in on boss death, then ease back
-    if (this.zoomPunch > 0.001) {
-      this.zoomPunch *= Math.pow(0.02, dt);
-      const aspect = innerWidth / innerHeight;
-      const vs = this.viewSize * (1 - this.zoomPunch * 0.18);
-      this.camera.left = -vs * aspect;
-      this.camera.right = vs * aspect;
-      this.camera.top = vs;
-      this.camera.bottom = -vs;
-      this.camera.updateProjectionMatrix();
-    }
+    // player-controlled zoom (wheel / +- keys) eased toward the target, with the
+    // boss-death punch-zoom folded in. Re-apply the ortho frustum every frame.
+    this.camZoomTarget = Math.max(0.7, Math.min(this.state === "island" ? 3.4 : 1.9, this.camZoomTarget));
+    this.camZoom += (this.camZoomTarget - this.camZoom) * (1 - Math.exp(-12 * dt));
+    if (this.zoomPunch > 0.001) this.zoomPunch *= Math.pow(0.02, dt);
+    this.applyView();
+  }
+
+  /** Set the orthographic frustum from the base view × the live zoom. */
+  private applyView() {
+    const aspect = innerWidth / innerHeight;
+    const vs = this.viewSize * this.camZoom * (1 - this.zoomPunch * 0.18);
+    this.camera.left = -vs * aspect;
+    this.camera.right = vs * aspect;
+    this.camera.top = vs;
+    this.camera.bottom = -vs;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /** Nudge the zoom target (mult>1 zooms out), clamped. Wider range in the hub. */
+  private nudgeZoom(factor: number) {
+    const maxOut = this.state === "island" ? 3.4 : 1.9;
+    this.camZoomTarget = Math.max(0.7, Math.min(maxOut, this.camZoomTarget * factor));
   }
 
   private onResize = () => {
-    const aspect = innerWidth / innerHeight;
-    this.camera.left = -this.viewSize * aspect;
-    this.camera.right = this.viewSize * aspect;
-    this.camera.top = this.viewSize;
-    this.camera.bottom = -this.viewSize;
-    this.camera.updateProjectionMatrix();
+    this.applyView();
     this.renderer.setSize(innerWidth, innerHeight);
     this.composer.setSize(innerWidth, innerHeight);
     this.tilt.setSize(innerWidth, innerHeight);
