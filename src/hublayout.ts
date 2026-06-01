@@ -26,21 +26,22 @@ export const BRIDGE_HW = 3.2;
 export const BRIDGE_OVERLAP = 5;
 /** Distance from world origin to each satellite centre (clears the main island,
  *  whose ground reaches ~48, leaving open water for a bridge to span). */
-const SAT_DIST = 64;
+const SAT_DIST = 66;
+/** Uniform satellite platform radius — same size islands read as evenly placed. */
+const SAT_R = 13;
 
-/** Place a satellite centre `d` units out along direction (dx,dz). */
-function out(dx: number, dz: number, d = SAT_DIST): HVec {
-  const l = Math.hypot(dx, dz) || 1;
-  return { x: (dx / l) * d, z: (dz / l) * d };
+/** Place a satellite centre on a fan around NORTH (-z): `deg` east of north. */
+function fan(deg: number, d = SAT_DIST): HVec {
+  const a = (deg * Math.PI) / 180;
+  return { x: Math.sin(a) * d, z: -Math.cos(a) * d };
 }
 
-// -z is "north" (the camera looks down -z); the player spawns to the south.
-// Matches the sketch: ZOMBIES upper-left, TOWER DEFENSE upper-centre, COMING
-// SOON to the right.
+// -z is "north" (the camera looks down -z); the player spawns to the south. An
+// even fan of three across the top arc, symmetric about north.
 export const SATELLITES: Satellite[] = [
-  { id: "sat_zombies", label: "ZOMBIES", color: 0x8be36b, kind: "zombies", center: out(-0.62, -0.78), radius: 14 },
-  { id: "sat_td", label: "TOWER DEFENSE", color: 0x7fd4ff, kind: "td", center: out(0.12, -1), radius: 13 },
-  { id: "sat_soon", label: "COMING SOON", color: 0xc9b6ff, kind: "soon", center: out(1, -0.3), radius: 13 },
+  { id: "sat_zombies", label: "ZOMBIES", color: 0x8be36b, kind: "zombies", center: fan(-58), radius: SAT_R },
+  { id: "sat_td", label: "TOWER DEFENSE", color: 0x7fd4ff, kind: "td", center: fan(0), radius: SAT_R },
+  { id: "sat_soon", label: "COMING SOON", color: 0xc9b6ff, kind: "soon", center: fan(58), radius: SAT_R },
 ];
 
 function len(v: HVec): number { return Math.hypot(v.x, v.z); }

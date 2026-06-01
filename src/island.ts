@@ -36,9 +36,9 @@ function _zgate(off: number): THREE.Vector3 {
   return new THREE.Vector3(_ZS.x + _zperp.x * off, 0, _ZS.z + _zperp.z * off);
 }
 const GATES = [
-  { id: "mode_solo", players: 1 as const, pos: _zgate(-8), color: 0x7be08a, label: "SOLO — 1 player", grand: 0 },
+  { id: "mode_solo", players: 1 as const, pos: _zgate(-7), color: 0x7be08a, label: "SOLO — 1 player", grand: 0 },
   { id: "mode_duo", players: 2 as const, pos: _zgate(0), color: 0x6ad7ff, label: "DUO — 2 players (2× harder)", grand: 1 },
-  { id: "mode_quad", players: 4 as const, pos: _zgate(8), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)", grand: 2 },
+  { id: "mode_quad", players: 4 as const, pos: _zgate(7), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)", grand: 2 },
 ];
 const PADS = [
   { id: "join" as const, pos: new THREE.Vector3(12, 0, 8), color: 0x6ad7ff, label: "Join a Friend's Run" },
@@ -893,70 +893,20 @@ export class Island {
    * COMING SOON gets a locked monument + its own zone.
    */
   private buildSatellites() {
-    const grass = voxelMaterial(VOX.grass);
-    const grassDark = voxelMaterial(VOX.grassDark);
-    const rock = voxelMaterial(VOX.stone);
-    const rockDark = voxelMaterial(VOX.stoneDark);
-    const plank = voxelMaterial(VOX.path ?? VOX.bark);
-    const plankDark = voxelMaterial(VOX.dirtDark ?? VOX.bark);
-
     for (const s of SATELLITES) {
       const cx = s.center.x, cz = s.center.z;
-
-      // ---- floating platform: grass cap + tapering rock underside + glow rim ----
-      const cap = new THREE.Mesh(new THREE.CylinderGeometry(s.radius, s.radius, 1.0, 32), grass);
-      cap.position.set(cx, 0.0, cz);
-      cap.userData.noCast = true;
-      const trimTop = new THREE.Mesh(new THREE.CylinderGeometry(s.radius + 0.3, s.radius + 0.3, 0.5, 32), grassDark);
-      trimTop.position.set(cx, -0.5, cz);
-      trimTop.userData.noCast = true;
-      const under = new THREE.Mesh(new THREE.CylinderGeometry(s.radius - 1, 1.5, 7, 16), rockDark);
-      under.position.set(cx, -4.0, cz);
-      const underTop = new THREE.Mesh(new THREE.CylinderGeometry(s.radius, s.radius - 1, 1.6, 16), rock);
-      underTop.position.set(cx, -1.3, cz);
-      const rim = new THREE.Mesh(new THREE.TorusGeometry(s.radius - 0.2, 0.14, 6, 40), glowMaterial(s.color, 0.7));
-      rim.rotation.x = Math.PI / 2;
-      rim.position.set(cx, 0.55, cz);
-      this.group.add(cap, trimTop, under, underTop, rim);
-
-      // ---- plank bridge from the main island edge to the platform ----
-      // Planks ride ON TOP of the grass (top surface ≈ y0.5), spanning the open
-      // water out to the platform lip so the bridge reads clearly.
-      const d = Math.hypot(cx, cz) || 1;
-      const dir = { x: cx / d, z: cz / d };
-      const perp = { x: -dir.z, z: dir.x };
-      const PLANK_Y = 0.45;             // box top ≈ 0.56, just above the lawn
-      const start = ISLAND.half - 6;    // begin on the island's grassy rim
-      const end = d - s.radius + 2;     // land on the platform lip
-      const ang = Math.atan2(dir.x, dir.z);
-      let row = 0;
-      for (let r = start; r <= end; r += 1.7, row++) {
-        for (const off of [-1.4, 0, 1.4]) {
-          const px = dir.x * r + perp.x * off;
-          const pz = dir.z * r + perp.z * off;
-          const tile = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.22, 1.65), row % 2 ? plank : plankDark);
-          tile.position.set(px, PLANK_Y, pz);
-          tile.rotation.y = ang;
-          tile.userData.noCast = true;
-          this.group.add(tile);
-        }
-        // rope-posts every few planks for a hand-rail read
-        if (row % 2 === 0) {
-          for (const off of [-2.3, 2.3]) {
-            const post = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.2, 0.2), rockDark);
-            post.position.set(dir.x * r + perp.x * off, PLANK_Y + 0.5, dir.z * r + perp.z * off);
-            this.group.add(post);
-          }
-        }
-      }
+      // Same chunky voxel ground as the main island (checkered grass + sand rim)
+      // so the satellites read as the SAME world, not flat discs.
+      this.tileDisc(cx, cz, s.radius, s.color);
+      this.buildBridge(s);
 
       // ---- big floating title over the platform ----
       const sign = makeSign(s.label, s.color);
-      sign.position.set(cx, 7.0, cz);
-      sign.scale.multiplyScalar(1.6);
+      sign.position.set(cx, 7.4, cz);
+      sign.scale.multiplyScalar(1.7);
       this.group.add(sign);
 
-      // ---- COMING SOON: a wrapped, locked monument + its own zone ----
+      // ---- COMING SOON: a wrapped, locked present + its own zone ----
       if (s.kind === "soon") {
         const box = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), voxelMaterial(0x6a5a8a));
         box.position.set(cx, 2.0, cz);
@@ -969,6 +919,118 @@ export class Island {
         this.group.add(box, ribbonV, ribbonH, bow);
         this.zones.push({ id: "soon", kind: "soon", pos: new THREE.Vector3(cx, 0, cz), radius: 3.0, label: "Coming Soon" });
       }
+    }
+  }
+
+  /** A floating voxel island disc at (cx,cz): the SAME checkered grass + sand-rim
+   *  tiles as the main island, on a tapering rock underbelly + a glow rim. */
+  private tileDisc(cx: number, cz: number, R: number, rimColor: number) {
+    const grass = voxelMaterial(VOX.grass);
+    const grassDark = voxelMaterial(VOX.grassDark);
+    const grassLight = voxelMaterial(VOX.grassLight);
+    const sand = voxelMaterial(0xe6d9a8);
+    const TILE = 2.5;
+    const n = Math.ceil(R / TILE);
+    let seed = (Math.floor(Math.abs(cx) * 7 + Math.abs(cz) * 13) % 9999) + 1;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let ix = -n; ix <= n; ix++) {
+      for (let iz = -n; iz <= n; iz++) {
+        const lx = ix * TILE, lz = iz * TILE;
+        if (Math.hypot(lx, lz) > R) continue;
+        const onSand = Math.hypot(lx, lz) > R - 3;
+        let mat: THREE.Material;
+        if (onSand) mat = sand;
+        else if (rnd() < 0.1) mat = grassLight;
+        else mat = (ix + iz) % 2 === 0 ? grass : grassDark;
+        const h = onSand ? 0.6 : 1.0;
+        const tile = new THREE.Mesh(new THREE.BoxGeometry(TILE, h, TILE), mat);
+        tile.position.set(cx + lx, h / 2 - 0.5, cz + lz);
+        tile.userData.noCast = true;
+        this.group.add(tile);
+      }
+    }
+    // tapering rock underbelly so it reads as a floating chunk of land
+    const rock = voxelMaterial(VOX.stone);
+    const rockDark = voxelMaterial(VOX.stoneDark);
+    const lip = new THREE.Mesh(new THREE.CylinderGeometry(R, R - 1.5, 1.8, 18), rock);
+    lip.position.set(cx, -1.2, cz);
+    const root = new THREE.Mesh(new THREE.CylinderGeometry(R - 2, 1.4, 8, 14), rockDark);
+    root.position.set(cx, -5.0, cz);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(R - 0.4, 0.16, 6, 44), glowMaterial(rimColor, 0.7));
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(cx, 0.55, cz);
+    this.group.add(lip, root, rim);
+  }
+
+  /** A proper wooden bridge to a satellite: flat planks (you walk at y0) flanked
+   *  by railings + lantern posts, support pillars dropping into the void, and a
+   *  glowing gateway arch at each end. */
+  private buildBridge(s: { center: { x: number; z: number }; radius: number; color: number }) {
+    const cx = s.center.x, cz = s.center.z;
+    const plankA = voxelMaterial(0x8a5a32);
+    const plankB = voxelMaterial(0x6f4626);
+    const wood = voxelMaterial(0x5c3c24);
+    const d = Math.hypot(cx, cz) || 1;
+    const dir = { x: cx / d, z: cz / d };
+    const perp = { x: -dir.z, z: dir.x };
+    const ang = Math.atan2(dir.x, dir.z);
+    const PY = 0.45;                       // plank top ≈ 0.56, just above the lawn
+    const start = ISLAND.half - 8;         // anchor on the island's grassy rim
+    const end = d - s.radius + 2;          // land on the platform lip
+    const at = (r: number, off: number, y: number) => new THREE.Vector3(dir.x * r + perp.x * off, y, dir.z * r + perp.z * off);
+
+    let row = 0;
+    for (let r = start; r <= end; r += 1.6, row++) {
+      // deck: three planks across
+      for (const off of [-1.5, 0, 1.5]) {
+        const tile = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.22, 1.7), row % 2 ? plankA : plankB);
+        tile.position.copy(at(r, off, PY));
+        tile.rotation.y = ang;
+        tile.userData.noCast = true;
+        this.group.add(tile);
+      }
+      // continuous side rails (a beam segment each side, every row)
+      for (const side of [-1, 1]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 1.7), wood);
+        rail.position.copy(at(r, side * 2.2, PY + 1.05));
+        rail.rotation.y = ang;
+        this.group.add(rail);
+      }
+      // rail posts every other row; lanterns on every 3rd post
+      if (row % 2 === 0) {
+        for (const side of [-1, 1]) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.3, 0.2), wood);
+          post.position.copy(at(r, side * 2.2, PY + 0.6));
+          this.group.add(post);
+          if (row % 6 === 0) {
+            const lan = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.3), glowMaterial(VOX.lantern, 1.2));
+            lan.position.copy(at(r, side * 2.2, PY + 1.45));
+            this.group.add(lan);
+            this.beacons.push(lan);
+          }
+        }
+      }
+      // support pillars dropping into the void at a couple of spans
+      if (row % 4 === 2) {
+        for (const side of [-1, 1]) {
+          const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.4, 9, 0.4), wood);
+          pillar.position.copy(at(r, side * 1.7, PY - 4.4));
+          this.group.add(pillar);
+        }
+      }
+    }
+
+    // glowing gateway arch at each end (torii-style frame, high enough to walk under)
+    for (const r of [start, end]) {
+      for (const side of [-1, 1]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.45, 4.2, 0.45), wood);
+        leg.position.copy(at(r, side * 2.4, PY + 2.1));
+        this.group.add(leg);
+      }
+      const top = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 5.6), glowMaterial(s.color, 0.8));
+      top.position.copy(at(r, 0, PY + 4.0));
+      top.rotation.y = ang;
+      this.group.add(top);
     }
   }
 
