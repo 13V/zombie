@@ -58,6 +58,7 @@ export function recordScore(board: ScoreEntry[], entry: ScoreEntry, cap = LEADER
 export interface SaveData {
   version: number; // save-schema version (for future migrations; starts at 1)
   name: string; // player display name shown to others in the island hub
+  dailyChestDay: number; // UTC day-bucket the lobby daily chest was last claimed
   lastSeen: number; // ms epoch of the last writeSave (drives offline accrual)
   prestige: number; // ascension currency — permanent gold/essence multiplier
   lifetimeGold: number; // running total of all gold ever earned (prestige basis)
@@ -105,6 +106,7 @@ function blank(): SaveData {
   return {
     version: 1,
     name: randomName(),
+    dailyChestDay: 0,
     lastSeen: 0,
     prestige: 0,
     lifetimeGold: 0,
@@ -237,6 +239,7 @@ export function loadSave(): SaveData {
       // version: clamp to >=1 so a corrupt/0 value still reads as the v1 schema.
       version: Math.max(1, Math.floor(num(data.version, 1))),
       name: typeof data.name === "string" && data.name.trim() ? data.name.slice(0, 16) : randomName(),
+      dailyChestDay: Math.floor(num(data.dailyChestDay)),
       lastSeen: num(data.lastSeen),
       prestige: Math.floor(num(data.prestige)),
       lifetimeGold: num(data.lifetimeGold),

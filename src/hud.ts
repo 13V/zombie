@@ -993,6 +993,75 @@ export class Hud {
     return !!this.eggRevealEl?.classList.contains("show");
   }
 
+  private petIndexEl?: HTMLElement;
+  /** Pet collection index overlay: a grid of every pet (owned lit, missing
+   *  dimmed) with shiny/star markers + a completion header. Dismiss on click. */
+  showPetIndex(entries: { name: string; thumb: string; owned: boolean; rarityColor: string; shiny: boolean; stars: number }[]) {
+    if (!this.petIndexEl) {
+      this.petIndexEl = document.createElement("div");
+      this.petIndexEl.id = "pet-index";
+      this.petIndexEl.addEventListener("click", (e) => { if (e.target === this.petIndexEl || (e.target as HTMLElement).classList.contains("pi-close")) this.petIndexEl!.classList.remove("show"); });
+      this.root.appendChild(this.petIndexEl);
+    }
+    const ownedN = entries.filter((e) => e.owned).length;
+    const pct = entries.length ? Math.round((ownedN / entries.length) * 100) : 0;
+    const cells = entries.map((e) => {
+      const stars = e.stars > 0 ? `<span class="pi-stars">${"★".repeat(Math.min(5, e.stars))}</span>` : "";
+      const shiny = e.shiny ? `<span class="pi-shiny">✨</span>` : "";
+      return `<div class="pi-cell ${e.owned ? "owned" : "missing"}" style="border-color:${e.owned ? e.rarityColor : "#3a3a3a"}">
+        <img src="${e.thumb}" alt="">${stars}${shiny}
+        <span class="pi-name">${e.owned ? e.name : "???"}</span>
+      </div>`;
+    }).join("");
+    this.petIndexEl.innerHTML = `
+      <div class="pi-panel">
+        <div class="pi-head">🐾 Pet Collection — <b>${ownedN}/${entries.length}</b> (${pct}%)<button class="pi-close">✕</button></div>
+        <div class="pi-grid">${cells}</div>
+      </div>`;
+    this.petIndexEl.classList.add("show");
+  }
+
+  private wheelEl?: HTMLElement;
+  private wheelTimer = 0;
+  /** Fortune wheel: an animated spin that lands on `win`, then fires onDone. */
+  showWheel(labels: string[], win: number, onDone: () => void) {
+    if (!this.wheelEl) {
+      this.wheelEl = document.createElement("div");
+      this.wheelEl.id = "wheel-modal";
+      this.root.appendChild(this.wheelEl);
+    }
+    const n = labels.length;
+    const seg = 360 / n;
+    const cols = ["#ff5a7a", "#ffd24a", "#6ad7ff", "#7be08a", "#c792ea", "#ff9ec7", "#ffd24a", "#9ad0ff"];
+    // build conic-gradient wheel + labels
+    const stops = labels.map((_, i) => `${cols[i % cols.length]} ${i * seg}deg ${(i + 1) * seg}deg`).join(", ");
+    const labelEls = labels.map((l, i) => {
+      const ang = i * seg + seg / 2;
+      return `<span class="wh-label" style="transform:rotate(${ang}deg) translateY(-118px) rotate(${-ang}deg)">${l}</span>`;
+    }).join("");
+    // land the winning segment under the top pointer (with several extra turns)
+    const target = 360 * 5 - (win * seg + seg / 2);
+    this.wheelEl.innerHTML = `
+      <div class="wh-stage">
+        <div class="wh-pointer">▼</div>
+        <div class="wh-wheel" style="background:conic-gradient(${stops})">${labelEls}</div>
+        <div class="wh-hint">good luck!</div>
+      </div>`;
+    this.wheelEl.classList.add("show");
+    const wheel = this.wheelEl.querySelector(".wh-wheel") as HTMLElement;
+    // reset then animate to target
+    wheel.style.transition = "none";
+    wheel.style.transform = "rotate(0deg)";
+    void wheel.offsetWidth; // reflow so the transition re-arms
+    wheel.style.transition = "transform 3.6s cubic-bezier(0.15, 0.9, 0.2, 1)";
+    wheel.style.transform = `rotate(${target}deg)`;
+    if (this.wheelTimer) clearTimeout(this.wheelTimer);
+    this.wheelTimer = window.setTimeout(() => {
+      this.wheelEl?.classList.remove("show");
+      onDone();
+    }, 4000);
+  }
+
   private popEl?: HTMLElement;
   /** "N players here" social chip on the island; pass <= 0 to hide it. */
   setIslandPopulation(n: number) {

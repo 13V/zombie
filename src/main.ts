@@ -31,7 +31,7 @@ import { petThumbnail } from "./petthumb";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
 import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, isTrialComplete, RARITY_COLOR, RARITY_LABEL, RARITY_ORDER, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
-import { findEgg, rollEgg, eggOdds } from "./gacha";
+import { EGGS, findEgg, rollEgg, eggOdds } from "./gacha";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData, recordScore } from "./save";
 import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
@@ -1533,6 +1533,7 @@ class Game implements GameApi {
     this.drops.clearAll();
     this._portalStarting = false; // fresh gather state on (re)entering the hub
     this._gatherPortal = "";
+    this.island.setDailyReady(dayUtc(Date.now()) !== this.save.dailyChestDay); // chest glow
     this.spawnPets(); // bring the equipped squad into the hub so they follow + flex
     this.setLocalAura(this.auraTierFor()); // show my own earned aura in the hub
     this.player.group.position.copy(this.player.pos);
@@ -1738,6 +1739,15 @@ class Game implements GameApi {
       case "egg":
         this.openEgg(zone.eggId ?? "");
         break;
+      case "daily":
+        this.claimDailyChest();
+        break;
+      case "index":
+        this.openPetIndex();
+        break;
+      case "wheel":
+        this.spinWheel();
+        break;
     }
   }
 
@@ -1803,6 +1813,93 @@ class Game implements GameApi {
         this.sparks.burst(top, c, 5, { speed: 9 + rarity, spread: 7 + w * 1.5, gravity: 13 });
       }
     }
+  }
+
+  // ---- lobby attractions: daily chest / pet index / fortune wheel ----
+
+  /** Claim the once-per-UTC-day lobby chest: gold (+ essence) scaling with the
+   *  login streak. Marks the day claimed and dims the chest until tomorrow. */
+  private claimDailyChest() {
+    const today = dayUtc(Date.now());
+    if (this.save.dailyChestDay === today) {
+      this.audio.deny();
+      this.hud.toast("Daily chest claimed — come back tomorrow!");
+      return;
+    }
+    const streak = Math.max(1, this.save.streak.count);
+    const gold = Math.min(3000, 250 + streak * 150);
+    const essence = streak >= 7 ? 2 : streak >= 3 ? 1 : 0;
+    this.save.dailyChestDay = today;
+    this.save.gold += gold;
+    this.save.goldEarned += gold;
+    this.save.essence += essence;
+    writeSave(this.save);
+    this.island.setDailyReady(false);
+    this.audio.powerup();
+    this.portalBurst(this.player.pos);
+    this.confettiBurst(new THREE.Vector3(this.player.pos.x, 1.5, this.player.pos.z), 2);
+    this.hud.toast(`🎁 Daily Chest! +${gold} gold${essence ? ` · +${essence} essence` : ""} (Day ${streak})`);
+    this.renderShop();
+  }
+
+  /** Open the pet-collection index overlay (every pet, owned + completion). */
+  private openPetIndex() {
+    const owned = new Set(this.save.pets);
+    const pool = PETS.filter((p) => p.rarity && p.rarity !== "celestial" && (p.cost ?? 0) > 0);
+    const entries = pool.map((p) => ({
+      name: p.name,
+      thumb: petThumbnail(p.id, this.save.petLevels[p.id] ?? 1),
+      owned: owned.has(p.id),
+      rarityColor: RARITY_COLOR[(p.rarity ?? "common") as Rarity],
+      shiny: (this.save.petProgress[p.id]?._shiny ?? 0) > 0,
+      stars: this.petStars(p.id),
+    }));
+    this.hud.showPetIndex(entries);
+  }
+
+  /** Spin the fortune wheel: pay gold, roll a reward, play the spin, then grant. */
+  private spinWheel() {
+    const cost = 400;
+    if (this.save.gold < cost) { this.audio.deny(); this.hud.toast("Need 400 gold to spin"); return; }
+    if (this._hatching) return;
+    this.save.gold -= cost;
+    // weighted reward table (index aligns with the wheel's 8 labelled segments)
+    const segments = [
+      { label: "+150g", gold: 150, essence: 0, pet: false, w: 26 },
+      { label: "+300g", gold: 300, essence: 0, pet: false, w: 22 },
+      { label: "+600g", gold: 600, essence: 0, pet: false, w: 14 },
+      { label: "+1200g", gold: 1200, essence: 0, pet: false, w: 7 },
+      { label: "+1 ✦", gold: 0, essence: 1, pet: false, w: 12 },
+      { label: "+3 ✦", gold: 0, essence: 3, pet: false, w: 5 },
+      { label: "JACKPOT", gold: 2500, essence: 0, pet: false, w: 4 },
+      { label: "PET!", gold: 0, essence: 0, pet: true, w: 10 },
+    ];
+    const total = segments.reduce((s, x) => s + x.w, 0);
+    let r = Math.random() * total;
+    let win = 0;
+    for (let i = 0; i < segments.length; i++) { if ((r -= segments[i].w) < 0) { win = i; break; } }
+    const seg = segments[win];
+    this._hatching = true; // reuse the modal-busy guard so prompts hide + no spam
+    this.hud.showWheel(segments.map((s) => s.label), win, () => {
+      // grant on reveal
+      if (seg.pet) {
+        const pet = rollEgg(EGGS[1]); // a River-egg-grade pet from the wheel
+        if (!this.save.pets.includes(pet.id)) {
+          this.save.pets.push(pet.id); this.save.petLevels[pet.id] = 1; this.grantCollectionMilestones();
+          this.hud.toast(`🎡 Won ${pet.name}! (${RARITY_LABEL[(pet.rarity ?? "common") as Rarity]})`);
+        } else {
+          const refund = 600; this.save.gold += refund;
+          this.hud.toast(`🎡 Duplicate ${pet.name} — +${refund} gold`);
+        }
+        this.spawnPets();
+      } else {
+        this.save.gold += seg.gold; this.save.goldEarned += seg.gold; this.save.essence += seg.essence;
+        this.hud.toast(`🎡 ${seg.label}!`);
+      }
+      writeSave(this.save);
+      this.renderShop();
+      this._hatching = false;
+    });
   }
 
   // ---- lobby "flex" cosmetics: title / aura derived from progress ----

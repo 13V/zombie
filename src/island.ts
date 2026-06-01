@@ -64,7 +64,7 @@ const CLEAR_PTS = [...GATES, ...PADS].map((d) => d.pos).concat(
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
   id: string;
-  kind: "mode" | "join" | "shop" | "egg" | "pets";
+  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel";
   pos: THREE.Vector3;
   radius: number; // proximity radius that triggers the prompt
   label: string; // shown in the proximity prompt
@@ -140,6 +140,8 @@ export class Island {
   private sanctuaryHearts?: THREE.Group; // little hearts orbiting it
   private lbCanvas?: HTMLCanvasElement; // leaderboard board face
   private lbTex?: THREE.CanvasTexture;
+  private wheelMesh?: THREE.Mesh; // fortune wheel face (idle-spins)
+  private chestGlow?: THREE.Mesh; // daily chest glow (pulses while claimable)
   private smokes: Mote[] = []; // chimney smoke puffs (reuse the Mote drift record)
   // warm golden-hour mood — applied to the shared scene only while the hub shows
   private scene: THREE.Scene;
@@ -165,6 +167,7 @@ export class Island {
     this.buildEggs();
     this.buildSanctuary();
     this.buildLeaderboard();
+    this.buildAttractions();
     this.buildHouses();
     this.buildLighting();
     this.buildGreeter();
@@ -304,6 +307,11 @@ export class Island {
     this.animateFountain(dt);
     this.animateEggs(dt);
     this.animateRooms(dt);
+    if (this.wheelMesh) this.wheelMesh.rotation.z -= dt * 0.5; // idle wheel spin
+    if (this.chestGlow) {
+      this.chestGlow.rotation.y += dt * 1.5;
+      this.chestGlow.position.y = 1.7 + Math.sin(t * 3) * 0.1;
+    }
     this.animateFlames();
     this.animateBanners();
     this.animateAtmosphere(dt);
@@ -1241,6 +1249,11 @@ export class Island {
     this.group.add(g);
   }
 
+  /** Show/hide the daily chest's "claim me" glow (dim once claimed today). */
+  setDailyReady(ready: boolean) {
+    if (this.chestGlow) this.chestGlow.visible = ready;
+  }
+
   /** Redraw the leaderboard face with the current top survivors. */
   setLeaderboard(entries: { name: string; best: number }[]) {
     if (!this.lbCanvas || !this.lbTex) return;
@@ -1272,6 +1285,86 @@ export class Island {
       });
     }
     this.lbTex.needsUpdate = true;
+  }
+
+  /** Lobby attractions: a daily reward chest, a pet-collection board, and a
+   *  spinning fortune wheel — each a walk-up zone handled by main. */
+  private buildAttractions() {
+    // ---- daily reward chest (front-left) ----
+    {
+      const c = new THREE.Group();
+      const base = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.8, 0.9), voxelMaterial(VOX.crate));
+      base.position.y = 0.4;
+      const lid = new THREE.Mesh(new THREE.BoxGeometry(1.34, 0.4, 0.94), voxelMaterial(VOX.crateDark));
+      lid.position.y = 0.95;
+      for (const bx of [-0.6, 0.6]) {
+        const band = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.2, 0.96), glowMaterial(VOX.lantern, 0.7));
+        band.position.set(bx, 0.55, 0);
+        c.add(band);
+      }
+      const clasp = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.16), glowMaterial(VOX.lantern, 1.0));
+      clasp.position.set(0, 0.75, 0.48);
+      const glow = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), glowMaterial(0xffe14a, 1.3));
+      glow.position.y = 1.7;
+      this.chestGlow = glow;
+      c.add(base, lid, clasp, glow);
+      c.position.set(-2.5, 0, 9.8);
+      this.group.add(c);
+      this.zones.push({ id: "daily", kind: "daily", pos: new THREE.Vector3(-2.5, 0, 9.8), radius: 1.6, label: "Daily Reward Chest" });
+    }
+    // ---- pet collection board (left side) ----
+    {
+      const b = new THREE.Group();
+      for (const px of [-1.0, 1.0]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2.6, 0.2), voxelMaterial(VOX.bark));
+        post.position.set(px, 1.3, 0);
+        b.add(post);
+      }
+      const board = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 0.16), voxelMaterial(VOX.houseWall));
+      board.position.y = 2.4;
+      const icon = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.12), glowMaterial(0x6ad7ff, 0.9));
+      icon.position.set(0, 2.4, 0.12);
+      b.add(board, icon);
+      const pos = new THREE.Vector3(-9, 0, 3);
+      b.position.copy(pos);
+      b.rotation.y = Math.atan2(-pos.x, -pos.z);
+      this.group.add(b);
+      this.zones.push({ id: "index", kind: "index", pos, radius: 1.9, label: "Pet Collection" });
+    }
+    // ---- fortune wheel (right side, near the eggs) ----
+    {
+      const w = new THREE.Group();
+      const stand = new THREE.Mesh(new THREE.BoxGeometry(0.4, 2.2, 0.4), voxelMaterial(VOX.bark));
+      stand.position.y = 1.1;
+      w.add(stand);
+      const wheel = new THREE.Group();
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 0.24, 24), voxelMaterial(VOX.woodTrim));
+      disc.rotation.x = Math.PI / 2;
+      wheel.add(disc);
+      const segCols = [0xff5a7a, 0xffd24a, 0x6ad7ff, 0x7be08a, 0xc792ea, 0xff9ec7];
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        const wedge = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.3), glowMaterial(segCols[i % segCols.length], 0.8));
+        wedge.position.set(Math.cos(a) * 0.85, Math.sin(a) * 0.85, 0.1);
+        wheel.add(wedge);
+      }
+      const hub = new THREE.Mesh(new THREE.OctahedronGeometry(0.28, 0), glowMaterial(0xffe14a, 1.2));
+      hub.position.z = 0.16;
+      wheel.add(hub);
+      wheel.position.y = 2.5;
+      this.wheelMesh = wheel as unknown as THREE.Mesh;
+      w.add(wheel);
+      // a pointer at the top
+      const ptr = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.4, 4), glowMaterial(0xffffff, 1.0));
+      ptr.position.set(0, 3.95, 0.18);
+      ptr.rotation.x = Math.PI;
+      w.add(ptr);
+      const pos = new THREE.Vector3(9, 0, 4);
+      w.position.copy(pos);
+      w.rotation.y = Math.atan2(-pos.x, -pos.z);
+      this.group.add(w);
+      this.zones.push({ id: "wheel", kind: "wheel", pos, radius: 1.9, label: "Fortune Wheel" });
+    }
   }
 
   /**

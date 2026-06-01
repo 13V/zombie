@@ -988,6 +988,31 @@ body.touch .controls { display: none; }
   100% { transform: translate(var(--drift), 58vh) rotate(960deg); opacity: 0.85; }
 }
 
+/* ---- Pet collection index ---- */
+#pet-index { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(20,14,10,0.74); backdrop-filter: blur(3px); z-index: 60; }
+#pet-index.show { display: flex; }
+#pet-index .pi-panel { width: min(86vw, 720px); max-height: 82vh; background: rgba(46,36,26,0.96); border: 2px solid var(--gold); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; }
+#pet-index .pi-head { font-weight: bold; font-size: 19px; color: var(--gold); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+#pet-index .pi-head b { color: #fff; }
+#pet-index .pi-close { margin-left: auto; background: rgba(255,255,255,0.12); color: #fff; border: none; border-radius: 8px; width: 30px; height: 30px; font-size: 16px; cursor: pointer; }
+#pet-index .pi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; overflow-y: auto; }
+#pet-index .pi-cell { position: relative; background: rgba(0,0,0,0.25); border: 2px solid; border-radius: 10px; padding: 4px; display: flex; flex-direction: column; align-items: center; }
+#pet-index .pi-cell img { width: 100%; aspect-ratio: 1; image-rendering: pixelated; }
+#pet-index .pi-cell.missing img { filter: brightness(0) opacity(0.55); }
+#pet-index .pi-cell.missing { opacity: 0.7; }
+#pet-index .pi-name { font-size: 11px; font-weight: bold; margin-top: 2px; text-align: center; white-space: nowrap; overflow: hidden; max-width: 100%; }
+#pet-index .pi-stars { position: absolute; top: 2px; left: 4px; font-size: 10px; color: #ffd24a; }
+#pet-index .pi-shiny { position: absolute; top: 2px; right: 4px; font-size: 12px; }
+
+/* ---- Fortune wheel ---- */
+#wheel-modal { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(20,14,10,0.72); backdrop-filter: blur(3px); z-index: 60; }
+#wheel-modal.show { display: flex; }
+#wheel-modal .wh-stage { position: relative; width: 300px; height: 320px; display: flex; align-items: center; justify-content: center; }
+#wheel-modal .wh-pointer { position: absolute; top: -6px; font-size: 34px; color: var(--gold); z-index: 2; text-shadow: 0 2px 0 rgba(0,0,0,0.4); }
+#wheel-modal .wh-wheel { position: relative; width: 280px; height: 280px; border-radius: 50%; border: 6px solid #3a2a1c; box-shadow: 0 0 30px rgba(0,0,0,0.5), inset 0 0 20px rgba(0,0,0,0.35); }
+#wheel-modal .wh-label { position: absolute; left: 50%; top: 50%; font-size: 14px; font-weight: bold; color: #2a1a0e; transform-origin: 0 0; text-shadow: 0 1px 0 rgba(255,255,255,0.4); }
+#wheel-modal .wh-hint { position: absolute; bottom: -6px; font-size: 13px; opacity: 0.7; }
+
 /* In the island hub, hide all gameplay HUD — only the lobby chrome stays. */
 .island-mode .hud-top,
 .island-mode .powerups,
