@@ -26,7 +26,7 @@ export const BRIDGE_HW = 3.2;
 export const BRIDGE_OVERLAP = 5;
 /** Distance from world origin to each satellite centre (clears the main island,
  *  whose ground reaches ~48, leaving open water for a bridge to span). */
-const SAT_DIST = 66;
+const SAT_DIST = 58;
 /** Uniform satellite platform radius — same size islands read as evenly placed. */
 const SAT_R = 13;
 

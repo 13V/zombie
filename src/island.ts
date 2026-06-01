@@ -70,6 +70,19 @@ const CLEAR_PTS = [...GATES, ...PADS].map((d) => d.pos).concat(
   [SANCTUARY],
 );
 
+/** True near the spoke that runs from the plaza out to a satellite bridge — we
+ *  keep these lanes clear of trees/rocks and pave them so the path reads. */
+function inHubCorridor(x: number, z: number): boolean {
+  for (const s of SATELLITES) {
+    const d = Math.hypot(s.center.x, s.center.z) || 1;
+    const dx = s.center.x / d, dz = s.center.z / d;
+    const t = x * dx + z * dz;          // distance along the spoke
+    const perp = x * -dz + z * dx;      // distance across it
+    if (t > 8 && t < d && Math.abs(perp) < 4.8) return true;
+  }
+  return false;
+}
+
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
   id: string;
@@ -173,6 +186,7 @@ export class Island {
     this.buildFountain();
     this.buildZones();
     this.buildSatellites(); // floating game-mode islands + bridges (hub-and-spoke)
+    this.buildHubPaths();   // paved spokes from the plaza out to each bridge
     this.buildModes();
     this.buildEggs();
     this.buildSanctuary();
@@ -638,7 +652,7 @@ export class Island {
       const r = 26 + rnd() * (ISLAND.shore - 28);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
-      if (tooClose(x, z, 4)) continue;
+      if (tooClose(x, z, 4) || inHubCorridor(x, z)) continue;
       if (rnd() < 0.8) {
         makeTree(x, z);
       } else {
@@ -663,7 +677,7 @@ export class Island {
       const r = PLAZA_R + 1 + rnd() * 12; // 14 .. 26
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
-      if (tooClose(x, z, 4.2)) continue;
+      if (tooClose(x, z, 4.2) || inHubCorridor(x, z)) continue;
       const roll = rnd();
       if (roll < 0.45) {
         const patch = new THREE.Group();
@@ -989,25 +1003,21 @@ export class Island {
         tile.userData.noCast = true;
         this.group.add(tile);
       }
-      // continuous side rails (a beam segment each side, every row)
+      // continuous DOUBLE side rails each side (top + mid beam) for a fuller fence
       for (const side of [-1, 1]) {
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 1.7), wood);
-        rail.position.copy(at(r, side * 2.2, PY + 1.05));
-        rail.rotation.y = ang;
-        this.group.add(rail);
+        for (const ry of [PY + 1.1, PY + 0.55]) {
+          const rail = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 1.7), wood);
+          rail.position.copy(at(r, side * 2.2, ry));
+          rail.rotation.y = ang;
+          this.group.add(rail);
+        }
       }
-      // rail posts every other row; lanterns on every 3rd post
+      // rail posts every other row (no lanterns here — they live on the arches)
       if (row % 2 === 0) {
         for (const side of [-1, 1]) {
           const post = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.3, 0.2), wood);
           post.position.copy(at(r, side * 2.2, PY + 0.6));
           this.group.add(post);
-          if (row % 6 === 0) {
-            const lan = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.4, 0.3), glowMaterial(VOX.lantern, 1.2));
-            lan.position.copy(at(r, side * 2.2, PY + 1.45));
-            this.group.add(lan);
-            this.beacons.push(lan);
-          }
         }
       }
       // support pillars dropping into the void at a couple of spans
@@ -1031,6 +1041,38 @@ export class Island {
       top.position.copy(at(r, 0, PY + 4.0));
       top.rotation.y = ang;
       this.group.add(top);
+      // a single hanging lantern under each gateway (the only lanterns on the bridge)
+      for (const side of [-1, 1]) {
+        const lan = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.42, 0.32), glowMaterial(VOX.lantern, 1.3));
+        lan.position.copy(at(r, side * 2.0, PY + 3.3));
+        this.group.add(lan);
+        this.beacons.push(lan);
+      }
+    }
+  }
+
+  /** Paved cobble spokes from the plaza out to each satellite bridge, riding on
+   *  top of the lawn so there's an obvious, decor-free path to every island. */
+  private buildHubPaths() {
+    const path = voxelMaterial(VOX.path);
+    const pathDark = voxelMaterial(VOX.dirtDark);
+    for (const s of SATELLITES) {
+      const d = Math.hypot(s.center.x, s.center.z) || 1;
+      const dir = { x: s.center.x / d, z: s.center.z / d };
+      const perp = { x: -dir.z, z: dir.x };
+      const ang = Math.atan2(dir.x, dir.z);
+      const start = PLAZA_R - 1;
+      const end = ISLAND.half - 7;
+      let row = 0;
+      for (let r = start; r <= end; r += 1.7, row++) {
+        for (const off of [-1.5, 0, 1.5]) {
+          const tile = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.2, 1.7), (row + (off > 0 ? 1 : 0)) % 2 ? path : pathDark);
+          tile.position.set(dir.x * r + perp.x * off, 0.5, dir.z * r + perp.z * off);
+          tile.rotation.y = ang;
+          tile.userData.noCast = true;
+          this.group.add(tile);
+        }
+      }
     }
   }
 
