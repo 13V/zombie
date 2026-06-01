@@ -205,8 +205,8 @@ export class Island {
     const t = this.t;
     for (const e of this.eggs) {
       e.group.scale.setScalar(1 + e.lit * 0.08);
-      const bob = Math.sin(t * 2 + e.phase) * 0.1;
-      e.egg.position.y = 1.55 + bob + e.lit * 0.12;
+      const bob = Math.sin(t * 2 + e.phase) * 0.12;
+      e.egg.position.y = 2.05 + bob + e.lit * 0.14;
       // gentle wobble + a faster, livelier spin when a player is close
       e.egg.rotation.y += dt * (0.7 + e.lit * 1.8);
       e.egg.rotation.z = Math.sin(t * 1.7 + e.phase) * 0.12;
@@ -234,14 +234,15 @@ export class Island {
       g.group.scale.setScalar(1 + g.lit * 0.03);
       // scroll the energy bars upward, wrapping + fading near the top/bottom
       for (const s of g.slats) {
-        s.position.y += dt * (0.9 + g.lit * 0.8);
+        s.position.y += dt * (1.1 + g.lit * 1.0);
         if (s.position.y > g.veilH) s.position.y -= g.veilH;
         const f = s.position.y / g.veilH; // 0..1 up the arch
         const fade = Math.sin(f * Math.PI); // dim at both ends
-        (s.material as THREE.MeshStandardMaterial).opacity = (0.18 + g.lit * 0.3) * fade;
+        (s.material as THREE.MeshStandardMaterial).opacity = (0.45 + g.lit * 0.4) * fade;
       }
+      // the dark void backdrop just shimmers a touch brighter when approached
       const vm = g.veil.material as THREE.MeshStandardMaterial;
-      vm.opacity = 0.12 + (Math.sin(t * 2 + g.pos.x) + 1) * 0.04 + g.lit * 0.18;
+      vm.emissiveIntensity = 0.45 + (Math.sin(t * 2 + g.pos.x) + 1) * 0.12 + g.lit * 0.5;
       // ground rune slowly rotates + pulses
       g.rune.rotation.y += dt * 0.4;
       (g.rune.material as THREE.MeshStandardMaterial).emissiveIntensity =
@@ -383,7 +384,6 @@ export class Island {
   }
 
   private buildDecor() {
-    // layered foliage: chunky palms, rocks, flowers, mushrooms + grass tufts.
     const trunk = voxelMaterial(VOX.bark);
     const trunkDark = voxelMaterial(VOX.barkDark);
     const leaf = voxelMaterial(VOX.leaf);
@@ -394,31 +394,41 @@ export class Island {
     let seed = 1337;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
 
-    for (let i = 0; i < 54; i++) {
+    // points to keep clear so foliage never grows into a structure
+    const clearPts = [
+      new THREE.Vector3(-9, 0, -8), new THREE.Vector3(0, 0, -12), new THREE.Vector3(9, 0, -8),
+      new THREE.Vector3(8, 0, 5), new THREE.Vector3(-8, 0, 5),
+    ];
+    const tooClose = (x: number, z: number, pad: number) =>
+      clearPts.some((p) => (p.x - x) ** 2 + (p.z - z) ** 2 < pad * pad);
+
+    const makeTree = (x: number, z: number) => {
+      const tree = new THREE.Group();
+      const th = 1.8 + rnd() * 1.8;
+      const tk = new THREE.Mesh(new THREE.BoxGeometry(0.55, th, 0.55), rnd() < 0.5 ? trunk : trunkDark);
+      tk.position.y = th / 2;
+      const c1 = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.5, 2.1), leaf);
+      c1.position.y = th + 0.5;
+      const c2 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.2, 1.5), leaf);
+      c2.position.y = th + 1.45;
+      const c3 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.9), leafLight);
+      c3.position.y = th + 2.2;
+      tree.add(tk, c1, c2, c3);
+      tree.position.set(x, 0, z);
+      tree.rotation.y = rnd() * Math.PI;
+      this.group.add(tree);
+    };
+
+    // OUTER RING — big trees + rock clusters well clear of the play area, so the
+    // plaza/structures read clean. Trees only live from r≈17 out to the shore.
+    for (let i = 0; i < 64; i++) {
       const a = rnd() * Math.PI * 2;
-      const r = 9 + rnd() * (ISLAND.shore - 10);
+      const r = 17 + rnd() * (ISLAND.shore - 18);
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
-      if (Math.hypot(x, z) < 8.5) continue; // keep the plaza clear
-      const roll = rnd();
-      if (roll < 0.5) {
-        // leafy tree: 2-tone tapered canopy on a chunky trunk
-        const tree = new THREE.Group();
-        const th = 1.8 + rnd() * 1.6;
-        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.55, th, 0.55), rnd() < 0.5 ? trunk : trunkDark);
-        tk.position.y = th / 2;
-        const c1 = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.5, 2.1), leaf);
-        c1.position.y = th + 0.5;
-        const c2 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.2, 1.5), leaf);
-        c2.position.y = th + 1.45;
-        const c3 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.9), leafLight);
-        c3.position.y = th + 2.2;
-        tree.add(tk, c1, c2, c3);
-        tree.position.set(x, 0, z);
-        tree.rotation.y = rnd() * Math.PI;
-        this.group.add(tree);
-      } else if (roll < 0.68) {
-        // rock cluster
+      if (rnd() < 0.78) {
+        makeTree(x, z);
+      } else {
         const cl = new THREE.Group();
         const cnt = 1 + Math.floor(rnd() * 3);
         for (let k = 0; k < cnt; k++) {
@@ -430,25 +440,50 @@ export class Island {
         }
         cl.position.set(x, 0, z);
         this.group.add(cl);
-      } else if (roll < 0.86) {
-        // flower patch
+      }
+    }
+
+    // INNER BAND — only LOW dressing (flowers, tufts, mushrooms, pebbles) in the
+    // ring just outside the plaza, skipping anywhere near a gate/pad. Keeps the
+    // lawn around the hub lively without burying the structures.
+    for (let i = 0; i < 70; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 9.5 + rnd() * 6.5; // 9.5 .. 16
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      if (tooClose(x, z, 3.2)) continue;
+      const roll = rnd();
+      if (roll < 0.45) {
         const patch = new THREE.Group();
         const col = flowers[Math.floor(rnd() * flowers.length)];
         for (let k = 0; k < 3; k++) {
           const stem = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), voxelMaterial(VOX.flowerStem));
           stem.position.set((rnd() - 0.5) * 0.8, 0.25, (rnd() - 0.5) * 0.8);
-          const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), glowMaterial(col, 0.35));
+          const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 0.24), glowMaterial(col, 0.4));
           head.position.set(stem.position.x, 0.58, stem.position.z);
           patch.add(stem, head);
         }
         patch.position.set(x, 0, z);
         this.group.add(patch);
-      } else {
-        // grass tuft
+      } else if (roll < 0.7) {
         const t = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.4), tuft);
         t.position.set(x, 0.2, z);
         t.scale.y = 0.6 + rnd();
         this.group.add(t);
+      } else if (roll < 0.85) {
+        const m = new THREE.Group();
+        const stem = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.3, 0.16), voxelMaterial(VOX.mushroomStem));
+        stem.position.y = 0.15;
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.34), voxelMaterial(VOX.mushroomCap));
+        cap.position.y = 0.36;
+        m.add(stem, cap);
+        m.position.set(x, 0, z);
+        this.group.add(m);
+      } else {
+        const s = 0.3 + rnd() * 0.3;
+        const peb = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.6, s), voxelMaterial(VOX.pebble));
+        peb.position.set(x, s * 0.3, z);
+        this.group.add(peb);
       }
     }
   }
@@ -622,27 +657,30 @@ export class Island {
       key.position.set(0, height + 0.55, 0.34);
       gate.add(key);
 
-      // ---- portal veil: soft backdrop + scrolling energy bars ----
+      // ---- portal: a dark doorway "void" with bright energy bars flowing up ----
+      // The dark backdrop (normal-blended) reads as a real opening; the additive
+      // tier-colored bars + bloom turn it into a glowing portal rather than a
+      // flat pale sheet.
       const veilH = height;
       const veil = new THREE.Mesh(
-        new THREE.PlaneGeometry(halfW * 2 - 0.2, veilH),
+        new THREE.PlaneGeometry(halfW * 2 - 0.25, veilH),
         new THREE.MeshStandardMaterial({
-          color: m.color, emissive: m.color, emissiveIntensity: 1.0,
-          transparent: true, opacity: 0.14, depthWrite: false,
-          side: THREE.DoubleSide, toneMapped: false,
+          color: darken(m.color, 0.22), emissive: darken(m.color, 0.3), emissiveIntensity: 0.5,
+          transparent: true, opacity: 0.82, depthWrite: false,
+          side: THREE.DoubleSide,
         }),
       );
-      veil.position.set(0, veilH / 2, 0);
+      veil.position.set(0, veilH / 2, -0.04);
       gate.add(veil);
       const slats: THREE.Mesh[] = [];
       const slatN = 7;
       for (let i = 0; i < slatN; i++) {
         const slat = new THREE.Mesh(
-          new THREE.PlaneGeometry(halfW * 2 - 0.35, 0.16),
+          new THREE.PlaneGeometry(halfW * 2 - 0.4, 0.22),
           new THREE.MeshStandardMaterial({
-            color: m.color, emissive: m.color, emissiveIntensity: 1.4,
-            transparent: true, opacity: 0.25, depthWrite: false,
-            side: THREE.DoubleSide, toneMapped: false,
+            color: m.color, emissive: m.color, emissiveIntensity: 1.8,
+            transparent: true, opacity: 0.55, depthWrite: false,
+            side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false,
           }),
         );
         slat.position.set(0, (i / slatN) * veilH, 0.02);
@@ -759,54 +797,56 @@ export class Island {
       const g = new THREE.Group();
 
       // --- tiered pedestal (chunky voxel stone with a tier-colored gem inset) ---
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.72, 0.4, 8), voxelMaterial(VOX.stone));
-      base.position.y = 0.2;
-      const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.56, 0.55, 8), voxelMaterial(VOX.stoneDark));
-      mid.position.y = 0.67;
-      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.5, 0.22, 8), voxelMaterial(VOX.stone));
-      top.position.y = 1.05;
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.95, 0.5, 8), voxelMaterial(VOX.stone));
+      base.position.y = 0.25;
+      const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.72, 0.7, 8), voxelMaterial(VOX.stoneDark));
+      mid.position.y = 0.85;
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.64, 0.26, 8), voxelMaterial(VOX.stone));
+      top.position.y = 1.33;
       g.add(base, mid, top);
-      // gem inset on the pedestal front
-      const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), glowMaterial(e.color, 1.1));
-      gem.position.set(0, 0.67, 0.5);
-      g.add(gem);
+      // gem insets on the pedestal (front + back) so it glows from any angle
+      for (const gz of [0.62, -0.62]) {
+        const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), glowMaterial(e.color, 1.2));
+        gem.position.set(0, 0.85, gz);
+        g.add(gem);
+      }
       // glowing disc on top the egg floats above
-      const ringGlow = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.08, 16), glowMaterial(e.color, 0.9));
-      ringGlow.position.y = 1.18;
+      const ringGlow = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.66, 0.09, 16), glowMaterial(e.color, 0.9));
+      ringGlow.position.y = 1.48;
       g.add(ringGlow);
 
-      // --- the egg: a faceted, gem-like ovoid (flat-shaded catches the light) ---
-      const eggGeo = new THREE.IcosahedronGeometry(0.4, 1);
-      eggGeo.scale(1, 1.32, 1);
+      // --- the egg: a big faceted, gem-like ovoid (flat-shaded catches light) ---
+      const eggGeo = new THREE.IcosahedronGeometry(0.56, 1);
+      eggGeo.scale(1, 1.34, 1);
       const egg = new THREE.Mesh(eggGeo, glowMaterial(e.color, 0.95));
-      egg.position.y = 1.55;
-      // speckle pattern: a few bright accent cubes dotted over the shell
-      const speckN = 5;
+      egg.position.y = 2.05;
+      // speckle pattern: bright accent cubes banded around the shell
+      const speckN = 6;
       for (let s = 0; s < speckN; s++) {
         const sa = (s / speckN) * Math.PI * 2;
-        const sp = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), glowMaterial(0xfff6e0, 1.0));
-        sp.position.set(Math.cos(sa) * 0.34, 0.05 + (s % 2) * 0.22, Math.sin(sa) * 0.34);
+        const sp = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), glowMaterial(0xfff6e0, 1.0));
+        sp.position.set(Math.cos(sa) * 0.48, 0.06 + (s % 2) * 0.3, Math.sin(sa) * 0.48);
         egg.add(sp);
       }
       g.add(egg);
 
       // --- breathing aura shell ---
-      const aura = new THREE.Mesh(new THREE.IcosahedronGeometry(0.62, 1), auraMaterial(e.color, 0.6));
-      (aura.geometry as THREE.BufferGeometry).scale(1, 1.3, 1);
-      aura.position.y = 1.55;
+      const aura = new THREE.Mesh(new THREE.IcosahedronGeometry(0.86, 1), auraMaterial(e.color, 0.6));
+      (aura.geometry as THREE.BufferGeometry).scale(1, 1.32, 1);
+      aura.position.y = 2.05;
       g.add(aura);
 
       // --- rising light shaft ---
       const beam = new THREE.Mesh(
         // narrow at the egg, flaring upward — a shaft of rising magic
-        new THREE.CylinderGeometry(0.42, 0.12, 2.4, 8, 1, true),
+        new THREE.CylinderGeometry(0.55, 0.16, 2.8, 8, 1, true),
         new THREE.MeshStandardMaterial({
           color: e.color, emissive: e.color, emissiveIntensity: 1.0,
           transparent: true, opacity: 0.12, depthWrite: false,
           side: THREE.DoubleSide, toneMapped: false,
         }),
       );
-      beam.position.y = 2.6;
+      beam.position.y = 3.3;
       g.add(beam);
 
       // --- orbiting sparkles (more on richer tiers) ---
@@ -814,12 +854,12 @@ export class Island {
       const sparkN = 3 + i; // common 3 → mythic 7
       for (let s = 0; s < sparkN; s++) {
         const sa = (s / sparkN) * Math.PI * 2;
-        const rr = 0.7;
-        const spark = new THREE.Mesh(new THREE.OctahedronGeometry(0.08, 0), glowMaterial(0xffffff, 1.3));
-        spark.position.set(Math.cos(sa) * rr, (s % 2 ? 0.15 : -0.1), Math.sin(sa) * rr);
+        const rr = 0.92;
+        const spark = new THREE.Mesh(new THREE.OctahedronGeometry(0.1, 0), glowMaterial(0xffffff, 1.3));
+        spark.position.set(Math.cos(sa) * rr, (s % 2 ? 0.2 : -0.15), Math.sin(sa) * rr);
         orbit.add(spark);
       }
-      orbit.position.y = 1.55;
+      orbit.position.y = 2.05;
       g.add(orbit);
 
       g.position.copy(pos);
@@ -882,9 +922,10 @@ export class Island {
       this.motes.push({ mesh: mote, baseY, phase: rnd() * 6.28, speed: 0.3 + rnd() * 0.5, span: 3 + rnd() * 2 });
       this.group.add(mote);
     }
-    // chunky drifting clouds high overhead
-    const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: 0.85 });
-    for (let i = 0; i < 6; i++) {
+    // chunky drifting clouds, kept high overhead + soft so they don't crowd the
+    // structures (the earlier pass had them low enough to drift over the gates).
+    const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: 0.7 });
+    for (let i = 0; i < 5; i++) {
       const cloud = new THREE.Group();
       const n = 3 + Math.floor(rnd() * 3);
       for (let k = 0; k < n; k++) {
@@ -893,12 +934,20 @@ export class Island {
         blk.position.set((rnd() - 0.5) * 4, (rnd() - 0.5) * 0.6, (rnd() - 0.5) * 2);
         cloud.add(blk);
       }
-      const reset = 46;
-      cloud.position.set(-reset + rnd() * reset * 2, 13 + rnd() * 4, -18 + rnd() * 36);
+      const reset = 48;
+      cloud.position.set(-reset + rnd() * reset * 2, 20 + rnd() * 5, -22 + rnd() * 44);
       this.clouds.push({ mesh: cloud as unknown as THREE.Mesh, speed: 0.4 + rnd() * 0.5, reset });
       this.group.add(cloud);
     }
   }
+}
+
+/** Multiply an 0xRRGGBB color toward black (f in 0..1). */
+function darken(color: number, f: number): number {
+  const r = Math.floor(((color >> 16) & 0xff) * f);
+  const g = Math.floor(((color >> 8) & 0xff) * f);
+  const b = Math.floor((color & 0xff) * f);
+  return (r << 16) | (g << 8) | b;
 }
 
 /** Default visual set for the 5 egg shrines (id + tier color + walk-up label). */
