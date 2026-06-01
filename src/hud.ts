@@ -294,9 +294,17 @@ export class Hud {
   onLeaveIsland(cb: () => void) {
     this.q("#btn-leave-island").addEventListener("click", cb);
   }
-  /** Bring the menu/shop overlay back up (used by the island Shop pad). */
-  openShop() {
+  /** Bring the menu/shop overlay back up (used by the island Shop pad). Pass a
+   *  tab id (e.g. "pets") to open straight to it — the Pet Sanctuary uses this. */
+  openShop(tab?: string) {
     this.startOverlay.classList.remove("hidden");
+    if (tab) {
+      this.root.querySelectorAll<HTMLButtonElement>(".shop-tab").forEach((b) =>
+        b.classList.toggle("active", b.dataset.tab === tab));
+      for (const name of ["upgrades", "skins", "challenges", "market", "pets"]) {
+        this.q(`#tab-${name}`).classList.toggle("hidden", name !== tab);
+      }
+    }
   }
   /** Full build UI: category tabs + part chips + colour swatches + a tool row
    *  (rotate / paint / undo / done). Everything is an on-screen button so it

@@ -52,16 +52,19 @@ const STALLS = [
   { x: 0, z: 18.5, color: VOX.barrel },
   { x: 5.5, z: 17, color: VOX.rvStripe },
 ];
+// The Pet Sanctuary — a pavilion where you equip + flex your squad.
+const SANCTUARY = new THREE.Vector3(7.5, 0, 9.8);
 // every structure footprint foliage must avoid
 const CLEAR_PTS = [...GATES, ...PADS].map((d) => d.pos).concat(
   HOUSES.map((h) => new THREE.Vector3(h.x, 0, h.z)),
   STALLS.map((s) => new THREE.Vector3(s.x, 0, s.z)),
+  [SANCTUARY],
 );
 
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
   id: string;
-  kind: "mode" | "join" | "shop" | "egg";
+  kind: "mode" | "join" | "shop" | "egg" | "pets";
   pos: THREE.Vector3;
   radius: number; // proximity radius that triggers the prompt
   label: string; // shown in the proximity prompt
@@ -135,6 +138,8 @@ export class Island {
   private fountainJets: THREE.Mesh[] = [];
   private fountainSpire?: THREE.Mesh;
   private lilies: THREE.Mesh[] = [];
+  private sanctuaryOrb?: THREE.Mesh; // spinning centerpiece of the Pet Sanctuary
+  private sanctuaryHearts?: THREE.Group; // little hearts orbiting it
   private smokes: Mote[] = []; // chimney smoke puffs (reuse the Mote drift record)
   // warm golden-hour mood — applied to the shared scene only while the hub shows
   private scene: THREE.Scene;
@@ -158,6 +163,7 @@ export class Island {
     this.buildZones();
     this.buildModes();
     this.buildEggs();
+    this.buildSanctuary();
     this.buildHouses();
     this.buildLighting();
     this.buildGreeter();
@@ -282,6 +288,16 @@ export class Island {
     if (this.arrow) {
       this.arrow.position.y = 3.6 + Math.sin(t * 2.2) * 0.2;
       this.arrow.rotation.y += dt * 1.5;
+    }
+
+    if (this.sanctuaryOrb) {
+      this.sanctuaryOrb.rotation.y += dt * 1.1;
+      this.sanctuaryOrb.position.y = 2.0 + Math.sin(t * 1.8) * 0.12;
+      (this.sanctuaryOrb.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.1 + (Math.sin(t * 2.5) + 1) * 0.3;
+    }
+    if (this.sanctuaryHearts) {
+      this.sanctuaryHearts.rotation.y += dt * 1.6;
+      this.sanctuaryHearts.children.forEach((h, i) => { h.position.y = (i % 2 ? 0.15 : -0.1) + Math.sin(t * 3 + i) * 0.08; });
     }
 
     this.animateFountain(dt);
@@ -1074,6 +1090,64 @@ export class Island {
       this.eggs.push({ id: e.id, group: g, egg, aura, orbit, beam, ringGlow, pos: pos.clone(), phase: i * 1.3, color: e.color, lit: 0 });
       this.zones.push({ id: e.id, kind: "egg", pos: pos.clone(), radius: 1.9, label: e.label, eggId: e.id });
     });
+  }
+
+  /**
+   * The Pet Sanctuary — a little hexagonal pavilion where you walk up to equip
+   * your squad (opens the Pets shop tab) and show them off. A stone podium under
+   * six timber posts holding a canopy, crowned by a spinning glowing orb with
+   * hearts orbiting it. Your equipped pets float around you in the hub already,
+   * so this is the "manage + flex" spot.
+   */
+  private buildSanctuary() {
+    const g = new THREE.Group();
+    const stone = voxelMaterial(VOX.stone);
+    const wood = voxelMaterial(VOX.bark);
+    // raised stone podium + a step ring
+    const podium = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.5, 0.45, 6), stone);
+    podium.position.y = 0.22;
+    const stepRing = new THREE.Mesh(new THREE.CylinderGeometry(2.7, 2.9, 0.22, 6), voxelMaterial(VOX.stoneDark));
+    stepRing.position.y = 0.11;
+    const floor = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.0, 0.08, 6), glowMaterial(0xff9ec7, 0.5));
+    floor.position.y = 0.46;
+    g.add(stepRing, podium, floor);
+    // six posts + a canopy roof + finial
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.26, 3.0, 0.26), wood);
+      post.position.set(Math.cos(a) * 2.0, 1.95, Math.sin(a) * 2.0);
+      g.add(post);
+    }
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(2.9, 1.4, 6), voxelMaterial(VOX.roofPurple));
+    roof.position.y = 4.1;
+    roof.rotation.y = Math.PI / 6;
+    const roofTrim = new THREE.Mesh(new THREE.CylinderGeometry(2.9, 2.9, 0.2, 6), voxelMaterial(VOX.woodTrim));
+    roofTrim.position.y = 3.5;
+    g.add(roof, roofTrim);
+    // central pedestal + spinning glowing orb (the flex centerpiece)
+    const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.0, 8), stone);
+    ped.position.y = 0.96;
+    g.add(ped);
+    const orb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.5, 1), glowMaterial(0xff7ab0, 1.2));
+    orb.position.y = 2.0;
+    this.sanctuaryOrb = orb;
+    g.add(orb);
+    // little hearts orbiting the orb
+    const hearts = new THREE.Group();
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      const heart = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), glowMaterial(0xff9ec7, 1.2));
+      heart.position.set(Math.cos(a) * 0.95, (i % 2 ? 0.15 : -0.1), Math.sin(a) * 0.95);
+      hearts.add(heart);
+    }
+    hearts.position.y = 2.0;
+    this.sanctuaryHearts = hearts;
+    g.add(hearts);
+
+    g.position.copy(SANCTUARY);
+    g.rotation.y = Math.atan2(-SANCTUARY.x, -SANCTUARY.z); // face the plaza
+    this.group.add(g);
+    this.zones.push({ id: "pets", kind: "pets", pos: SANCTUARY.clone(), radius: 2.5, label: "Pet Sanctuary — equip & flex your pets" });
   }
 
   /**

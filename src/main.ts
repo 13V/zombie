@@ -1473,6 +1473,7 @@ class Game implements GameApi {
     this.player.alive = true;
     this.player.pos.set(0, 0, 11); // stand at the front of the village square
     this.camZoomTarget = 1.7; // pull back so the whole village reads (wheel/pinch to adjust)
+    this.spawnPets(); // bring the equipped squad into the hub so they follow + flex
     this.player.group.position.copy(this.player.pos);
     this.hud.setIslandMode(true);
     this.emoteMenu?.setAvailable(true);
@@ -1532,6 +1533,11 @@ class Game implements GameApi {
     this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, false);
     this.island.clamp(this.player.pos);
     this.player.group.position.copy(this.player.pos);
+
+    // Equipped pets float around you in the hub so you can flex them (no combat
+    // here — target=null just orbits + idles them around the player).
+    this.pets.forEach((p, i) =>
+      p.update(dt, this.player.pos.x, this.player.pos.z, i, this.pets.length, null));
 
     // open the emote wheel + quick-chat with "T" (touch uses the on-screen button)
     if (this.input.pressed("KeyT")) this.emoteMenu?.toggle();
@@ -1613,6 +1619,9 @@ class Game implements GameApi {
       }
       case "shop":
         this.hud.openShop();
+        break;
+      case "pets":
+        this.hud.openShop("pets"); // straight to the squad-equip tab
         break;
       case "egg":
         this.openEgg(zone.eggId ?? "");
