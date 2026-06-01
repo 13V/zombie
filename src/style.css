@@ -1337,7 +1337,7 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 }
 .shop-modal .tab { max-height: min(62vh, 460px); }
 /* pets-only: drop the tab bar entirely, keep the balance chips */
-.pets-only .shop-tabs { display: none !important; }
+.solo-tab .shop-tabs { display: none !important; }
 
 /* floating close button — only in the modal */
 .overlay-close { display: none; }
@@ -1477,9 +1477,9 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 /* ============================================================
    Pets panel: near-fullscreen + stat blocks on the cards
    ============================================================ */
-.pets-only .shop { width: min(97vw, 1240px); }
-.pets-only .tab { max-height: min(80vh, 900px); }
-.pets-only .pets-grid {
+.solo-tab .shop { width: min(97vw, 1240px); }
+.solo-tab .tab { max-height: min(80vh, 900px); }
+.solo-tab .pets-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 12px;
@@ -1522,3 +1522,37 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
   font-size: 26px;
   padding: 18px 56px;
 }
+
+/* ============================================================
+   Skins overhaul — rarity-bordered preview cards (like pets)
+   ============================================================ */
+.skin-card {
+  border-width: 2px;
+  border-color: color-mix(in srgb, var(--rc, #888) 55%, rgba(0,0,0,0.3));
+  border-radius: 14px;
+  padding: 8px 6px;
+}
+.skin-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.4), 0 0 16px color-mix(in srgb, var(--rc) 50%, transparent);
+}
+.skin-card.equipped { border-color: #6ad7ff; box-shadow: 0 0 14px rgba(106,215,255,0.45); }
+.skin-card.owned { box-shadow: 0 0 10px color-mix(in srgb, var(--rc) 30%, transparent); }
+.skin-stage {
+  width: 100%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: radial-gradient(ellipse at 50% 72%, color-mix(in srgb, var(--rc) 24%, transparent), rgba(0,0,0,0.28));
+}
+.skin-preview {
+  width: 94%; height: 94%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 4px 8px rgba(0,0,0,0.45));
+  transition: transform 0.13s ease;
+}
+.skin-card:hover .skin-preview { transform: scale(1.06); }
+.skin-rarity { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
+.solo-tab .skin-grid { grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 12px; }

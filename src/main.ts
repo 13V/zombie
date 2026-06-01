@@ -38,6 +38,7 @@ import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, ro
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
+import { skinThumbnail } from "./skinthumb";
 import { makeItem, rollRarity, rollRarityPity, resetPity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, AffixCode, warmServer, getServerUrl, setServerUrl } from "./net";
@@ -270,7 +271,7 @@ class Game implements GameApi {
     // Menu progression UI (best run + Essence shop) + equipped cosmetic skin.
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
     const skin = findSkin(this.save.skin);
-    this.player.setSkin(skin.body, skin.head);
+    this.player.setSkin(skin.body, skin.head, skin.glow ?? 0x000000);
     this.renderShop();
 
     this.rounds.onRoundStart = (n) => {
@@ -456,9 +457,12 @@ class Game implements GameApi {
       body: s.body,
       head: s.head,
       cost: s.cost,
-      owned: this.save.skins.includes(s.id),
+      owned: this.save.skins.includes(s.id) || s.cost === 0,
       equipped: this.save.skin === s.id,
       affordable: this.save.essence >= s.cost,
+      rarity: s.rarity,
+      rarityColor: RARITY_COLOR[s.rarity as Rarity] ?? "#b8c2cc",
+      thumb: skinThumbnail(s.id),
     }));
     this.hud.renderSkins(this.save.essence, skins, (id) => this.selectSkin(id));
 
@@ -822,7 +826,7 @@ class Game implements GameApi {
     }
     this.save.skin = id;
     writeSave(this.save);
-    this.player.setSkin(skin.body, skin.head);
+    this.player.setSkin(skin.body, skin.head, skin.glow ?? 0x000000);
     this.renderShop();
   }
 
@@ -1761,6 +1765,10 @@ class Game implements GameApi {
       case "pets":
         this.renderShop();
         this.hud.openShop("pets", true); // pets-ONLY panel (no menu/Play chrome)
+        break;
+      case "wardrobe":
+        this.renderShop();
+        this.hud.openShop("skins", true); // skins-ONLY panel
         break;
       case "egg":
         this.openEgg(zone.eggId ?? "");

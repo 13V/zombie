@@ -64,7 +64,7 @@ const CLEAR_PTS = [...GATES, ...PADS].map((d) => d.pos).concat(
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
   id: string;
-  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel";
+  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel" | "wardrobe";
   pos: THREE.Vector3;
   radius: number; // proximity radius that triggers the prompt
   label: string; // shown in the proximity prompt
@@ -142,6 +142,7 @@ export class Island {
   private lbTex?: THREE.CanvasTexture;
   private wheelMesh?: THREE.Mesh; // fortune wheel face (idle-spins)
   private chestGlow?: THREE.Mesh; // daily chest glow (pulses while claimable)
+  private wardrobeMannequin?: THREE.Mesh; // rotating wardrobe dummy
   private smokes: Mote[] = []; // chimney smoke puffs (reuse the Mote drift record)
   // warm golden-hour mood — applied to the shared scene only while the hub shows
   private scene: THREE.Scene;
@@ -313,6 +314,7 @@ export class Island {
       this.chestGlow.rotation.y += dt * 1.5;
       this.chestGlow.position.y = 1.7 + Math.sin(t * 3) * 0.1;
     }
+    if (this.wardrobeMannequin) this.wardrobeMannequin.rotation.y += dt * 0.6;
     this.animateFlames();
     this.animateBanners();
     this.animateAtmosphere(dt);
@@ -1295,6 +1297,7 @@ export class Island {
       daily: { text: "DAILY CHEST", color: 0xffd24a, h: 3.6 },
       index: { text: "COLLECTION", color: 0x6ad7ff, h: 5.6 },
       wheel: { text: "FORTUNE WHEEL", color: 0xff9ec7, h: 6.4 },
+      wardrobe: { text: "WARDROBE", color: 0xc792ea, h: 4.6 },
       pets: { text: "PET SANCTUARY", color: 0xff7ab0, h: 5.6 },
       shop: { text: "SHOP", color: 0xffd24a, h: 3.8 },
       join: { text: "JOIN FRIEND", color: 0x6ad7ff, h: 3.8 },
@@ -1396,6 +1399,47 @@ export class Island {
       w.scale.setScalar(1.5);
       this.group.add(w);
       this.zones.push({ id: "wheel", kind: "wheel", pos, radius: 2.6, label: "Fortune Wheel" });
+    }
+    // ---- wardrobe mannequin (left side) ----
+    {
+      const g = new THREE.Group();
+      const podium = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.2, 0.4, 12), voxelMaterial(VOX.stone));
+      podium.position.y = 0.2;
+      const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.1, 16), glowMaterial(0xc792ea, 0.7));
+      ring.position.y = 0.42;
+      g.add(podium, ring);
+      // a slowly-rotating mannequin (the "hero" silhouette) to flaunt skins
+      const dummy = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.0, 0.5), glowMaterial(0x6e4a9e, 0.5));
+      body.position.y = 1.1;
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), glowMaterial(0xffd6f4, 0.4));
+      head.position.y = 1.95;
+      const stand = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 0.12), voxelMaterial(VOX.steelDark));
+      stand.position.y = 0.55;
+      dummy.add(stand, body, head);
+      this.wardrobeMannequin = dummy as unknown as THREE.Mesh;
+      g.add(dummy);
+      // two coat-rack posts with a crossbar + hanging "garments"
+      for (const px of [-1.5, 1.5]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.4, 0.14), voxelMaterial(VOX.bark));
+        post.position.set(px, 1.2, -0.4);
+        g.add(post);
+      }
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.12, 0.12), voxelMaterial(VOX.bark));
+      bar.position.set(0, 2.35, -0.4);
+      g.add(bar);
+      const gcols = [0xb23a3a, 0x4aa6d6, 0x7ad14a, 0xffcf52];
+      gcols.forEach((col, i) => {
+        const garment = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 0.12), glowMaterial(col, 0.4));
+        garment.position.set(-1.1 + i * 0.73, 1.75, -0.4);
+        g.add(garment);
+      });
+      const pos = new THREE.Vector3(-12, 0, -1);
+      g.position.copy(pos);
+      g.rotation.y = Math.atan2(-pos.x, -pos.z);
+      g.scale.setScalar(1.3);
+      this.group.add(g);
+      this.zones.push({ id: "wardrobe", kind: "wardrobe", pos, radius: 2.4, label: "Wardrobe" });
     }
   }
 

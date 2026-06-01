@@ -128,8 +128,8 @@ export class Player {
   }
 
   /** Apply a cosmetic skin (recolors the voxel hero; no-op for GLB rigs). */
-  setSkin(body: number, head: number) {
-    if (this.char instanceof VoxelChar) this.char.setColor(body, head);
+  setSkin(body: number, head: number, glow = 0x000000) {
+    if (this.char instanceof VoxelChar) this.char.setColor(body, head, glow);
   }
 
   /** Swap the held weapon model to match the active weapon (cheap if unchanged). */

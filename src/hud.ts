@@ -22,6 +22,9 @@ export interface SkinRow {
   owned: boolean;
   equipped: boolean;
   affordable: boolean;
+  rarity: string;
+  rarityColor: string;
+  thumb?: string; // data-URL preview of the hero in this skin
 }
 
 /** A challenge row for the challenges tab. */
@@ -306,10 +309,10 @@ export class Hud {
   /** Open the shop as a focused MODAL over the island (no menu/Play chrome — you're
    *  already in the hub). `tab` jumps to a tab; `petsOnly` shows just the Pets
    *  panel (used by the Pet Sanctuary). A ✕ closes back to the island. */
-  openShop(tab?: string, petsOnly = false) {
+  openShop(tab?: string, soloTab = false) {
     this.startOverlay.classList.remove("hidden", "splash");
     this.startOverlay.classList.add("shop-modal");
-    this.startOverlay.classList.toggle("pets-only", petsOnly);
+    this.startOverlay.classList.toggle("solo-tab", soloTab);
     if (tab) {
       this.root.querySelectorAll<HTMLButtonElement>(".shop-tab").forEach((b) =>
         b.classList.toggle("active", b.dataset.tab === tab));
@@ -495,30 +498,42 @@ export class Hud {
     });
   }
 
-  /** Render the cosmetic skins tab. Click = equip (if owned) or buy. */
+  /** Render the cosmetic skins tab — a rarity-grouped grid of hero previews with
+   *  owned/equipped state + completion header. Click = equip (if owned) or buy. */
   renderSkins(essence: number, rows: SkinRow[], onSelect: (id: string) => void) {
     this.setEssenceBalance(essence);
-    const tab = this.q("#tab-skins");
-    tab.innerHTML = `<div class="skin-grid">
-        ${rows
-          .map((r) => {
-            const cls = r.equipped ? "equipped" : r.owned ? "owned" : r.affordable ? "" : "locked";
-            const tag = r.equipped ? "EQUIPPED" : r.owned ? "EQUIP" : `✦ ${r.cost}`;
-            const b = `#${r.body.toString(16).padStart(6, "0")}`;
-            const h = `#${r.head.toString(16).padStart(6, "0")}`;
-            return `<button class="skin-card ${cls}" data-id="${r.id}">
-                <span class="skin-fig"><span class="skin-head" style="background:${h}"></span><span class="skin-body" style="background:${b}"></span></span>
-                <span class="skin-name">${r.name}</span>
-                <span class="skin-tag">${tag}</span>
-              </button>`;
-          })
-          .join("")}
-      </div>`;
-    tab.querySelectorAll<HTMLButtonElement>(".skin-card").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.dataset.id;
-        if (id) onSelect(id);
-      });
+    const order = ["common", "uncommon", "rare", "epic", "legendary", "mythic"];
+    const label = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
+    const card = (r: SkinRow) => {
+      const cls = r.equipped ? "equipped" : r.owned ? "owned" : r.affordable ? "" : "locked";
+      const tag = r.equipped ? "✓ EQUIPPED" : r.owned ? "EQUIP" : `✦ ${r.cost}`;
+      const b = `#${r.body.toString(16).padStart(6, "0")}`;
+      const h = `#${r.head.toString(16).padStart(6, "0")}`;
+      const stage = r.thumb
+        ? `<div class="skin-stage"><img class="skin-preview" src="${r.thumb}" alt="" loading="lazy" /></div>`
+        : `<div class="skin-stage"><span class="skin-fig"><span class="skin-head" style="background:${h}"></span><span class="skin-body" style="background:${b}"></span></span></div>`;
+      return `<button class="skin-card ${cls}" data-id="${r.id}" style="--rc:${r.rarityColor}">
+          ${stage}
+          <span class="skin-name">${r.name}</span>
+          <span class="skin-rarity" style="color:${r.rarityColor}">${label(r.rarity)}</span>
+          <span class="skin-tag">${tag}</span>
+        </button>`;
+    };
+    const ownedN = rows.filter((r) => r.owned).length;
+    const sections = order
+      .map((rar) => ({ rar, items: rows.filter((r) => r.rarity === rar) }))
+      .filter((g) => g.items.length)
+      .map((g) => `
+        <div class="pet-rarity-head" style="--rc:${g.items[0].rarityColor}">${label(g.rar)}
+          <span class="pet-rarity-count">${g.items.filter((i) => i.owned).length}/${g.items.length}</span>
+        </div>
+        <div class="skin-grid">${g.items.map(card).join("")}</div>`)
+      .join("");
+    this.q("#tab-skins").innerHTML = `
+      <div class="mkt-head"><span>✦ <b>${essence}</b> Essence</span><span class="pets-hint">Collected ${ownedN}/${rows.length} skins</span></div>
+      ${sections}`;
+    this.q("#tab-skins").querySelectorAll<HTMLButtonElement>(".skin-card").forEach((btn) => {
+      btn.addEventListener("click", () => { const id = btn.dataset.id; if (id) onSelect(id); });
     });
   }
 
@@ -1100,7 +1115,7 @@ export class Hud {
 
   showStart() {
     // splash/boot/game-over: a clean screen offering ONLY "Enter Island"
-    this.startOverlay.classList.remove("hidden", "shop-modal", "pets-only");
+    this.startOverlay.classList.remove("hidden", "shop-modal", "solo-tab");
     this.startOverlay.classList.add("splash");
   }
   hideStart() {
