@@ -1,45 +1,56 @@
 import * as THREE from "three";
 import { BedWarsMap, type BwTeamId } from "./bwmap";
-import { makeGenerator, tickGenerator, emptyWallet, addToWallet, type BwGenerator, type BwWallet } from "./bwresources";
+import { makeGenerator, tickGenerator, emptyWallet, addToWallet, type BwGenerator, type BwResource, type BwWallet } from "./bwresources";
 import { createMatch, breakBed, killPlayer, respawnPlayer, isTeamOut, aliveTeams, type BwMatch } from "./bwteams";
 import { BwBots } from "./bwbots";
+import { BwGolems } from "./bwgolem";
+import { BwDragons } from "./bwdragon";
 import { BwShopUI } from "./bwshopui";
+import { BwUpgradeUI } from "./bwupgradeui";
 import { bwBuy, bwCanAfford, type BwShopItem } from "./bwshop";
+import {
+  bwInitUpgrades, bwBuyUpgrade, bwUpgradeCost, bwDamageMul, bwDamageReduction, bwFireRateMul,
+  bwForgeMul, bwHealPoolRate, bwDragonBonus, bwInitTraps, bwQueueTrap, bwPopTrap, bwNextTrapCost,
+  type BwUpgradeId, type BwUpgradeState, type BwTrapId, type BwTrapQueue,
+} from "./bwupgrades";
+import { glowMaterial } from "../palette";
 import { VoxelChar } from "../voxelChar";
 
 interface Bed { team: BwTeamId; pos: THREE.Vector3; color: number; hp: number; max: number; dead: boolean; group: THREE.Group }
-
-/** An enemy team's lone defender — the unit that embodies its "lives". While the
- *  team's bed stands, killing the guardian just respawns it; once the bed is
- *  broken, the next kill ELIMINATES the team (classic Bed Wars). */
 interface Guardian { team: BwTeamId; playerId: number; char: VoxelChar; pos: THREE.Vector3; hp: number; max: number; alive: boolean; respawn: number; flash: number }
+/** A resource node you must walk to (diamond at mid, emerald at centre). Drops
+ *  pile up while un-collected, then sweep into your wallet when you stand near. */
+interface GemGen { kind: BwResource; gen: BwGenerator; pos: THREE.Vector3; sitting: number; mesh: THREE.Mesh }
 
-const WAVE_START = 7;      // seconds between raider waves at the start
-const WAVE_MIN = 2.4;      // floor
-const WAVE_RAMP = 0.985;   // interval *= this each wave
+const WAVE_START = 7;
+const WAVE_MIN = 2.4;
+const WAVE_RAMP = 0.985;
 const MAX_RAIDERS = 10;
 const BED_HP = 120;
 
-const PLAYER_HP = 100;     // your Bed Wars health pool (separate from the run)
-const PLAYER_RESPAWN = 5;  // seconds dead before you re-materialise at your base
-const RAIDER_DPS = 11;     // contact damage per raider within reach of you, per sec
-const RAIDER_TOUCH = 1.7;  // how close a raider must be to chip your health
+const PLAYER_HP = 100;
+const PLAYER_RESPAWN = 5;
+const RAIDER_DPS = 11;
+const RAIDER_TOUCH = 1.7;
 
 const GUARD_HP = 70;
-const GUARD_RESPAWN = 4;   // guardian respawn delay (only while the bed is alive)
-const GUARD_HIT_R = 1.3;   // bullet hit radius around a guardian
+const GUARD_RESPAWN = 4;
+const GUARD_HIT_R = 1.3;
+
+const BASE_RADIUS = 6;     // "near your base" for heal-pool + trap triggers
+const GEM_COLLECT_R = 3;   // walk this close to sweep a gem pile into your wallet
+const TRAP_COOLDOWN = 6;   // min seconds between trap triggers
+const SUDDEN_DEATH = 210;  // seconds → beds auto-break + dragons descend
+const DRAGON_DMG_MUL = 1;
 
 /**
- * Bed Wars-lite controller (solo vs bots). Owns the world, beds (with HP), the
- * raider bots, an enemy GUARDIAN per team, the resource generators + wallet, the
- * shop UI, your health + respawn, and the win loop. main drives it:
- * enter() / tick() / resolveHit() / leave(), keeping the player, camera, input
- * and bullets.
- *
- * Lives rule (https://hypixel.fandom.com/wiki/Bed_Wars): while a team's bed
- * stands, its deaths are RESPAWNS; once the bed is gone, the next death is
- * FINAL. Destroy every enemy bed AND finish their guardians to win; lose when
- * your bed is gone and you die.
+ * Bed Wars-lite controller (solo vs bots) — a faithful port of the Hypixel
+ * feature set adapted to our engine. Owns the world, beds (HP), raider waves, an
+ * enemy guardian per team, FOUR resources (iron/gold at base, diamond at the
+ * mids, emerald at centre) with a Forge multiplier, the item shop + a diamond
+ * Team-Upgrades shop (sharpness / protection / haste / forge / heal-pool /
+ * dragon-buff) with a trap queue, summonable Dream-Defender golems, your health
+ * + respawn, a sudden-death dragon phase, and the win loop.
  */
 export class BedWarsMode {
   private map: BedWarsMap;
@@ -47,44 +58,65 @@ export class BedWarsMode {
   private beds = new Map<BwTeamId, Bed>();
   private guards: Guardian[] = [];
   private bots: BwBots;
+  private golems: BwGolems;
+  private dragons: BwDragons;
   private gens: { team: BwTeamId; gen: BwGenerator }[] = [];
+  private gems: GemGen[] = [];
+  private gemGroup = new THREE.Group();
   wallet: BwWallet = emptyWallet();
   readonly playerTeam: BwTeamId = "red";
-  private readonly playerId = 1; // the human's slot in the match roster
+  private readonly playerId = 1;
   private active = false;
   private hud?: HTMLElement;
   private shop?: BwShopUI;
+  private upgUI?: BwUpgradeUI;
   private waveTimer = WAVE_START;
   private waveInterval = WAVE_START;
+
+  // ---- team upgrades + traps ----
+  private upgrades: BwUpgradeState = bwInitUpgrades();
+  private traps: BwTrapQueue = bwInitTraps();
+  private trapCd = 0;       // cooldown gate so a single raid pops one trap
+  private speedBuff = 0;    // Counter-Offensive trap → brief move-speed boost
 
   // ---- your life ----
   playerHp = PLAYER_HP;
   readonly playerMax = PLAYER_HP;
-  /** > 0 while you're dead and waiting to respawn (your bed is still alive). */
   respawnTimer = 0;
-  /** Set the frame your respawn completes so main can re-seat you at base. */
   private respawnReady = false;
 
-  /** Set when the match ends; main reads it to show win/lose + leave. */
+  // ---- match clock / sudden death ----
+  private elapsed = 0;
+  private suddenDeath = false;
+
   result: { over: boolean; win: boolean } = { over: false, win: false };
 
   constructor(scene: THREE.Scene) {
     this.map = new BedWarsMap(scene);
     this.match = createMatch([]);
     this.bots = new BwBots(scene);
+    this.golems = new BwGolems(scene);
+    this.dragons = new BwDragons(scene);
+    scene.add(this.gemGroup);
   }
 
   spawn(): THREE.Vector3 {
     const t = this.map.teams.find((x) => x.id === this.playerTeam) ?? this.map.teams[0];
     return t.base.clone();
   }
-  /** Where the Shop pad sits (the player's base) — main shows a prompt near it. */
   shopSpot(): THREE.Vector3 { return this.spawn(); }
   get shopOpen(): boolean { return !!this.shop?.isOpen; }
-  /** True while you're dead and the respawn clock is running. */
+  get upgradesOpen(): boolean { return !!this.upgUI?.isOpen; }
+  get anyMenuOpen(): boolean { return this.shopOpen || this.upgradesOpen; }
   get playerWaiting(): boolean { return this.respawnTimer > 0; }
-  /** Consume the one-shot "you just respawned" edge (main re-seats you at base). */
   consumeRespawn(): boolean { const r = this.respawnReady; this.respawnReady = false; return r; }
+
+  /** Fire-rate multiplier from Maniac Miner (haste) — main applies it on fire. */
+  fireRateMul(): number { return bwFireRateMul(this.upgrades); }
+  /** Move-speed multiplier (Counter-Offensive trap buff while it lasts). */
+  playerSpeedMul(): number { return this.speedBuff > 0 ? 1.4 : 1; }
+  /** Seconds until sudden death (0 once it's begun) — for the HUD clock. */
+  get timeToSuddenDeath(): number { return Math.max(0, SUDDEN_DEATH - this.elapsed); }
 
   clamp(pos: THREE.Vector3) {
     const max = 33;
@@ -107,17 +139,24 @@ export class BedWarsMode {
     }
     this.gens = this.map.teams.map((t) => ({ team: t.id, gen: makeGenerator(`${t.id}-iron`, "iron") }));
     this.gens.push({ team: this.playerTeam, gen: makeGenerator(`${this.playerTeam}-gold`, "gold") });
-    this.gens.push({ team: this.playerTeam, gen: makeGenerator("center-emerald", "emerald") });
-    // one player per team: the human on playerTeam, a bot defender on each other.
+    this.buildGemGens();
     this.match = createMatch(this.map.teams.map((t, i) => ({ id: i + 1, team: t.id, bot: t.id !== this.playerTeam })));
     this.spawnGuardians();
     this.wallet = emptyWallet();
+    this.upgrades = bwInitUpgrades();
+    this.traps = bwInitTraps();
+    this.trapCd = 0;
+    this.speedBuff = 0;
+    this.elapsed = 0;
+    this.suddenDeath = false;
     this.waveInterval = WAVE_START;
     this.waveTimer = WAVE_START;
     this.playerHp = PLAYER_HP;
     this.respawnTimer = 0;
     this.respawnReady = false;
-    if (!this.shop) this.shop = new BwShopUI(document.getElementById("ui") ?? document.body);
+    const uiRoot = document.getElementById("ui") ?? document.body;
+    if (!this.shop) this.shop = new BwShopUI(uiRoot);
+    if (!this.upgUI) this.upgUI = new BwUpgradeUI(uiRoot);
     this.buildHud();
   }
 
@@ -129,23 +168,59 @@ export class BedWarsMode {
     this.beds.clear();
     for (const g of this.guards) this.disposeGuardian(g);
     this.guards.length = 0;
+    this.clearGems();
     this.bots.clear();
+    this.golems.clear();
+    this.dragons.clear();
     this.shop?.close();
+    this.upgUI?.close();
     this.hud?.remove();
     this.hud = undefined;
   }
 
-  // ---- enemy guardians ----
+  // ── diamond / emerald gem generators (walk-to-collect) ─────────────────────
+  private buildGemGens() {
+    this.clearGems();
+    const spots: { kind: BwResource; pos: THREE.Vector3 }[] = [
+      { kind: "diamond", pos: new THREE.Vector3(12, 0, 0) },
+      { kind: "diamond", pos: new THREE.Vector3(-12, 0, 0) },
+      { kind: "diamond", pos: new THREE.Vector3(0, 0, 12) },
+      { kind: "diamond", pos: new THREE.Vector3(0, 0, -12) },
+      { kind: "emerald", pos: this.map.center.clone().setY(0) },
+    ];
+    for (const s of spots) {
+      const mesh = this.makeGemMesh(s.kind);
+      mesh.position.copy(s.pos).setY(1.6);
+      this.gemGroup.add(mesh);
+      this.gems.push({ kind: s.kind, gen: makeGenerator(`${s.kind}-${s.pos.x}-${s.pos.z}`, s.kind), pos: s.pos.clone(), sitting: 0, mesh });
+    }
+    this.gemGroup.visible = true;
+  }
+  private makeGemMesh(kind: BwResource): THREE.Mesh {
+    const col = kind === "diamond" ? 0x8fe6ff : 0x6bff9e;
+    const geo = new THREE.OctahedronGeometry(0.45);
+    const mesh = new THREE.Mesh(geo, glowMaterial(col, 0.7));
+    mesh.castShadow = false;
+    return mesh;
+  }
+  private clearGems() {
+    for (const g of this.gems) {
+      this.gemGroup.remove(g.mesh);
+      g.mesh.geometry.dispose();
+      (g.mesh.material as THREE.Material).dispose();
+    }
+    this.gems.length = 0;
+  }
+
+  // ── enemy guardians ────────────────────────────────────────────────────────
   private spawnGuardians() {
     this.guards = [];
     for (const t of this.map.teams) {
       if (t.id === this.playerTeam) continue;
       const playerId = this.map.teams.findIndex((x) => x.id === t.id) + 1;
-      // stand at the base, a touch toward the centre so it screens the bed.
       const pos = t.base.clone().add(this.map.center.clone().sub(t.base).normalize().multiplyScalar(1.4));
       pos.y = 0;
-      const g: Guardian = { team: t.id, playerId, char: this.makeGuardianChar(t.color, pos), pos, hp: GUARD_HP, max: GUARD_HP, alive: true, respawn: 0, flash: 0 };
-      this.guards.push(g);
+      this.guards.push({ team: t.id, playerId, char: this.makeGuardianChar(t.color, pos), pos, hp: GUARD_HP, max: GUARD_HP, alive: true, respawn: 0, flash: 0 });
     }
   }
   private makeGuardianChar(color: number, pos: THREE.Vector3): VoxelChar {
@@ -153,7 +228,6 @@ export class BedWarsMode {
     char.setColor(color, 0xf2c9a0);
     char.play("idle");
     char.root.position.copy(pos);
-    // face the centre of the map
     char.root.rotation.y = Math.atan2(this.map.center.x - pos.x, this.map.center.z - pos.z);
     this.map.group.add(char.root);
     return char;
@@ -169,29 +243,26 @@ export class BedWarsMode {
     });
   }
 
-  /** Alive enemy beds (for the player's bullets to target). */
   private enemyBeds(): Bed[] {
     return [...this.beds.values()].filter((b) => b.team !== this.playerTeam && !b.dead);
   }
 
-  /** A bullet impacted at `pos` with `dmg`. Priority: raiders → guardians →
-   *  enemy beds. Returns the kind so main can retire the bullet + spark. */
+  /** A bullet impacted at `pos`. Sharpness scales the damage. Priority:
+   *  raiders → enemy guardian → enemy bed. */
   resolveHit(pos: THREE.Vector3, dmg: number): "bot" | "guard" | "bed" | null {
-    // raiders first (tight radius)
+    const d = dmg * bwDamageMul(this.upgrades);
     for (const r of this.bots.positions()) {
       const dx = r.pos.x - pos.x, dz = r.pos.z - pos.z;
-      if (dx * dx + dz * dz < 0.9 * 0.9) { this.bots.damageNear(pos, 0.9, dmg); return "bot"; }
+      if (dx * dx + dz * dz < 0.9 * 0.9) { this.bots.damageNear(pos, 0.9, d); return "bot"; }
     }
-    // then enemy guardians (must be cleared before you can finish a broken-bed team)
     for (const g of this.guards) {
       if (!g.alive) continue;
       const dx = g.pos.x - pos.x, dz = g.pos.z - pos.z;
-      if (dx * dx + dz * dz < GUARD_HIT_R * GUARD_HIT_R) { this.damageGuardian(g, dmg); return "guard"; }
+      if (dx * dx + dz * dz < GUARD_HIT_R * GUARD_HIT_R) { this.damageGuardian(g, d); return "guard"; }
     }
-    // then enemy beds
     for (const b of this.enemyBeds()) {
       const dx = b.pos.x - pos.x, dz = b.pos.z - pos.z;
-      if (dx * dx + dz * dz < 1.7 * 1.7) { this.damageBed(b.team, dmg); return "bed"; }
+      if (dx * dx + dz * dz < 1.7 * 1.7) { this.damageBed(b.team, d); return "bed"; }
     }
     return null;
   }
@@ -204,7 +275,7 @@ export class BedWarsMode {
     if (g.hp <= 0) {
       g.alive = false;
       this.map.group.remove(g.char.root);
-      const r = killPlayer(this.match, g.playerId); // respawn (bed up) or eliminate
+      const r = killPlayer(this.match, g.playerId);
       if (r === "respawn") g.respawn = GUARD_RESPAWN;
       this.checkEnd();
     }
@@ -222,7 +293,6 @@ export class BedWarsMode {
     }
   }
 
-  /** A raider hit your bed for `dmg`. */
   private damageMyBed(dmg: number) {
     const b = this.beds.get(this.playerTeam);
     if (!b || b.dead) return;
@@ -237,25 +307,33 @@ export class BedWarsMode {
 
   private checkEnd() {
     if (this.result.over) return;
-    // you're out the instant your bed is gone AND you've died for good.
     if (isTeamOut(this.match, this.playerTeam)) { this.result = { over: true, win: false }; return; }
     const alive = aliveTeams(this.match);
     if (alive.length === 1 && alive[0] === this.playerTeam) this.result = { over: true, win: true };
   }
 
-  /** Advance the world. `playerPos` lets raiders chip your health on contact and
-   *  drives your death → respawn (or elimination) per the lives rule. */
   tick(dt: number, playerPos?: THREE.Vector3) {
     if (!this.active || this.result.over) return;
     this.map.update(dt);
+    this.elapsed += dt;
+    if (this.speedBuff > 0) this.speedBuff -= dt;
+    if (this.trapCd > 0) this.trapCd -= dt;
+
+    // ── resources ──
+    const forge = bwForgeMul(this.upgrades);
     for (const g of this.gens) {
-      const drops = tickGenerator(g.gen, dt, 0);
+      // your base iron/gold pour faster with each Forge tier.
+      const scaled = g.team === this.playerTeam ? dt * forge : dt;
+      const drops = tickGenerator(g.gen, scaled, 0);
       if (g.team === this.playerTeam) for (const d of drops) this.wallet = addToWallet(this.wallet, d.kind, d.amount);
     }
+    this.updateGems(dt, playerPos);
+
     this.bots.update(dt);
     this.updateGuardians(dt);
+    this.updateGolems(dt);
 
-    // raider waves target the player's bed, from a random alive enemy base
+    // ── raider waves at the player bed ──
     this.waveTimer -= dt;
     const myBed = this.beds.get(this.playerTeam);
     if (this.waveTimer <= 0 && myBed && !myBed.dead && this.bots.count < MAX_RAIDERS) {
@@ -265,17 +343,37 @@ export class BedWarsMode {
       if (foes.length) {
         const foe = foes[Math.floor(Math.random() * foes.length)];
         const target = { pos: myBed.pos, alive: () => !myBed.dead, onHit: (d: number) => this.damageMyBed(d) };
-        const from = foe.pos.clone().multiplyScalar(1.15); // just outside the enemy island
+        const from = foe.pos.clone().multiplyScalar(1.15);
         this.bots.spawn(this.beds.get(foe.team)!.color, from, target);
       }
     }
 
+    this.maybeTriggerTrap();
+    this.maybeSuddenDeath();
+    this.updateDragons(dt, playerPos);
     this.updatePlayerLife(dt, playerPos);
     this.refreshHud();
   }
 
-  /** Guardians idle at their base; respawn after a delay only while their bed is
-   *  alive (killPlayer already gated that — respawn>0 is only set then). */
+  private updateGems(dt: number, playerPos?: THREE.Vector3) {
+    for (const g of this.gems) {
+      const drops = tickGenerator(g.gen, dt, g.sitting);
+      for (const d of drops) g.sitting += d.amount;
+      // spin + bob the gem; scale a touch with the un-collected pile
+      g.mesh.rotation.y += dt * 1.4;
+      g.mesh.position.y = 1.6 + Math.sin(this.elapsed * 2 + g.pos.x) * 0.12;
+      const s = 1 + Math.min(0.6, g.sitting * 0.06);
+      g.mesh.scale.setScalar(s);
+      if (playerPos && g.sitting > 0) {
+        const dx = g.pos.x - playerPos.x, dz = g.pos.z - playerPos.z;
+        if (dx * dx + dz * dz < GEM_COLLECT_R * GEM_COLLECT_R) {
+          this.wallet = addToWallet(this.wallet, g.kind, g.sitting);
+          g.sitting = 0;
+        }
+      }
+    }
+  }
+
   private updateGuardians(dt: number) {
     for (const g of this.guards) {
       if (g.alive) {
@@ -295,7 +393,66 @@ export class BedWarsMode {
     }
   }
 
-  /** Contact damage from nearby raiders, then your death → respawn/elimination. */
+  /** Dream Defender golems fight raiders near your base; apply their swings. */
+  private updateGolems(dt: number) {
+    const raiders = this.bots.positions().map((r) => ({ pos: r.pos }));
+    const hits = this.golems.update(dt, raiders);
+    for (const h of hits) this.bots.damageNear(h.pos, 0.9, h.dmg);
+  }
+
+  // ── traps: pop one when a raider breaches your base ──
+  private maybeTriggerTrap() {
+    if (this.trapCd > 0 || this.traps.slots.length === 0) return;
+    const base = this.beds.get(this.playerTeam)?.pos ?? this.spawn();
+    let breach = false;
+    for (const r of this.bots.positions()) {
+      const dx = r.pos.x - base.x, dz = r.pos.z - base.z;
+      if (dx * dx + dz * dz < BASE_RADIUS * BASE_RADIUS) { breach = true; break; }
+    }
+    if (!breach) return;
+    const { trap, queue } = bwPopTrap(this.traps);
+    this.traps = queue;
+    this.trapCd = TRAP_COOLDOWN;
+    if (trap) this.applyTrap(trap, base);
+  }
+  private applyTrap(trap: BwTrapId, base: THREE.Vector3) {
+    if (trap === "itsatrap") {
+      // blind + snare intruders → a punishing AoE on the raiders at your base
+      this.bots.damageNear(base, BASE_RADIUS, 22);
+    } else if (trap === "minerfatigue") {
+      this.bots.damageNear(base, BASE_RADIUS, 12);
+    } else if (trap === "counter") {
+      // Counter-Offensive: heal + speed for the defender
+      this.playerHp = Math.min(this.playerMax, this.playerHp + 40);
+      this.speedBuff = 6;
+    } // "alarm" just reveals/warns — surfaced via the HUD trap pips
+    this.flashTrapHud(trap);
+  }
+
+  // ── sudden death: destroy every bed, send the dragons ──
+  private maybeSuddenDeath() {
+    if (this.suddenDeath || this.elapsed < SUDDEN_DEATH) return;
+    this.suddenDeath = true;
+    for (const b of this.beds.values()) {
+      if (!b.dead) { b.dead = true; this.map.group.remove(b.group); breakBed(this.match, b.team); }
+    }
+    const hostile = Math.max(1, 2 - bwDragonBonus(this.upgrades));
+    for (let i = 0; i < hostile; i++) this.dragons.spawn(0xc060ff, this.map.center);
+    this.checkEnd();
+  }
+  private updateDragons(dt: number, playerPos?: THREE.Vector3) {
+    if (this.dragons.count === 0) return;
+    const targets = playerPos ? [{ pos: playerPos }] : [];
+    const hits = this.dragons.update(dt, targets);
+    if (!playerPos || this.respawnTimer > 0) return;
+    const reduce = 1 - bwDamageReduction(this.upgrades);
+    for (const h of hits) {
+      const dx = h.pos.x - playerPos.x, dz = h.pos.z - playerPos.z;
+      if (dx * dx + dz * dz < 2.4 * 2.4) this.hurtPlayer(h.dmg * DRAGON_DMG_MUL * reduce);
+    }
+  }
+
+  /** Contact damage from nearby raiders, heal-pool regen, then your death loop. */
   private updatePlayerLife(dt: number, playerPos?: THREE.Vector3) {
     if (this.respawnTimer > 0) {
       this.respawnTimer -= dt;
@@ -303,27 +460,36 @@ export class BedWarsMode {
         this.respawnTimer = 0;
         respawnPlayer(this.match, this.playerId);
         this.playerHp = this.playerMax;
-        this.respawnReady = true; // main re-seats you at base this frame
+        this.respawnReady = true;
       }
-      return; // dead: no contact damage while waiting
+      return;
     }
     if (!playerPos) return;
+    // heal pool: regen while you hold your own base
+    const healRate = bwHealPoolRate(this.upgrades);
+    if (healRate > 0 && playerPos.distanceTo(this.spawn()) < BASE_RADIUS) {
+      this.playerHp = Math.min(this.playerMax, this.playerHp + healRate * dt);
+    }
     let dps = 0;
     for (const r of this.bots.positions()) {
       const dx = r.pos.x - playerPos.x, dz = r.pos.z - playerPos.z;
       if (dx * dx + dz * dz < RAIDER_TOUCH * RAIDER_TOUCH) dps += RAIDER_DPS;
     }
-    if (dps > 0) this.playerHp = Math.max(0, this.playerHp - dps * dt);
+    if (dps > 0) this.hurtPlayer(dps * dt * (1 - bwDamageReduction(this.upgrades)));
+  }
+  private hurtPlayer(dmg: number) {
+    if (this.respawnTimer > 0) return;
+    this.playerHp = Math.max(0, this.playerHp - dmg);
     if (this.playerHp <= 0) {
       const r = killPlayer(this.match, this.playerId);
-      if (r === "respawn") this.respawnTimer = PLAYER_RESPAWN; // bed up → come back
-      else this.checkEnd(); // eliminated → you've lost
+      if (r === "respawn") this.respawnTimer = PLAYER_RESPAWN;
+      else this.checkEnd();
     }
   }
 
-  // ---- shop ----
+  // ── item shop (iron/gold/emerald) ──
   openShop() {
-    if (!this.shop || this.shop.isOpen || this.result.over) return;
+    if (!this.shop || this.anyMenuOpen || this.result.over) return;
     this.shop.open(this.wallet, (item) => this.buy(item), () => { /* closed */ });
   }
   private buy(item: BwShopItem) {
@@ -333,7 +499,6 @@ export class BedWarsMode {
     this.shop?.refresh(this.wallet);
     this.refreshHud();
   }
-  /** Slice effects that touch the core loop; cosmetic ones just confirm. */
   private applyEffect(item: BwShopItem) {
     const k = item.effect.kind;
     if (k === "block") {
@@ -341,13 +506,38 @@ export class BedWarsMode {
       if (b && !b.dead) { b.max += item.effect.value ?? 20; b.hp = Math.min(b.max, b.hp + (item.effect.value ?? 20)); }
     } else if (k === "heal") {
       this.playerHp = Math.min(this.playerMax, this.playerHp + (item.effect.value ?? 40));
+    } else if (k === "guardian") {
+      this.golems.spawn(this.beds.get(this.playerTeam)?.color ?? 0xbfc6cf, this.spawn());
     } else if (k === "tnt" || k === "fireball") {
       const foe = this.enemyBeds()[0];
       if (foe) this.damageBed(foe.team, k === "tnt" ? 45 : 28);
     }
   }
 
-  // ---- resource HUD ----
+  // ── team upgrades shop (diamonds) ──
+  openUpgrades() {
+    if (!this.upgUI || this.anyMenuOpen || this.result.over) return;
+    this.upgUI.open(this.upgrades, this.traps, this.wallet.diamond,
+      (id) => this.buyUpgrade(id), (id) => this.buyTrap(id), () => { /* closed */ });
+  }
+  private buyUpgrade(id: BwUpgradeId) {
+    const cost = bwUpgradeCost(this.upgrades, id);
+    if (cost == null || this.wallet.diamond < cost) return;
+    this.wallet = { ...this.wallet, diamond: this.wallet.diamond - cost };
+    this.upgrades = bwBuyUpgrade(this.upgrades, id);
+    this.upgUI?.refresh(this.upgrades, this.traps, this.wallet.diamond);
+    this.refreshHud();
+  }
+  private buyTrap(id: BwTrapId) {
+    const cost = bwNextTrapCost(this.traps.slots.length);
+    if (cost == null || this.wallet.diamond < cost) return;
+    this.wallet = { ...this.wallet, diamond: this.wallet.diamond - cost };
+    this.traps = bwQueueTrap(this.traps, id);
+    this.upgUI?.refresh(this.upgrades, this.traps, this.wallet.diamond);
+    this.refreshHud();
+  }
+
+  // ── resource + status HUD ──
   private buildHud() {
     if (this.hud) return;
     const el = document.createElement("div");
@@ -356,19 +546,30 @@ export class BedWarsMode {
     this.hud = el;
     this.refreshHud();
   }
+  private flashTrapHud(trap: BwTrapId) {
+    if (!this.hud) return;
+    const pip = this.hud.querySelector(".bw-trap-flash");
+    if (pip) pip.textContent = `⚠ ${trap === "counter" ? "Counter!" : trap === "alarm" ? "Alarm!" : "Trap sprung!"}`;
+  }
   private refreshHud() {
     if (!this.hud) return;
     const w = this.wallet;
     const my = this.beds.get(this.playerTeam);
     const bedTxt = my && !my.dead ? `🛏 ${Math.max(0, Math.round(my.hp))}` : "🛏 ✖ FINAL LIFE";
     const enemies = aliveTeams(this.match).filter((t) => t !== this.playerTeam).length;
-    const hpTxt = this.respawnTimer > 0 ? `💀 respawn ${Math.ceil(this.respawnTimer)}s` : `❤ ${Math.round(this.playerHp)}`;
+    const hpTxt = this.respawnTimer > 0 ? `💀 ${Math.ceil(this.respawnTimer)}s` : `❤ ${Math.round(this.playerHp)}`;
+    const clock = this.suddenDeath ? "🐲 SUDDEN DEATH" : `⏳ ${Math.ceil(this.timeToSuddenDeath)}s`;
+    const traps = this.traps.slots.length > 0 ? `🪤 ${this.traps.slots.length}` : "";
     this.hud.innerHTML =
       `<span class="bw-r bw-hp">${hpTxt}</span>` +
       `<span class="bw-r bw-iron">⛓ ${w.iron}</span>` +
       `<span class="bw-r bw-gold">⛀ ${w.gold}</span>` +
+      `<span class="bw-r bw-diamond">◆ ${w.diamond}</span>` +
       `<span class="bw-r bw-emerald">✦ ${w.emerald}</span>` +
       `<span class="bw-r bw-bed">${bedTxt}</span>` +
-      `<span class="bw-r bw-foes">⚔ ${enemies} left</span>`;
+      `<span class="bw-r bw-foes">⚔ ${enemies}</span>` +
+      (traps ? `<span class="bw-r bw-traps">${traps}</span>` : "") +
+      `<span class="bw-r bw-clock">${clock}</span>` +
+      `<span class="bw-r bw-trap-flash"></span>`;
   }
 }

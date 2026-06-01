@@ -14,7 +14,7 @@
  * pile is collected — the canonical anti-hoard behaviour from Bed Wars.
  */
 
-export type BwResource = "iron" | "gold" | "emerald";
+export type BwResource = "iron" | "gold" | "diamond" | "emerald";
 
 export interface BwGenerator {
   id: string;
@@ -43,9 +43,9 @@ export const BW_GEN_TUNING: {
    *  pauses (anti-hoard: forces you to walk the island, not turtle). */
   capPerGen: Record<BwResource, number>;
 } = {
-  baseInterval: { iron: 1.5, gold: 6, emerald: 18 },
+  baseInterval: { iron: 1.5, gold: 6, diamond: 30, emerald: 45 },
   tierSpeedup: 0.7,
-  capPerGen: { iron: 48, gold: 16, emerald: 4 },
+  capPerGen: { iron: 48, gold: 16, diamond: 8, emerald: 4 },
 };
 
 /** Tiers are clamped to this range — there is no tier 0 and no tier 4. */
@@ -143,7 +143,7 @@ export type BwWallet = Record<BwResource, number>;
 
 /** A fresh, zeroed wallet. */
 export function emptyWallet(): BwWallet {
-  return { iron: 0, gold: 0, emerald: 0 };
+  return { iron: 0, gold: 0, diamond: 0, emerald: 0 };
 }
 
 /**

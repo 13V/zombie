@@ -25,10 +25,11 @@ import type { BwShopItem, BwWallet, BwResource } from "./bwshop";
 const RES_ICON: Record<BwResource, string> = {
   iron: "⛓",     // ⛓
   gold: "⛀",     // ⛀
+  diamond: "◆",  // ◆
   emerald: "✦",  // ✦
 };
-const RES_ORDER: BwResource[] = ["iron", "gold", "emerald"];
-const RES_LABEL: Record<BwResource, string> = { iron: "Iron", gold: "Gold", emerald: "Emerald" };
+const RES_ORDER: BwResource[] = ["iron", "gold", "diamond", "emerald"];
+const RES_LABEL: Record<BwResource, string> = { iron: "Iron", gold: "Gold", diamond: "Diamond", emerald: "Emerald" };
 
 const STYLE_ID = "bw-shop-style";
 const STYLE_CSS = `
@@ -102,7 +103,7 @@ export class BwShopUI {
   private tabsEl!: HTMLElement;
   private gridEl!: HTMLElement;
 
-  private wallet: BwWallet = { iron: 0, gold: 0, emerald: 0 };
+  private wallet: BwWallet = { iron: 0, gold: 0, diamond: 0, emerald: 0 };
   private onBuy?: (item: BwShopItem) => void;
   private onClose?: () => void;
   private activeCategory = "";

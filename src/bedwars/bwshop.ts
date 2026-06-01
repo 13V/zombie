@@ -14,11 +14,10 @@
  * implement the gameplay here, only describe it).
  */
 
-/** The three resource tiers, cheapest → rarest. */
-export type BwResource = "iron" | "gold" | "emerald";
-
-/** A full purse. Every resource is always present (zero when broke). */
-export type BwWallet = Record<BwResource, number>;
+// The resource tiers + wallet are defined once in bwresources (iron, gold,
+// diamond, emerald) — re-export them so the shop and its UI share one type.
+export type { BwResource, BwWallet } from "./bwresources";
+import type { BwResource, BwWallet } from "./bwresources";
 
 export interface BwShopItem {
   id: string;

@@ -19,7 +19,8 @@
     "test:bwshop": "node --test --experimental-strip-types test/bwshop.test.ts",
     "test:bwresources": "node --test --experimental-strip-types test/bwresources.test.ts",
     "test:bwteams": "node --test --experimental-strip-types test/bwteams.test.ts",
-    "test": "npm run test:rating && npm run test:save && npm run test:house && npm run test:rounds && npm run test:island && npm run test:idle && npm run test:build && npm run test:gacha && npm run test:bwshop && npm run test:bwresources && npm run test:bwteams",
+    "test:bwupgrades": "node --test --experimental-strip-types test/bwupgrades.test.ts",
+    "test": "npm run test:rating && npm run test:save && npm run test:house && npm run test:rounds && npm run test:island && npm run test:idle && npm run test:build && npm run test:gacha && npm run test:bwshop && npm run test:bwresources && npm run test:bwteams && npm run test:bwupgrades",
     "test:build": "node --import ./test/resolve-hook.mjs --test --experimental-transform-types test/build.test.ts"
   },
   "devDependencies": {

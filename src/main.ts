@@ -1602,8 +1602,9 @@ class Game implements GameApi {
       return;
     }
 
-    // The shop modal owns input while open — freeze movement/fire, allow Esc out.
-    if (bw.shopOpen) {
+    // A shop modal (items or team upgrades) owns input while open — freeze
+    // movement/fire; the modal closes itself on Escape/backdrop.
+    if (bw.anyMenuOpen) {
       this.player.idle(dt);
       bw.tick(dt, this.player.pos);
       return;
@@ -1632,18 +1633,19 @@ class Game implements GameApi {
       );
     }
     const aiming = this.input.firing || this.input.touchAim != null;
+    this.player.speedMul = bw.playerSpeedMul(); // Counter-Offensive trap buff
     this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, aiming);
     bw.clamp(this.player.pos);
     this.player.group.position.copy(this.player.pos);
     this.pets.forEach((p, i) => p.update(dt, this.player.pos.x, this.player.pos.z, i, this.pets.length, null));
 
-    // --- weapon fire ---
+    // --- weapon fire (Maniac Miner haste speeds the fire rate) ---
     const w = this.weapon;
     w.update(dt, this.player.reloadMul);
     const wantFire = this.input.touchAim ? true : w.def.auto ? this.input.firing : this.input.clicked();
     if (wantFire) {
       const f = this._fire;
-      f.fireRateMul = 1; f.bonusPellets = 0; f.pierceBonus = 0;
+      f.fireRateMul = bw.fireRateMul(); f.bonusPellets = 0; f.pierceBonus = 0;
       f.scaleMul = 1; f.homing = 0; f.bounces = 0;
       if (w.tryFire(this.player.muzzle, this.player.aimDir, this.bullets, f)) {
         this.player.flash();
@@ -1665,11 +1667,12 @@ class Game implements GameApi {
       }
     }
 
-    // --- shop near base (press E) ---
-    const nearBase = this.player.pos.distanceTo(bw.shopSpot()) < 4;
-    if (nearBase) this.hud.showPrompt("Press E — Shop", true);
+    // --- shops near base: E = Item Shop, T = Team Upgrades ---
+    const nearBase = this.player.pos.distanceTo(bw.shopSpot()) < 4.5;
+    if (nearBase) this.hud.showPrompt("E — Item Shop   ·   T — Team Upgrades", true);
     else this.hud.hidePrompt();
     if (nearBase && this.input.pressed("KeyE")) bw.openShop();
+    if (nearBase && this.input.pressed("KeyT")) bw.openUpgrades();
 
     bw.tick(dt, this.player.pos);
 

@@ -133,7 +133,7 @@ test("makeGenerator clamps an out-of-range starting tier into 1..3", () => {
 // ──────────────────────────── wallet helpers ────────────────────────────
 
 test("emptyWallet is fully zeroed", () => {
-  assert.deepEqual(emptyWallet(), { iron: 0, gold: 0, emerald: 0 });
+  assert.deepEqual(emptyWallet(), { iron: 0, gold: 0, diamond: 0, emerald: 0 });
 });
 
 test("addToWallet adds correctly and returns a NEW object (immutable)", () => {
