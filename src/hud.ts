@@ -155,7 +155,7 @@ export class Hud {
       </div>
       <div id="build-bar" class="hidden"></div>
 
-      <div class="overlay" id="overlay-start">
+      <div class="overlay splash" id="overlay-start">
         <button class="overlay-close" id="overlay-close" title="Back to island">✕</button>
         <h1>TINY <span class="dead">DEAD</span></h1>
         <p class="tagline">A cozy little world overrun by ten flavors of undead. Survive, loot, spin for wild guns — every run earns <b>Essence</b>.</p>
@@ -225,7 +225,7 @@ export class Hud {
         <div class="overStats" id="over-stats"></div>
         <div class="over-buttons">
           <button class="play" id="btn-restart">Again</button>
-          <button class="coop-btn" id="btn-menu">Upgrades</button>
+          <button class="coop-btn" id="btn-menu">Menu</button>
         </div>
       </div>
 
@@ -303,7 +303,7 @@ export class Hud {
    *  already in the hub). `tab` jumps to a tab; `petsOnly` shows just the Pets
    *  panel (used by the Pet Sanctuary). A ✕ closes back to the island. */
   openShop(tab?: string, petsOnly = false) {
-    this.startOverlay.classList.remove("hidden");
+    this.startOverlay.classList.remove("hidden", "splash");
     this.startOverlay.classList.add("shop-modal");
     this.startOverlay.classList.toggle("pets-only", petsOnly);
     if (tab) {
@@ -1095,8 +1095,9 @@ export class Hud {
   }
 
   showStart() {
-    // full menu (boot / game-over): drop any shop-modal framing
+    // splash/boot/game-over: a clean screen offering ONLY "Enter Island"
     this.startOverlay.classList.remove("hidden", "shop-modal", "pets-only");
+    this.startOverlay.classList.add("splash");
   }
   hideStart() {
     this.startOverlay.classList.add("hidden");

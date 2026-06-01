@@ -1504,3 +1504,21 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 .pet-stat b { font-size: 14px; color: #fff; line-height: 1.1; }
 .pet-stat i { font-size: 8px; font-style: normal; letter-spacing: 0.5px; opacity: 0.6; text-transform: uppercase; }
 .pet-stats .pet-stat:first-child b { color: #ffd24a; } /* DPS headline */
+
+/* ============================================================
+   SPLASH / boot screen — offers ONLY "Enter Island"
+   ============================================================ */
+.splash > #btn-start,        /* Play Solo */
+.splash > .coop,             /* Host Co-op + Join row */
+.splash > .lobby-status,
+.splash > .shop,             /* the whole tabbed shop */
+.splash > #daily-board,
+.splash > .controls-fold,
+.splash > .wallet-row { display: none !important; }
+.splash > .overlay-close { display: none !important; }
+/* Enter Island is the one action — make it the hero button */
+.splash > #btn-island {
+  margin-top: 22px;
+  font-size: 26px;
+  padding: 18px 56px;
+}
