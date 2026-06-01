@@ -878,6 +878,37 @@ export class Hud {
     this.promptEl.classList.remove("show");
   }
 
+  private eggPanelEl?: HTMLElement;
+  /** Drop-rate panel shown when the player stands by a gacha egg. `odds` is the
+   *  per-rarity percentage list; `rarityColor` tints each row. Pass affordable
+   *  to dim the cost when the player can't pay. */
+  showEggPanel(
+    name: string,
+    cost: number,
+    affordable: boolean,
+    odds: { label: string; pct: number; color: string }[],
+  ) {
+    if (!this.eggPanelEl) {
+      this.eggPanelEl = document.createElement("div");
+      this.eggPanelEl.id = "egg-panel";
+      this.root.appendChild(this.eggPanelEl);
+    }
+    const rows = odds
+      .map(
+        (o) =>
+          `<div class="egg-odd"><span style="color:${o.color}">${o.label}</span><span class="pct">${o.pct}%</span></div>`,
+      )
+      .join("");
+    this.eggPanelEl.innerHTML =
+      `<div class="egg-name">🥚 ${name}</div>` +
+      `<div class="egg-cost" style="color:${affordable ? "var(--gold)" : "var(--danger)"}">${cost.toLocaleString()} gold</div>` +
+      `<div class="egg-odds">${rows}</div>`;
+    this.eggPanelEl.classList.add("show");
+  }
+  hideEggPanel() {
+    this.eggPanelEl?.classList.remove("show");
+  }
+
   private popEl?: HTMLElement;
   /** "N players here" social chip on the island; pass <= 0 to hide it. */
   setIslandPopulation(n: number) {

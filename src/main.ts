@@ -31,7 +31,7 @@ import { petThumbnail } from "./petthumb";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
 import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, isTrialComplete, RARITY_COLOR, RARITY_LABEL, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
-import { findEgg, rollEgg } from "./gacha";
+import { findEgg, rollEgg, eggOdds } from "./gacha";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData, recordScore } from "./save";
 import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
@@ -1489,6 +1489,7 @@ class Game implements GameApi {
   /** Leave the island back to the classic menu (arena visible behind it). */
   private leaveIsland() {
     this.disconnectIslandPresence();
+    this.hud.hideEggPanel();
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.hud.setIslandMode(false);
@@ -1542,8 +1543,26 @@ class Game implements GameApi {
 
     // proximity prompt for the nearest interactive pad / egg / mode gate
     const near = this.island.nearestZone(this.player.pos);
-    if (near) this.hud.showPrompt(near.label + "  [E]", true);
-    else this.hud.hidePrompt();
+    const egg = near?.kind === "egg" ? findEgg(near.eggId ?? "") : undefined;
+    if (egg) {
+      // egg pedestal: a drop-rate panel + an affordability-aware [E] prompt.
+      const affordable = this.save.gold >= egg.cost;
+      this.hud.showEggPanel(
+        egg.name,
+        egg.cost,
+        affordable,
+        eggOdds(egg).map((o) => ({
+          label: RARITY_LABEL[o.rarity],
+          pct: o.pct,
+          color: RARITY_COLOR[o.rarity],
+        })),
+      );
+      this.hud.showPrompt(`Hatch ${egg.name} — ${egg.cost.toLocaleString()}g  [E]`, affordable);
+    } else {
+      this.hud.hideEggPanel();
+      if (near) this.hud.showPrompt(near.label + "  [E]", true);
+      else this.hud.hidePrompt();
+    }
 
     // E (or tap-confirm) activates whatever you're standing on
     if (near && (this.input.pressed("KeyE") || this.input.pressed("Space"))) {

@@ -867,6 +867,30 @@ body.touch .controls { display: none; }
 }
 #prompt.cant { border-color: var(--danger); }
 
+/* Egg-odds panel: shown above the prompt when standing by a gacha egg. */
+#egg-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 150px;
+  transform: translateX(-50%) translateY(8px);
+  min-width: 200px;
+  background: rgba(40, 32, 26, 0.92);
+  border: 2px solid var(--gold);
+  border-radius: 12px;
+  padding: 10px 16px;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s, transform 0.14s;
+}
+#egg-panel.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#egg-panel .egg-name { font-weight: bold; font-size: 17px; }
+#egg-panel .egg-cost { font-size: 13px; opacity: 0.85; margin-bottom: 6px; }
+#egg-panel .egg-odds { display: flex; flex-direction: column; gap: 2px; }
+#egg-panel .egg-odd { display: flex; justify-content: space-between; gap: 14px; font-size: 13px; }
+#egg-panel .egg-odd .pct { font-variant-numeric: tabular-nums; opacity: 0.92; }
+
+
 #toast {
   position: absolute;
   left: 50%;
