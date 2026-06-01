@@ -30,7 +30,7 @@ import type { EmoteId } from "./voxelChar";
 import { petThumbnail } from "./petthumb";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
-import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, isTrialComplete, RARITY_COLOR, RARITY_LABEL, RARITY_ORDER, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
+import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, petDamageMul, petStageMul, isTrialComplete, RARITY_COLOR, RARITY_LABEL, RARITY_ORDER, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
 import { EGGS, findEgg, rollEgg, eggOdds } from "./gacha";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData, recordScore } from "./save";
@@ -513,6 +513,18 @@ class Game implements GameApi {
         const shiny = (this.save.petProgress[ownId]?._shiny ?? 0) > 0;
         const starCost = Math.round(base.cost * PET_DEPTH.stars.convertCostMul);
         const canStar = owned && stars < maxStars; // re-buying mints a star (dupe)
+        // combat stats for the card (DPS headline + DMG/RATE/RANGE), scaled by level+stage
+        const dmgMul = petDamageMul(level) * petStageMul(level);
+        const dmg = Math.round(p.damage * dmgMul);
+        const rate = p.interval > 0 ? 1 / p.interval : 0;
+        let dps = dmg * rate;
+        if (p.splashRadius > 0) dps += p.splashDamage * dmgMul * rate;
+        const stats = p.damage > 0 ? [
+          { label: "DPS", value: Math.round(dps).toLocaleString() },
+          { label: "DMG", value: dmg.toLocaleString() },
+          { label: "RATE", value: `${rate.toFixed(1)}/s` },
+          { label: "RANGE", value: `${Math.round(p.range)}` },
+        ] : undefined;
         return {
           id: ownId, name: p.name, desc: p.desc, cost: base.cost,
           color: `#${p.color.toString(16).padStart(6, "0")}`,
@@ -525,6 +537,7 @@ class Game implements GameApi {
           affordable: owned ? this.save.gold >= upCost : this.save.gold >= base.cost,
           rarity,
           rarityColor: RARITY_COLOR[rarity],
+          stats,
           ability: p.ability?.name ?? base.ability?.name,
           thumb: petThumbnail(p.id, level), // cached voxel-model preview (per evolution stage)
           trial,

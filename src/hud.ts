@@ -41,6 +41,7 @@ export interface PetRow {
   xp?: number; xpNext?: number; // combat-XP progress toward the next level
   stage?: number; stageName?: string; // evolution stage (0-based) + its label
   rarity: string; rarityColor: string; ability?: string;
+  stats?: { label: string; value: string }[]; // combat stats shown on the card
   thumb?: string; // data-URL preview of the pet's voxel model (see petthumb.ts)
   trial?: { label: string; cur: number; goal: number; done: boolean }[];
   // ── PET DEPTH: collection/role display ──
@@ -632,6 +633,7 @@ export class Hud {
         ${starBadge}
         ${roleBadge}
         <span class="pet-desc">${r.desc}</span>
+        ${r.stats ? `<span class="pet-stats">${r.stats.map((s) => `<span class="pet-stat"><b>${s.value}</b><i>${s.label}</i></span>`).join("")}</span>` : ""}
         ${abilityTag}
         <span class="pet-cost">${action}</span>
         ${xpBar}

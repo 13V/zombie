@@ -1395,3 +1395,112 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 .shop-modal .tab::-webkit-scrollbar { width: 10px; }
 .shop-modal .tab::-webkit-scrollbar-thumb { background: rgba(255,210,74,0.35); border-radius: 8px; }
 .shop-modal .tab::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 8px; }
+
+/* ============================================================
+   UI OVERHAUL v2 — cohesive glow-up for menu + HUD (CSS only)
+   ============================================================ */
+
+/* ---- title / menu ---- */
+.overlay h1 {
+  text-shadow: 0 4px 0 rgba(0,0,0,0.35), 0 0 28px rgba(255,210,74,0.28);
+}
+.overlay h1 .dead { text-shadow: 0 4px 0 rgba(0,0,0,0.35), 0 0 26px rgba(255,90,122,0.45); }
+
+button.play {
+  font-size: 23px;
+  padding: 15px 44px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffdf7a, #f2b73c);
+  box-shadow: 0 6px 0 #c79a2e, 0 10px 22px rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.45);
+}
+button.play:hover { transform: translateY(-2px); box-shadow: 0 8px 0 #c79a2e, 0 14px 28px rgba(0,0,0,0.4), 0 0 24px rgba(255,210,74,0.45); }
+button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
+.play.secondary {
+  background: linear-gradient(180deg, rgba(106,215,255,0.28), rgba(60,140,190,0.22));
+  color: #eaf7ff;
+  border: 1.5px solid rgba(140,220,255,0.55);
+  box-shadow: 0 5px 0 rgba(40,90,130,0.5), 0 10px 22px rgba(0,0,0,0.3);
+}
+.play.secondary:hover { box-shadow: 0 7px 0 rgba(40,90,130,0.5), 0 0 22px rgba(106,215,255,0.4); }
+
+.coop-btn {
+  background: rgba(255,247,230,0.08);
+  border: 1.5px solid rgba(255,247,230,0.4);
+  border-radius: 999px;
+  backdrop-filter: blur(2px);
+  transition: background 0.12s, border-color 0.12s, transform 0.1s;
+}
+.coop-btn:hover { background: rgba(255,247,230,0.2); border-color: var(--gold); transform: translateY(-1px); }
+
+.bestline {
+  display: inline-block;
+  background: rgba(0,0,0,0.28);
+  border: 1px solid rgba(255,210,74,0.4);
+  border-radius: 999px;
+  padding: 5px 16px;
+  font-size: 14px;
+  color: #ffe9a8;
+}
+
+/* ---- in-game HUD ---- */
+.pill {
+  background: linear-gradient(180deg, rgba(64,52,40,0.82), rgba(44,34,26,0.82));
+  border: 1.5px solid rgba(255,210,74,0.35);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.07);
+  backdrop-filter: blur(3px);
+}
+.pill.points { border-color: rgba(255,210,74,0.55); }
+.pill.round .value { text-shadow: 0 0 12px rgba(255,180,90,0.5); }
+
+.weapon {
+  background: linear-gradient(180deg, rgba(64,52,40,0.85), rgba(44,34,26,0.85));
+  border: 1.5px solid rgba(255,210,74,0.35);
+  border-radius: 16px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.07);
+  backdrop-filter: blur(3px);
+}
+.weapon .ammo { color: #fff; text-shadow: 0 0 10px rgba(255,210,74,0.35); }
+
+.health .bar {
+  height: 18px;
+  border: 2px solid rgba(255,247,230,0.45);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3), inset 0 2px 4px rgba(0,0,0,0.35);
+  backdrop-filter: blur(2px);
+}
+.health .fill {
+  background: linear-gradient(90deg, #7be08a, #b6f25a);
+  box-shadow: 0 0 12px rgba(123,224,138,0.5) inset;
+}
+.health .fill.low { background: linear-gradient(90deg, #ff5b6e, #ff8a5b); box-shadow: 0 0 12px rgba(255,91,110,0.6) inset; }
+
+/* ============================================================
+   Pets panel: near-fullscreen + stat blocks on the cards
+   ============================================================ */
+.pets-only .shop { width: min(97vw, 1240px); }
+.pets-only .tab { max-height: min(80vh, 900px); }
+.pets-only .pets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+/* stat block on each pet card */
+.pet-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  width: 100%;
+  margin: 6px 0 2px;
+}
+.pet-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(0,0,0,0.28);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 3px 2px;
+}
+.pet-stat b { font-size: 14px; color: #fff; line-height: 1.1; }
+.pet-stat i { font-size: 8px; font-style: normal; letter-spacing: 0.5px; opacity: 0.6; text-transform: uppercase; }
+.pet-stats .pet-stat:first-child b { color: #ffd24a; } /* DPS headline */
