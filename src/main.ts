@@ -30,7 +30,7 @@ import type { EmoteId } from "./voxelChar";
 import { petThumbnail } from "./petthumb";
 import { Sparks } from "./particles";
 import { Decals } from "./decals";
-import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, isTrialComplete, RARITY_COLOR, RARITY_LABEL, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
+import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, isTrialComplete, RARITY_COLOR, RARITY_LABEL, RARITY_ORDER, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
 import { findEgg, rollEgg, eggOdds } from "./gacha";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData, recordScore } from "./save";
@@ -1502,6 +1502,8 @@ class Game implements GameApi {
       await this.net.island();
       const skin = findSkin(this.save.skin);
       this.islandNet = new IslandNet(this.net, this.scene, skin.body, skin.head);
+      // a peer hatched an egg → play the celebration over their figure for us too
+      this.islandNet.onHatch = (x, z, rarity, shiny, petId) => this.hatchCelebration(x, z, rarity, shiny, petId, true);
       this.islandNet.setMenuOpen(this.emoteMenu?.isOpen ?? false);
       this.hud.toast("Island: press T to emote 👋");
     } catch {
@@ -1649,7 +1651,11 @@ class Game implements GameApi {
     if (!result || !egg) return; // couldn't afford (hatchEgg already gave feedback)
     const { pet, dupe, shiny, stars } = result;
     const rarity = (pet.rarity ?? "common") as Rarity;
+    const rarityIdx = Math.max(0, RARITY_ORDER.indexOf(rarity));
     this.portalBurst(this.player.pos);
+    // In-world celebration everyone can see (+ broadcast it to the lobby).
+    this.hatchCelebration(this.player.pos.x, this.player.pos.z, rarityIdx, shiny, pet.id, false);
+    this.islandNet?.sendHatch(pet.id, rarityIdx, shiny);
     // Cinematic reveal modal with the pet preview thumbnail + rarity glow.
     const status: "new" | "dupe" | "shiny" = shiny ? "shiny" : dupe ? "dupe" : "new";
     const statusText = shiny ? "✨ SHINY ✨" : dupe ? (stars ? `★ Ascended to ${stars}★` : "Duplicate — refunded") : "NEW!";
@@ -1662,8 +1668,44 @@ class Game implements GameApi {
       rarityColor: RARITY_COLOR[rarity],
       status,
       statusText,
+      confetti: rarityIdx >= 2 || shiny, // Rare+ (or any shiny) gets the confetti shower
       onDone: () => { this._hatching = false; },
     });
+  }
+
+  /**
+   * In-world hatch celebration the whole lobby sees: a rarity-coloured light
+   * burst + a floating "<Pet>!" tag over the player, and — for high grades
+   * (Rare+) — a shower of multi-coloured confetti that scales with rarity.
+   * `remote` plays the version for a peer's hatch (no extra sfx spam).
+   */
+  private hatchCelebration(x: number, z: number, rarity: number, shiny: boolean, petId: string, remote: boolean) {
+    const at = new THREE.Vector3(x, 1.5, z);
+    const rc = RARITY_COLOR[RARITY_ORDER[rarity] ?? "common"];
+    const rcNum = parseInt(rc.replace("#", ""), 16);
+    this.explosions.flash(at, 2.4, rcNum);
+    this.sparks.burst(at, rcNum, 16, { speed: 7, spread: 4, streak: true });
+    if (shiny) this.sparks.burst(at, 0xffffff, 12, { speed: 9, spread: 5, streak: true });
+    // floating tag over the player/peer (their name on a peer hatch would need a
+    // lookup; the rarity + pet name read clearly enough on their own).
+    const name = findAnyPet(petId)?.name ?? "a pet";
+    const tag = `${remote ? "" : "🥚 "}${RARITY_LABEL[RARITY_ORDER[rarity] ?? "common"]} — ${name}!`;
+    this.floaters.spawn(new THREE.Vector3(x, 2.6, z), tag, rc, 1.15, true);
+    // confetti for Rare and above (index 2+), bigger for Legendary/Mythic
+    if (rarity >= 2) this.confettiBurst(at, rarity);
+    if (!remote && rarity >= 4) this.shake = Math.min(0.5, this.shake + 0.25); // a little pop on big self-pulls
+  }
+
+  /** A festive multi-coloured confetti shower; waves + reach scale with rarity. */
+  private confettiBurst(pos: THREE.Vector3, rarity: number) {
+    const colors = [0xff5a7a, 0xffd24a, 0x6ad7ff, 0x7be08a, 0xc792ea, 0xff9ec7, 0xffffff];
+    const waves = rarity >= 4 ? 3 : rarity >= 3 ? 2 : 1; // mythic/legendary burst harder
+    const top = new THREE.Vector3(pos.x, pos.y + 1.0, pos.z);
+    for (let w = 0; w < waves; w++) {
+      for (const c of colors) {
+        this.sparks.burst(top, c, 5, { speed: 9 + rarity, spread: 7 + w * 1.5, gravity: 13 });
+      }
+    }
   }
 
   /** A juicy warp/portal pop at a pad (flash + pillar + sparks + sfx). */

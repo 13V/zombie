@@ -974,6 +974,19 @@ body.touch .controls { display: none; }
 #egg-reveal .er-status.dupe { color: #ffd24a; }
 #egg-reveal .er-hint { position: absolute; bottom: 8px; font-size: 12px; opacity: 0.6; animation: erFade 1.4s 2.4s ease-in forwards; opacity: 0; }
 @keyframes erFade { to { opacity: 0.6; } }
+/* high-grade confetti: shoots up from the reveal, then rains down */
+#egg-reveal .er-confetti {
+  position: absolute; left: 50%; top: 46%;
+  width: 9px; height: 15px; border-radius: 2px;
+  opacity: 0;
+  animation-name: erConfetti; animation-timing-function: ease-in;
+  animation-fill-mode: forwards;
+}
+@keyframes erConfetti {
+  0% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  22% { transform: translate(calc(var(--drift) * 0.45), -150px) rotate(220deg); opacity: 1; }
+  100% { transform: translate(var(--drift), 58vh) rotate(960deg); opacity: 0.85; }
+}
 
 /* In the island hub, hide all gameplay HUD — only the lobby chrome stays. */
 .island-mode .hud-top,

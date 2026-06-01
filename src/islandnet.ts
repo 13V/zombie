@@ -133,6 +133,9 @@ export class IslandNet {
   private head: number;
   private name?: string;
   private menuOpen = false;
+  /** Fired when a peer hatches an egg, so main can play the lobby celebration at
+   *  their position. (x,z) = peer's current spot; rarity 0..6; shiny flag. */
+  onHatch?: (x: number, z: number, rarity: number, shiny: boolean, petId: string) => void;
 
   constructor(private net: NetClient, private scene: THREE.Scene, body: number, head = 0xfff4d6, name?: string) {
     this.body = body;
@@ -164,6 +167,11 @@ export class IslandNet {
   /** Broadcast a preset quick-chat phrase to everyone. */
   sendChat(text: string) {
     this.net.send({ t: "chat", text });
+  }
+
+  /** Broadcast an egg hatch so the whole lobby sees the celebration. */
+  sendHatch(petId: string, rarity: number, shiny: boolean) {
+    this.net.send({ t: "hatch", pet: petId.slice(0, 24), rarity, shiny: shiny ? 1 : 0 });
   }
 
   /** Broadcast my pose on a fixed cadence + smooth every peer figure. */
@@ -211,6 +219,13 @@ export class IslandNet {
       // only render preset phrases (defense in depth); cap length regardless
       if (typeof msg.text === "string" && VALID_CHAT.has(msg.text)) {
         this.peers.get(from)?.say(msg.text.slice(0, CHAT_MAX));
+      }
+    } else if (msg.t === "hatch") {
+      // play the celebration over the sender's figure (validate the payload)
+      const f = this.peers.get(from);
+      const rarity = Math.max(0, Math.min(6, Math.floor(msg.rarity)));
+      if (f && Number.isFinite(msg.rarity) && typeof msg.pet === "string") {
+        this.onHatch?.(f.group.position.x, f.group.position.z, rarity, !!msg.shiny, msg.pet.slice(0, 24));
       }
     }
   }

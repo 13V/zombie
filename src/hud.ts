@@ -934,6 +934,7 @@ export class Hud {
     rarityColor: string;
     status: "new" | "dupe" | "shiny";
     statusText: string;
+    confetti?: boolean;
     onDone?: () => void;
   }) {
     if (!this.eggRevealEl) {
@@ -944,6 +945,18 @@ export class Hud {
     const el = this.eggRevealEl;
     el.style.setProperty("--egg-color", opts.eggColor);
     el.style.setProperty("--rarity-color", opts.rarityColor);
+    // high-grade confetti pieces, fired a beat after the reveal pops
+    let confetti = "";
+    if (opts.confetti) {
+      const cols = ["#ff5a7a", "#ffd24a", "#6ad7ff", "#7be08a", "#c792ea", "#ff9ec7", "#ffffff"];
+      for (let i = 0; i < 40; i++) {
+        const col = cols[i % cols.length];
+        const drift = (Math.random() - 0.5) * 460;
+        const dur = 1.0 + Math.random() * 0.9;
+        const delay = 1.55 + Math.random() * 0.5;
+        confetti += `<i class="er-confetti" style="background:${col};--drift:${drift}px;animation-duration:${dur}s;animation-delay:${delay}s;"></i>`;
+      }
+    }
     // Rebuild the stage (re-triggers the CSS animations each hatch).
     el.innerHTML = `
       <div class="er-stage">
@@ -958,6 +971,7 @@ export class Hud {
           <div class="er-name">${opts.petName}</div>
           <div class="er-status ${opts.status}">${opts.statusText}</div>
         </div>
+        ${confetti}
         <div class="er-hint">tap to continue</div>
       </div>`;
     el.classList.add("show");

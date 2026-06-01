@@ -220,7 +220,19 @@ export interface ChatMsg {
   text: string;
 }
 
-export type NetMsg = SnapMsg | ShotMsg | InputMsg | ToastMsg | PresenceMsg | EmoteMsg | ChatMsg;
+/** Island social — broadcast when a player hatches an egg, so everyone in the
+ *  lobby sees the celebration (burst + confetti for high grades) over the sender. */
+export interface HatchMsg {
+  t: "hatch";
+  /** Pet id rolled (validated against the real roster on receive). */
+  pet: string;
+  /** Rarity index 0..6 (common..celestial) — drives the celebration grade. */
+  rarity: number;
+  /** 1 = shiny pull (extra sparkle). */
+  shiny?: number;
+}
+
+export type NetMsg = SnapMsg | ShotMsg | InputMsg | ToastMsg | PresenceMsg | EmoteMsg | ChatMsg | HatchMsg;
 
 // ---- transport envelopes (to/from the relay server) ----
 
