@@ -40,6 +40,7 @@ import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
 import { skinThumbnail } from "./skinthumb";
 import { skinTexture } from "./skintex";
+import { BedWarsMode } from "./bedwars/bwmode";
 import { makeItem, rollRarity, rollRarityPity, resetPity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, AffixCode, warmServer, getServerUrl, setServerUrl } from "./net";
@@ -51,7 +52,7 @@ import { COLORS, auraMaterial } from "./palette";
 import { TiltShift } from "./tiltShift";
 import { Puffs } from "./puffs";
 
-type State = "menu" | "island" | "playing" | "paused" | "over" | "levelup";
+type State = "menu" | "island" | "playing" | "paused" | "over" | "levelup" | "bedwars";
 
 class Game implements GameApi {
   private renderer: THREE.WebGLRenderer;
@@ -142,6 +143,7 @@ class Game implements GameApi {
   private perks = new Set<"tough" | "quick">();
   private powerups = new Powerups();
   private state: State = "menu";
+  private bw?: BedWarsMode; // Bed Wars-lite mode controller (lazy)
 
   // multiplayer (undefined = single-player)
   private net?: NetClient;
@@ -1530,6 +1532,8 @@ class Game implements GameApi {
       else this.simulate(dt);
     } else if (this.state === "island") {
       this.simulateIsland(dt);
+    } else if (this.state === "bedwars") {
+      this.simulateBedwars(dt);
     } else {
       this.player.idle(dt); // keep the figure breathing on menu / pause / over
     }
@@ -1547,6 +1551,43 @@ class Game implements GameApi {
     this.composer.render();
     this.input.endFrame();
   };
+
+  /** Enter the Bed Wars-lite mode (vertical slice): hide hub/arena, load the BW
+   *  world, spawn on your team island, resources start ticking. */
+  private enterBedWars() {
+    if (!this.bw) this.bw = new BedWarsMode(this.scene);
+    this.disconnectIslandPresence();
+    this.island.setVisible(false);
+    this.arena.group.visible = false;
+    this.interactables.setVisible(false);
+    this.setLocalAura(0); this.setLocalPlate(false);
+    this.hud.hideEggPanel();
+    this.hud.hidePrompt();
+    this.hud.hideCombatHud(true); // hide combat HUD; BW draws its own resource HUD
+    this.bw.enter();
+    this.player.pos.copy(this.bw.spawn());
+    this.player.group.position.copy(this.player.pos);
+    this.camZoomTarget = 1.9;
+    this.applyPlayerSkin();
+    this.spawnPets();
+    this.state = "bedwars";
+  }
+
+  private leaveBedWars() {
+    this.bw?.leave();
+    this.enterIsland();
+  }
+
+  /** Free-roam your Bed Wars island; Esc/Leave returns to the hub. */
+  private simulateBedwars(dt: number) {
+    const axis = this.input.moveAxis(this._axis);
+    this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, false);
+    this.bw?.clamp(this.player.pos);
+    this.player.group.position.copy(this.player.pos);
+    this.pets.forEach((p, i) => p.update(dt, this.player.pos.x, this.player.pos.z, i, this.pets.length, null));
+    this.bw?.tick(dt);
+    if (this.input.pressed("Escape")) this.leaveBedWars();
+  }
 
   /** Enter the island hub: hide the arena, show the island, drop the player in. */
   private enterIsland() {
@@ -1795,6 +1836,9 @@ class Game implements GameApi {
         break;
       case "wheel":
         this.spinWheel();
+        break;
+      case "bedwars":
+        this.enterBedWars();
         break;
     }
   }

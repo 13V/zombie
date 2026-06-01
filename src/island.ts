@@ -64,7 +64,7 @@ const CLEAR_PTS = [...GATES, ...PADS].map((d) => d.pos).concat(
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
   id: string;
-  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel" | "wardrobe";
+  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel" | "wardrobe" | "bedwars";
   pos: THREE.Vector3;
   radius: number; // proximity radius that triggers the prompt
   label: string; // shown in the proximity prompt
@@ -1298,6 +1298,7 @@ export class Island {
       index: { text: "COLLECTION", color: 0x6ad7ff, h: 5.6 },
       wheel: { text: "FORTUNE WHEEL", color: 0xff9ec7, h: 6.4 },
       wardrobe: { text: "WARDROBE", color: 0xc792ea, h: 4.6 },
+      bedwars: { text: "BED WARS", color: 0xff5a4a, h: 4.6 },
       pets: { text: "PET SANCTUARY", color: 0xff7ab0, h: 5.6 },
       shop: { text: "SHOP", color: 0xffd24a, h: 3.8 },
       join: { text: "JOIN FRIEND", color: 0x6ad7ff, h: 3.8 },
@@ -1440,6 +1441,40 @@ export class Island {
       g.scale.setScalar(1.3);
       this.group.add(g);
       this.zones.push({ id: "wardrobe", kind: "wardrobe", pos, radius: 2.4, label: "Wardrobe" });
+    }
+    // ---- BED WARS portal: a podium with a bed under a red arch (right side) ----
+    {
+      const g = new THREE.Group();
+      const stone = voxelMaterial(VOX.stone);
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.0, 0.4, 8), stone);
+      pad.position.y = 0.2;
+      const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 0.12, 20), glowMaterial(0xff5a4a, 0.7));
+      ring.position.y = 0.42;
+      g.add(pad, ring);
+      // a little bed on the pad (frame + mattress + pillow)
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.3, 0.8), voxelMaterial(VOX.bark));
+      frame.position.set(0, 0.6, 0);
+      const mat = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.22, 0.7), glowMaterial(0xff5a4a, 0.5));
+      mat.position.set(0, 0.78, 0);
+      const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.6), voxelMaterial(0xfff4e0));
+      pillow.position.set(-0.35, 0.82, 0);
+      g.add(frame, mat, pillow);
+      // two posts + a red arch beam behind
+      for (const px of [-1.7, 1.7]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, 3.4, 0.4), stone);
+        post.position.set(px, 1.7, -0.6);
+        g.add(post);
+      }
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.5, 0.5), glowMaterial(0xff5a4a, 0.8));
+      beam.position.set(0, 3.4, -0.6);
+      const swords = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), glowMaterial(0xffd24a, 1.2));
+      swords.position.set(0, 3.4, -0.4);
+      g.add(beam, swords);
+      const pos = new THREE.Vector3(13, 0, 10);
+      g.position.copy(pos);
+      g.rotation.y = Math.atan2(-pos.x, -pos.z);
+      this.group.add(g);
+      this.zones.push({ id: "bedwars", kind: "bedwars", pos, radius: 2.4, label: "Bed Wars" });
     }
   }
 

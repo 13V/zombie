@@ -1589,3 +1589,17 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 .skin-card:hover .skin-preview { transform: scale(1.06); }
 .skin-rarity { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
 .solo-tab .skin-grid { grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 12px; }
+
+/* ---- Bed Wars resource HUD ---- */
+#bw-res {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 10px; z-index: 30; pointer-events: none;
+}
+#bw-res .bw-r {
+  background: rgba(30,22,14,0.82); border: 1.5px solid rgba(255,255,255,0.14);
+  border-radius: 999px; padding: 6px 14px; font-weight: 800; font-size: 16px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+#bw-res .bw-iron { color: #d8dde4; }
+#bw-res .bw-gold { color: #ffd24a; }
+#bw-res .bw-emerald { color: #7be08a; }

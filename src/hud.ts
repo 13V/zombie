@@ -1135,6 +1135,12 @@ export class Hud {
     this.startOverlay.classList.add("hidden");
   }
 
+  /** Hide the in-combat HUD (round/points/health/weapon/…) without the island
+   *  lobby chrome — used by Bed Wars, which draws its own resource HUD. */
+  hideCombatHud(on: boolean) {
+    this.root.classList.toggle("island-mode", on);
+  }
+
   /** Is a dismissable menu overlay currently up (shop modal or pet index)? */
   isMenuOpen(): boolean {
     const shop = !this.startOverlay.classList.contains("hidden") && this.startOverlay.classList.contains("shop-modal");
