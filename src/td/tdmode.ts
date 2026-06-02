@@ -51,6 +51,7 @@ export class TdMode {
   private towers = new Map<number, Tower>(); // keyed by pad index
   private fx = new THREE.Group();
   private tracers: Tracer[] = [];
+  private bursts: { mesh: THREE.Mesh; life: number }[] = []; // impact pops at the target
   private ring: THREE.Mesh;                    // range preview around the nearest tower
 
   mode: TdGameMode = "solo";
@@ -125,6 +126,8 @@ export class TdMode {
     this.towers.clear();
     for (const tr of this.tracers) { this.fx.remove(tr.mesh); tr.mesh.geometry.dispose(); (tr.mesh.material as THREE.Material).dispose(); }
     this.tracers.length = 0;
+    for (const b of this.bursts) { this.fx.remove(b.mesh); b.mesh.geometry.dispose(); (b.mesh.material as THREE.Material).dispose(); }
+    this.bursts.length = 0;
     this.ring.visible = false;
     this.hud?.remove();
     this.hud = undefined;
@@ -279,6 +282,7 @@ export class TdMode {
     this.fireTowers(dt);
     this.animateTowers(dt);
     this.updateTracers(dt);
+    this.updateImpacts(dt);
     if (playerPos) this.updateRing(playerPos);
 
     // wave cleared?
@@ -320,6 +324,7 @@ export class TdMode {
       else this.creeps.damage(tid, st.damage, t.def.pierce);
       if (st.slow > 0) this.creeps.applySlow(tid, st.slow, st.slowTime);
       this.spawnTracer(t.pos, tgt.pos, t.def.color);
+      this.spawnImpact(tgt.pos, t.def.color);
       t.recoil = 1; t.flash = 1; // kick + muzzle flash
     }
   }
@@ -339,8 +344,13 @@ export class TdMode {
         const m = t.muzzle as THREE.Mesh;
         const mat = m.material as THREE.MeshStandardMaterial;
         if (t.flash > 0) t.flash = Math.max(0, t.flash - dt * 6);
-        m.scale.setScalar(1 + t.flash * 1.4);              // flash punch
-        if (mat.emissiveIntensity !== undefined) mat.emissiveIntensity = 0.9 + t.flash * 2.2 + Math.sin(this._tAnim * 3 + t.pad) * 0.25;
+        // charge-up: the muzzle brightens + swells as the next shot nears ready
+        const interval = 1 / towerStats(t.id, t.tier).fireRate;
+        const charge = interval > 0 ? Math.max(0, Math.min(1, 1 - t.cooldown / interval)) : 1;
+        m.scale.setScalar(1 + t.flash * 1.4 + charge * 0.25);
+        if (mat.emissiveIntensity !== undefined) {
+          mat.emissiveIntensity = 0.6 + charge * 1.1 + t.flash * 2.4 + Math.sin(this._tAnim * 3 + t.pad) * 0.2;
+        }
       }
     }
   }
@@ -391,6 +401,15 @@ export class TdMode {
       const lR = box(0.16, 0.16, 0.95, woodDark, 0, 0, 0.6); lR.rotation.y = -0.55;
       barrel.add(lL, lR);                                           // crossbow limbs
       { const mz = glow(0.16, 0.16, 0.55, accent, 0, 0, 0.95, 1.1); mz.name = "muzzle"; barrel.add(mz); } // glowing bolt
+      if (tier >= 3) { // beefier double-limb crossbow
+        const l2L = box(0.16, 0.16, 0.8, woodDark, 0, -0.22, 0.5); l2L.rotation.y = 0.45;
+        const l2R = box(0.16, 0.16, 0.8, woodDark, 0, -0.22, 0.5); l2R.rotation.y = -0.45;
+        barrel.add(l2L, l2R, glow(0.13, 0.13, 0.45, accent, 0, -0.22, 0.85, 1.0));
+      }
+      if (tier >= 2) { // a quiver of arrows on the post
+        g.add(box(0.3, 0.6, 0.3, woodDark, 0.5, 0.7, -0.2));
+        for (const ax of [-0.06, 0.06, 0.18]) g.add(glow(0.05, 0.5, 0.05, accent, 0.5 + ax, 1.1, -0.2, 0.7));
+      }
       barrel.position.y = 0.95;
     } else if (id === "frost") {
       g.add(box(1.5, 0.4, 1.5, stoneDark, 0, -0.4, 0));
@@ -399,9 +418,19 @@ export class TdMode {
         const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), glowMaterial(0x9fe0ff, 0.65));
         cr.scale.set(1, s, 1); cr.position.set(cx, 0.45 + s * 0.25, cz); g.add(cr);
       }
-      const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), glowMaterial(accent, 1.15));
+      const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.34 + (tier - 1) * 0.06, 0), glowMaterial(accent, 1.15));
       orb.position.z = 0.15; orb.name = "muzzle"; barrel.add(orb);
       barrel.add(glow(0.5, 0.12, 0.12, accent, 0, 0, 0.55, 0.8));
+      if (tier >= 2) { // a thicker crown of crystals
+        for (const [cx, cz, s] of [[-0.5, 0.1, 1.3], [0.5, 0.2, 1.5], [0.1, -0.45, 1.2], [-0.15, 0.5, 1.4]] as const) {
+          const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), glowMaterial(0x9fe0ff, 0.7));
+          cr.scale.set(1, s, 1); cr.position.set(cx, 0.4 + s * 0.25, cz); g.add(cr);
+        }
+      }
+      if (tier >= 3) { // a frosty halo ring above the orb
+        const halo = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.06, 6, 22), glowMaterial(0xc7f0ff, 1.0));
+        halo.rotation.x = Math.PI / 2; halo.position.y = 0.35; barrel.add(halo);
+      }
       barrel.position.y = 1.05;
     } else if (id === "pylon") {
       g.add(box(1.4, 0.4, 1.4, metal, 0, -0.4, 0));
@@ -411,6 +440,16 @@ export class TdMode {
       barrel.add(dish);
       { const mz = glow(0.22, 0.22, 0.22, accent, 0, 0.08, 0.5, 1.3); mz.name = "muzzle"; barrel.add(mz); } // scanner lens
       barrel.add(box(0.06, 0.55, 0.06, metal, 0, 0.4, 0));            // antenna
+      if (tier >= 2) { // a second smaller dish stacked above
+        const d2 = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.3, 8, 1, true), glowMaterial(accent, 0.45));
+        d2.rotation.x = Math.PI * 0.5 - 0.45; d2.position.set(0, 0.55, 0.22); barrel.add(d2);
+      }
+      if (tier >= 3) { // bristling antenna array + blinking tips
+        for (const ax of [-0.28, 0.28]) {
+          barrel.add(box(0.05, 0.65, 0.05, metal, ax, 0.45, -0.1));
+          barrel.add(glow(0.1, 0.1, 0.1, accent, ax, 0.8, -0.1, 1.2));
+        }
+      }
       barrel.position.y = 1.3;
     } else if (id === "cannon") {
       g.add(box(1.8, 0.5, 1.8, stone, 0, -0.35, 0));
@@ -420,6 +459,15 @@ export class TdMode {
       tube.rotation.x = Math.PI / 2 - 0.22; tube.position.set(0, 0.2, 0.55); tube.castShadow = true;
       barrel.add(tube);
       { const mz = glow(0.52, 0.52, 0.22, accent, 0, 0.42, 1.05, 0.8); mz.name = "muzzle"; barrel.add(mz); } // muzzle ring
+      if (tier >= 3) { // twin barrels
+        for (const ox of [-0.34, 0.34]) {
+          const t2 = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 1.1, 8), voxelMaterial(metal));
+          t2.rotation.x = Math.PI / 2 - 0.22; t2.position.set(ox, 0.05, 0.5); t2.castShadow = true; barrel.add(t2);
+        }
+      }
+      if (tier >= 2) { // bolted side armor plates
+        for (const sx of [-1, 1]) g.add(box(0.2, 0.7, 1.1, metal, sx * 0.62, 0.3, 0));
+      }
       barrel.position.y = 0.75;
     } else { // sniper
       g.add(box(1.2, 0.4, 1.2, stone, 0, -0.4, 0));
@@ -427,9 +475,17 @@ export class TdMode {
       g.add(box(1.05, 0.3, 1.05, wood, 0, 1.55, 0));
       const roof = new THREE.Mesh(new THREE.ConeGeometry(0.88, 0.75, 4), voxelMaterial(accent));
       roof.position.y = 2.1; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
-      barrel.add(box(0.14, 0.14, 1.9, metal, 0, 0, 0.75));            // long rifle barrel
+      const barrelLen = 1.9 + (tier - 1) * 0.5; // rifle grows longer per tier
+      barrel.add(box(0.14, 0.14, barrelLen, metal, 0, 0, barrelLen / 2 - 0.2));
       barrel.add(box(0.22, 0.22, 0.42, stoneDark, 0, 0.14, 0.05));    // scope
-      { const mz = glow(0.12, 0.12, 0.2, accent, 0, 0, 1.65, 1.3); mz.name = "muzzle"; barrel.add(mz); } // muzzle glow
+      { const mz = glow(0.12, 0.12, 0.2, accent, 0, 0, barrelLen - 0.25, 1.3); mz.name = "muzzle"; barrel.add(mz); } // muzzle glow
+      if (tier >= 3) { // a steadying bipod under the long barrel
+        for (const sx of [-1, 1]) { const leg = box(0.06, 0.7, 0.06, metal, sx * 0.18, -0.35, 0.9); leg.rotation.z = sx * 0.3; barrel.add(leg); }
+      }
+      if (tier >= 2) { // a banner down the tower
+        const banner = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 0.08), glowMaterial(accent, 0.4));
+        banner.position.set(0, 0.7, 0.46); g.add(banner);
+      }
       barrel.position.y = 1.6;
     }
 
@@ -480,6 +536,26 @@ export class TdMode {
     this.fx.add(mesh);
     this.tracers.push({ mesh, life: TRACER_LIFE });
     if (this.tracers.length > 60) { const old = this.tracers.shift()!; this.fx.remove(old.mesh); old.mesh.geometry.dispose(); (old.mesh.material as THREE.Material).dispose(); }
+  }
+  /** A quick voxel pop at the target on hit (scales up + fades). */
+  private spawnImpact(pos: { x: number; z: number }, color: number) {
+    const mesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.35, 0), glowMaterial(color, 1.2));
+    mesh.position.set(pos.x, 0.7, pos.z);
+    (mesh.material as THREE.MeshStandardMaterial).transparent = true;
+    this.fx.add(mesh);
+    this.bursts.push({ mesh, life: 0.2 });
+    if (this.bursts.length > 50) { const old = this.bursts.shift()!; this.fx.remove(old.mesh); old.mesh.geometry.dispose(); (old.mesh.material as THREE.Material).dispose(); }
+  }
+  private updateImpacts(dt: number) {
+    for (let i = this.bursts.length - 1; i >= 0; i--) {
+      const b = this.bursts[i];
+      b.life -= dt;
+      const f = Math.max(0, b.life / 0.2);
+      b.mesh.scale.setScalar(0.5 + (1 - f) * 1.6);          // expand
+      b.mesh.rotation.y += dt * 8;
+      (b.mesh.material as THREE.MeshStandardMaterial).opacity = f;
+      if (b.life <= 0) { this.fx.remove(b.mesh); b.mesh.geometry.dispose(); (b.mesh.material as THREE.Material).dispose(); this.bursts.splice(i, 1); }
+    }
   }
   private updateTracers(dt: number) {
     for (let i = this.tracers.length - 1; i >= 0; i--) {
