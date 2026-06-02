@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { voxelMaterial, glowMaterial, toyMaterial, auraMaterial, VOX } from "../palette";
-import { TD_PATH, TD_PADS, TD_GOAL, TD_SPAWN, type Vec2 } from "./tdpath";
+import { TD_PATH, TD_PADS, TD_GOAL, TD_SPAWN, pathLength, pointAt, headingAt, type Vec2 } from "./tdpath";
 
 /**
  * The Tower-Defense MAP — a flat square voxel battlefield (~70×70) floating over
@@ -53,6 +53,9 @@ export class TdMap {
   private pulses: PulseGlow[] = [];
   private clouds: { group: THREE.Group; speed: number; x0: number }[] = [];
   private portalRings: THREE.Mesh[] = [];
+  private laneFlow: { mesh: THREE.Mesh; arc: number }[] = []; // glowing chevrons flowing to the base
+  private shield?: THREE.Mesh;   // base shield dome (drains + flares with HP)
+  private shieldFrac = 1;        // current base health fraction (0..1)
   private coreGem?: THREE.Mesh; // the base crystal core (pulses / flashes)
   private coreBaseEmissive = 1.2;
   private flashTimer = 0; // seconds of damage-flash remaining
@@ -82,6 +85,7 @@ export class TdMap {
     this.buildGround();
     this.buildLane();
     this.buildLaneTrim();
+    this.buildLaneFlow();
     this.buildDecor();
     this.buildLandmarks();
     this.buildPads();
@@ -912,8 +916,52 @@ export class TdMap {
     this.base.add(ring);
     this.pulses.push({ mesh: ring, base: 0.6, amp: 0.5, phase: 0.3 });
 
+    // a translucent SHIELD DOME over the keep that drains + reddens as base HP
+    // falls and flares white on a hit (driven by setBaseHealth + flashBase)
+    const shield = new THREE.Mesh(
+      new THREE.SphereGeometry(4.4, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshStandardMaterial({
+        color: 0x7fe0ff, emissive: 0x4fb8ff, emissiveIntensity: 0.6,
+        transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
+      }),
+    );
+    shield.position.y = GROUND_TOP + 0.3;
+    shield.userData.noCast = true;
+    this.base.add(shield);
+    this.shield = shield;
+
     this.base.position.set(TD_GOAL.x, 0, TD_GOAL.z);
     this.group.add(this.base);
+  }
+
+  /** Set the base health fraction (0..1) — the shield dome shrinks + reddens. */
+  setBaseHealth(frac: number) {
+    this.shieldFrac = Math.max(0, Math.min(1, frac));
+  }
+
+  /** Glowing chevron arrows along the lane that pulse TOWARD the base, so the
+   *  creep direction reads at a glance and the road feels alive. */
+  private buildLaneFlow() {
+    const total = pathLength(TD_PATH);
+    const step = 3.4;
+    for (let arc = step; arc < total - 1; arc += step) {
+      const p = pointAt(arc, TD_PATH);
+      if (Math.abs(p.x) > ARENA_HALF - 1 || Math.abs(p.z) > ARENA_HALF - 1) continue;
+      const h = headingAt(arc, TD_PATH);
+      const chevron = new THREE.Group();
+      for (const sx of [-1, 1]) {
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.12, 0.16), glowMaterial(0x8fe0ff, 0.7));
+        arm.position.set(sx * 0.28, 0, -0.18);
+        arm.rotation.y = sx * 0.7;
+        chevron.add(arm);
+      }
+      chevron.position.set(p.x, GROUND_TOP + 0.06, p.z);
+      chevron.rotation.y = Math.atan2(h.dx, h.dz);
+      chevron.userData.noCast = true;
+      this.group.add(chevron);
+      // store the mesh-pair's arc so a brightness wave can flow along the lane
+      chevron.children.forEach((c) => this.laneFlow.push({ mesh: c as THREE.Mesh, arc }));
+    }
   }
 
   // ========================================================================
@@ -950,6 +998,29 @@ export class TdMap {
     if (!this.group.visible) return;
     this.t += dt;
     const t = this.t;
+
+    // lane flow: a brightness wave ripples along the chevrons toward the base
+    for (const f of this.laneFlow) {
+      const mat = f.mesh.material as THREE.MeshStandardMaterial;
+      const wave = Math.sin(t * 2.2 - f.arc * 0.5);
+      mat.emissiveIntensity = 0.35 + Math.max(0, wave) * 1.1;
+      mat.opacity = 1;
+    }
+
+    // base shield: ease toward the target HP fraction; reddens + shrinks as it
+    // drains, flares white on a hit (flashTimer)
+    if (this.shield) {
+      const sm = this.shield.material as THREE.MeshStandardMaterial;
+      const target = this.shieldFrac;
+      this.shield.scale.setScalar(0.55 + 0.45 * target);
+      const hit = this.flashTimer > 0;
+      sm.opacity = (hit ? 0.5 : 0.1 + 0.16 * target) + Math.sin(t * 3) * 0.03;
+      // blue when healthy → amber → red as it drains
+      const g = 0.35 + 0.6 * target, b = 0.3 + 0.7 * target;
+      sm.color.setRGB(hit ? 1 : Math.min(1, 1.2 - target), g, b);
+      sm.emissive.copy(sm.color);
+      sm.emissiveIntensity = hit ? 1.6 : 0.5 + (1 - target) * 0.6;
+    }
 
     // spawn-portal shimmer: the pane breathes its emissive + opacity
     for (const pane of this.portalRings) {

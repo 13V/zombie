@@ -1677,6 +1677,7 @@ class Game implements GameApi {
     if (td.isBetweenWaves && this.input.pressed("Space")) td.startNextWave();
 
     td.tick(dt, this.player.pos);
+    this.shake = Math.min(0.6, this.shake + td.consumeShake()); // TD events shake the camera
 
     if (td.result.over) {
       this.hud.hidePrompt();

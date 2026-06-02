@@ -2,14 +2,14 @@ import * as THREE from "three";
 import { voxelMaterial, glowMaterial } from "../palette";
 import { TdMap } from "./tdmap";
 import { TdEnemies, type TdSpawnSpec } from "./tdenemy";
-import { TD_PADS } from "./tdpath";
+import { TD_PADS, TD_GOAL } from "./tdpath";
 import {
   TD_TOWERS, TD_TOWER_IDS, towerStats, tdUpgradeCost, tdSellValue, pickTarget,
   TD_TARGET_MODES, type TdTowerId, type TdTargetMode, type TdTargetable, type TdTowerDef,
 } from "./tdtowers";
 import { buildWave, spawnInterval, waveClearBonus, TD_START_GOLD, TD_START_LIVES, TD_TOTAL_WAVES } from "./tdwaves";
 import {
-  duelInit, duelSend, duelPlayerLeak, duelEndWave, duelUnlockedSends,
+  duelInit, duelSend, duelPlayerLeak, duelEndWave, duelUnlockedSends, DUEL_MAX_HP,
   type DuelState,
 } from "./tdduel";
 import { TdFx } from "./tdfx";
@@ -79,6 +79,7 @@ export class TdMode {
 
   wave = 0;
   private _tAnim = 0; // animation clock for turret idle motion
+  private _shakeImpulse = 0; // camera shake to hand to main (consumed each frame)
   private spawnQueue: TdSpawnSpec[] = [];
   private spawnTimer = 0;
   private betweenWaves = true;
@@ -112,6 +113,14 @@ export class TdMode {
   get gold(): number { return this.mode === "duel" && this.duel ? this.duel.playerGold : this.soloGold; }
   private addGold(n: number) { if (this.mode === "duel" && this.duel) this.duel.playerGold += n; else this.soloGold += n; }
   private spendGold(n: number) { this.addGold(-n); }
+
+  /** Camera-shake impulse accrued since last frame (main applies + decays it). */
+  consumeShake(): number { const s = this._shakeImpulse; this._shakeImpulse = 0; return s; }
+  /** Base health fraction (0..1) for the shield dome. */
+  private baseHealthFrac(): number {
+    if (this.mode === "duel" && this.duel) return Math.max(0, this.duel.playerHp / DUEL_MAX_HP);
+    return Math.max(0, this.soloLives / TD_START_LIVES);
+  }
 
   enter(mode: TdGameMode = "solo") {
     if (this.active) return;
@@ -301,6 +310,9 @@ export class TdMode {
     for (const b of res.bounties) this.addGold(b);
     if (res.leaked > 0) {
       this.map.flashBase(0.4);
+      this._shakeImpulse = Math.min(0.5, this._shakeImpulse + 0.12 + res.leaked * 0.02);
+      const dmg = this.mode === "duel" ? res.leakedDamage : res.leaked;
+      this.vfx.floatText(new THREE.Vector3(TD_GOAL.x, 2.2, TD_GOAL.z), `-${dmg}`, 0xff5a4a);
       if (this.mode === "duel" && this.duel) {
         duelPlayerLeak(this.duel, res.leakedDamage);
         if (this.duel.over) this.result = { over: true, win: this.duel.win };
@@ -309,6 +321,7 @@ export class TdMode {
         if (this.soloLives <= 0) { this.soloLives = 0; this.result = { over: true, win: false }; }
       }
     }
+    this.map.setBaseHealth(this.baseHealthFrac());
 
     // detectors reveal camo creeps before towers pick targets
     for (const t of this.towers.values()) {
@@ -328,7 +341,9 @@ export class TdMode {
         if (this.duel.over) this.result = { over: true, win: this.duel.win };
         else { this.betweenWaves = true; this.nextWaveIn = NEXT_WAVE_DELAY; }
       } else {
-        this.addGold(waveClearBonus(this.wave));
+        const bonus = waveClearBonus(this.wave);
+        this.addGold(bonus);
+        this.vfx.floatText(new THREE.Vector3(TD_GOAL.x, 3, TD_GOAL.z), `+${bonus}g`, 0xffd24a);
         if (this.wave >= TD_TOTAL_WAVES) this.result = { over: true, win: true };
         else { this.betweenWaves = true; this.nextWaveIn = NEXT_WAVE_DELAY; }
       }
@@ -371,6 +386,7 @@ export class TdMode {
       this.vfx.muzzleFlash(from, dir, t.def.color);
       this.vfx.tracer(from, to, t.def.color, kind, (p, c) => this.vfx.impact(p, c, big));
       t.recoil = 1; t.flash = 1; // kick + muzzle glow
+      if (t.id === "cannon") this._shakeImpulse = Math.min(0.5, this._shakeImpulse + 0.04); // boom
     }
   }
 
