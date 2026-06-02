@@ -1041,13 +1041,6 @@ export class Island {
       top.position.copy(at(r, 0, PY + 4.0));
       top.rotation.y = ang;
       this.group.add(top);
-      // a single hanging lantern under each gateway (the only lanterns on the bridge)
-      for (const side of [-1, 1]) {
-        const lan = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.42, 0.32), glowMaterial(VOX.lantern, 1.3));
-        lan.position.copy(at(r, side * 2.0, PY + 3.3));
-        this.group.add(lan);
-        this.beacons.push(lan);
-      }
     }
   }
 

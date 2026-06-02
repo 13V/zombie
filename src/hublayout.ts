@@ -39,9 +39,9 @@ function fan(deg: number, d = SAT_DIST): HVec {
 // -z is "north" (the camera looks down -z); the player spawns to the south. An
 // even fan of three across the top arc, symmetric about north.
 export const SATELLITES: Satellite[] = [
-  { id: "sat_zombies", label: "ZOMBIES", color: 0x8be36b, kind: "zombies", center: fan(-58), radius: SAT_R },
+  { id: "sat_zombies", label: "ZOMBIES", color: 0x8be36b, kind: "zombies", center: fan(-46), radius: SAT_R },
   { id: "sat_td", label: "TOWER DEFENSE", color: 0x7fd4ff, kind: "td", center: fan(0), radius: SAT_R },
-  { id: "sat_soon", label: "COMING SOON", color: 0xc9b6ff, kind: "soon", center: fan(58), radius: SAT_R },
+  { id: "sat_soon", label: "COMING SOON", color: 0xc9b6ff, kind: "soon", center: fan(46), radius: SAT_R },
 ];
 
 function len(v: HVec): number { return Math.hypot(v.x, v.z); }
