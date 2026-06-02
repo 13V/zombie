@@ -44,6 +44,7 @@ export class TdMap {
 
   private t = 0;
   private pulses: PulseGlow[] = [];
+  private clouds: { group: THREE.Group; speed: number; x0: number }[] = [];
   private portalRings: THREE.Mesh[] = [];
   private coreGem?: THREE.Mesh; // the base crystal core (pulses / flashes)
   private coreBaseEmissive = 1.2;
@@ -57,6 +58,7 @@ export class TdMap {
     this.buildPads();
     this.buildSpawn();
     this.buildBase();
+    this.buildAtmosphere();
     this.applyShadows();
     scene.add(this.group);
     this.group.visible = false; // shown only while in the Tower-Defense mode
@@ -201,59 +203,143 @@ export class TdMap {
     lay(b, VOX.cobbleDark);
   }
 
-  /** Scatter trees + rocks on the grass (away from the lane, pads, base & spawn)
-   *  for depth and life — the same diorama dressing as the island. */
+  /** Lush diorama dressing on the grass (away from lane/pads/base/spawn): layered
+   *  broadleaf + pine trees with the odd cherry blossom, rock clusters, and a
+   *  carpet of low grass tufts + wildflowers — the same density as the arena. */
   private buildDecor() {
     let seed = 90125;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     const trunkMat = voxelMaterial(0x7a5230);
-    const leaves = [voxelMaterial(0x6ab04a), voxelMaterial(0x4f8a3a), voxelMaterial(0xd99a3a), voxelMaterial(0xc24a35)];
+    const trunkDark = voxelMaterial(0x5f3f25);
+    const broad: [number, number][] = [[0x6ab04a, 0x8ed16a], [0x4f8a3a, 0x6fae4a], [0xd99a3a, 0xf0bd5e], [0xc24a35, 0xe0734f]];
+    const pine: [number, number][] = [[0x3f7a4a, 0x5a9a5e], [0x4f8a3a, 0x6fae4a]];
     const rockMat = voxelMaterial(VOX.stone);
     const rockMatD = voxelMaterial(VOX.stoneDark);
 
-    const blocked = (x: number, z: number): boolean => {
-      if (this.nearLane(x, z, LANE_W + 2.4)) return true;
-      for (const p of TD_PADS) if ((p.x - x) ** 2 + (p.z - z) ** 2 < 3.4 * 3.4) return true;
-      if ((TD_GOAL.x - x) ** 2 + (TD_GOAL.z - z) ** 2 < 8 * 8) return true;
-      if ((TD_SPAWN.x - x) ** 2 + (TD_SPAWN.z - z) ** 2 < 7 * 7) return true;
+    const blocked = (x: number, z: number, pad = 0): boolean => {
+      if (this.nearLane(x, z, LANE_W + 1.8 + pad)) return true;
+      for (const p of TD_PADS) if ((p.x - x) ** 2 + (p.z - z) ** 2 < (3.0 + pad) ** 2) return true;
+      if ((TD_GOAL.x - x) ** 2 + (TD_GOAL.z - z) ** 2 < (7 + pad) ** 2) return true;
+      if ((TD_SPAWN.x - x) ** 2 + (TD_SPAWN.z - z) ** 2 < (7 + pad) ** 2) return true;
       return false;
     };
 
+    // ---- trees + rocks (taller dressing) ----
     let placed = 0, tries = 0;
-    while (placed < 60 && tries++ < 600) {
+    while (placed < 78 && tries++ < 900) {
       const x = (rnd() * 2 - 1) * (ARENA_HALF - 3);
       const z = (rnd() * 2 - 1) * (ARENA_HALF - 3);
-      if (blocked(x, z)) continue;
+      if (blocked(x, z, 1.5)) continue;
       placed++;
       const g = new THREE.Group();
-      if (rnd() < 0.72) {
-        // chunky broadleaf: tapered trunk + a bushy 2-3 box crown
-        const th = 1.2 + rnd() * 1.1;
-        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.5, th, 0.5), trunkMat);
-        tk.position.y = th / 2;
-        g.add(tk);
-        const leaf = leaves[Math.floor(rnd() * leaves.length)];
-        const crowns = 2 + Math.floor(rnd() * 2);
+      const roll = rnd();
+      if (roll < 0.5) {
+        // broadleaf: tapered trunk + a bushy multi-box crown, sometimes blossom
+        const th = 1.2 + rnd() * 1.2;
+        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.5, th, 0.5), rnd() < 0.5 ? trunkMat : trunkDark);
+        tk.position.y = th / 2; g.add(tk);
+        const blossom = rnd() < 0.16;
+        const [cMain, cTop] = blossom ? [0xff9ec7, 0xffc2dd] : broad[Math.floor(rnd() * broad.length)];
+        const crowns = 3 + Math.floor(rnd() * 2);
         for (let k = 0; k < crowns; k++) {
-          const w = 2.2 - k * 0.5;
-          const c = new THREE.Mesh(new THREE.BoxGeometry(w, w * 0.7, w), leaf);
-          c.position.set((rnd() - 0.5) * 0.5, th + 0.3 + k * 0.7, (rnd() - 0.5) * 0.5);
+          const w = 2.4 - k * 0.55;
+          const c = new THREE.Mesh(new THREE.BoxGeometry(w, w * 0.7, w), voxelMaterial(k === crowns - 1 ? cTop : cMain));
+          c.position.set((rnd() - 0.5) * 0.7, th + 0.3 + k * 0.62, (rnd() - 0.5) * 0.7);
           g.add(c);
         }
+      } else if (roll < 0.78) {
+        // pine: slim trunk + tapering tiers
+        const [pMain, pTop] = pine[Math.floor(rnd() * pine.length)];
+        const th = 1.0 + rnd() * 0.9;
+        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.4, th, 0.4), trunkDark);
+        tk.position.y = th / 2; g.add(tk);
+        const tiers = 4 + Math.floor(rnd() * 2);
+        for (let k = 0; k < tiers; k++) {
+          const w = 2.3 - k * (1.8 / tiers);
+          const t = new THREE.Mesh(new THREE.BoxGeometry(w, 0.7, w), voxelMaterial(k === tiers - 1 ? pTop : pMain));
+          t.position.y = th + 0.2 + k * 0.6; g.add(t);
+        }
       } else {
-        // a little rock cluster
+        // rock cluster
         const cnt = 1 + Math.floor(rnd() * 3);
         for (let k = 0; k < cnt; k++) {
-          const s = 0.7 + rnd() * 1.0;
+          const s = 0.7 + rnd() * 1.1;
           const rk = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.8, s), rnd() < 0.5 ? rockMat : rockMatD);
-          rk.position.set((rnd() - 0.5) * 1.4, s * 0.4, (rnd() - 0.5) * 1.4);
-          rk.rotation.y = rnd() * Math.PI;
-          g.add(rk);
+          rk.position.set((rnd() - 0.5) * 1.5, s * 0.4, (rnd() - 0.5) * 1.5);
+          rk.rotation.y = rnd() * Math.PI; g.add(rk);
         }
       }
       g.position.set(x, 0, z);
-      g.scale.setScalar(0.85 + rnd() * 0.5);
+      g.scale.setScalar(0.85 + rnd() * 0.6);
       this.group.add(g);
+    }
+
+    // ---- low ground cover: grass tufts + wildflowers (carpet, breaks the checker) ----
+    const tuftMat = voxelMaterial(VOX.grassLight);
+    const flowerCols = [0xff6f91, 0xffd24a, 0xfff4e0, 0xff5a4a, 0x9b6fff];
+    let f = 0, ftries = 0;
+    while (f < 150 && ftries++ < 1400) {
+      const x = (rnd() * 2 - 1) * (ARENA_HALF - 2);
+      const z = (rnd() * 2 - 1) * (ARENA_HALF - 2);
+      if (blocked(x, z, -0.5)) continue;
+      f++;
+      if (rnd() < 0.55) {
+        const tuft = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.45, 0.3), tuftMat);
+        tuft.position.set(x, 0.22, z);
+        tuft.userData.noCast = true;
+        this.group.add(tuft);
+      } else {
+        const stem = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.4, 0.12), tuftMat);
+        stem.position.set(x, 0.2, z);
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.28), glowMaterial(flowerCols[Math.floor(rnd() * flowerCols.length)], 0.35));
+        head.position.set(x, 0.5, z);
+        head.userData.noCast = true; stem.userData.noCast = true;
+        this.group.add(stem, head);
+      }
+    }
+  }
+
+  /** Atmosphere: drifting clouds overhead + warm brazier light-pools flanking the
+   *  base and spawn, for the cozy golden-hour depth the arena has. */
+  private buildAtmosphere() {
+    let seed = 31337;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+
+    // soft voxel clouds drifting across, high above the field
+    const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2e0, emissiveIntensity: 0.25, roughness: 1, transparent: true, opacity: 0.92 });
+    for (let i = 0; i < 7; i++) {
+      const cloud = new THREE.Group();
+      const puffs = 3 + Math.floor(rnd() * 4);
+      for (let k = 0; k < puffs; k++) {
+        const w = 2 + rnd() * 3;
+        const puff = new THREE.Mesh(new THREE.BoxGeometry(w, w * 0.6, w * 0.8), cloudMat);
+        puff.position.set((rnd() - 0.5) * 7, (rnd() - 0.5) * 1.2, (rnd() - 0.5) * 4);
+        puff.userData.noCast = true;
+        cloud.add(puff);
+      }
+      cloud.position.set((rnd() * 2 - 1) * ARENA_HALF, 16 + rnd() * 6, (rnd() * 2 - 1) * ARENA_HALF);
+      this.group.add(cloud);
+      this.clouds.push({ group: cloud, speed: 0.6 + rnd() * 0.9, x0: cloud.position.x });
+    }
+
+    // warm braziers (point light + ember) at the base + spawn + a couple mid-field
+    const spots: Vec2[] = [
+      { x: TD_GOAL.x - 4.5, z: TD_GOAL.z }, { x: TD_GOAL.x + 4.5, z: TD_GOAL.z },
+      { x: clamp(TD_SPAWN.x, -ARENA_HALF + 2, ARENA_HALF - 2), z: TD_SPAWN.z - 4 },
+    ];
+    for (const s of spots) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.6, 0.4), voxelMaterial(VOX.stoneDark));
+      post.position.set(s.x, 0.8, s.z);
+      const bowl = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.4, 0.9), voxelMaterial(VOX.cobble));
+      bowl.position.set(s.x, 1.7, s.z);
+      const ember = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.7), glowMaterial(VOX.emberHot, 1.4));
+      ember.position.set(s.x, 2.0, s.z);
+      ember.userData.noCast = true;
+      this.group.add(post, bowl, ember);
+      this.pulses.push({ mesh: ember, base: 1.1, amp: 0.7, phase: s.x * 0.3 });
+      const light = new THREE.PointLight(0xff8a3a, 3.2, 11, 2);
+      light.position.set(s.x, 2.4, s.z);
+      this.group.add(light);
     }
   }
 
@@ -436,7 +522,13 @@ export class TdMap {
       }
     }
 
-    // generic emissive pulses (pad rims, portal rings, base dais ring)
+    // clouds drift slowly across and wrap around
+    for (const c of this.clouds) {
+      c.group.position.x += c.speed * dt;
+      if (c.group.position.x > ARENA_HALF + 14) c.group.position.x = -ARENA_HALF - 14;
+    }
+
+    // generic emissive pulses (pad rims, portal rings, base dais ring, braziers)
     for (const p of this.pulses) {
       (p.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity =
         p.base + (Math.sin(t * 2.4 + p.phase) + 1) * 0.5 * p.amp;
