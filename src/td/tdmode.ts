@@ -28,6 +28,7 @@ interface Tower {
 interface Tracer { mesh: THREE.Mesh; life: number }
 
 const BUILD_REACH = 4;
+const TURRET_SCALE = 2.1;       // base turret size (they were dwarfed by the pads)
 const NEXT_WAVE_DELAY = 10;     // auto-start the next wave after this many seconds
 const EARLY_CALL_RATE = 2;      // bonus gold per second skipped when calling early
 const TRACER_LIFE = 0.12;
@@ -153,7 +154,7 @@ export class TdMode {
     const p = TD_PADS[pad];
     const pos = new THREE.Vector3(p.x, 0, p.z);
     const group = this.makeTurret(id, 1);
-    group.position.copy(pos).setY(0.6);
+    group.position.copy(pos).setY(this.turretY(1));
     this.fx.add(group);
     const t: Tower = {
       pad, id, tier: 1, target: def.defaultTarget, def, pos, cooldown: 0, group,
@@ -177,7 +178,7 @@ export class TdMode {
     this.fx.remove(t.group);
     this.disposeGroup(t.group);
     const ng = this.makeTurret(t.id, t.tier);
-    ng.position.copy(t.pos).setY(0.6);
+    ng.position.copy(t.pos).setY(this.turretY(t.tier));
     this.fx.add(ng);
     t.group = ng;
     t.barrel = ng.getObjectByName("barrel") as THREE.Group;
@@ -456,8 +457,17 @@ export class TdMode {
       g.add(crown);
     }
 
-    g.scale.setScalar(1 + (tier - 1) * 0.1);
+    g.scale.setScalar(this.turretScale(tier));
     return g;
+  }
+
+  /** Overall turret scale at a tier (base size + a small per-tier bump). */
+  private turretScale(tier: number): number {
+    return TURRET_SCALE * (1 + (tier - 1) * 0.1);
+  }
+  /** Y to seat a turret so its base rests on the pad at the given tier. */
+  private turretY(tier: number): number {
+    return 0.6 * this.turretScale(tier);
   }
 
   private spawnTracer(from: THREE.Vector3, to: { x: number; z: number }, color: number) {
