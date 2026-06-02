@@ -315,21 +315,80 @@ export class TdMode {
     }
   }
 
+  /**
+   * A distinct voxel turret model per archetype (the rotating weapon lives in a
+   * child group named "barrel" that aims at the target; the pedestal stays put):
+   *   arrow  — wooden post + a rotating crossbow with a glowing bolt
+   *   frost  — icy plinth ringed by crystals + a spinning frost orb
+   *   pylon  — tech pole + a tilted radar dish & glowing scanner lens
+   *   cannon — wide stone fort + a fat angled mortar barrel + muzzle ring
+   *   sniper — tall watchtower w/ peaked roof + a long scoped rifle
+   */
   private makeTurret(id: TdTowerId, tier: number): THREE.Group {
-    const def = TD_TOWERS[id];
+    const accent = TD_TOWERS[id].color;
+    const stone = 0x6b7079, stoneDark = 0x4e535b, wood = 0x6b4a2b, woodDark = 0x4a3320, metal = 0x33363d;
     const g = new THREE.Group();
-    const base = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 1.5), voxelMaterial(0x6b7079));
-    base.position.y = -0.35; base.castShadow = true;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.9, 1.0), voxelMaterial(def.color));
-    body.position.y = 0.2; body.castShadow = true;
-    const barrel = new THREE.Group();
-    const tube = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 1.1), voxelMaterial(0x2c2f36));
-    tube.position.z = 0.7; tube.position.y = 0.25;
-    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.3), glowMaterial(def.color, 0.7));
-    tip.position.z = 1.25; tip.position.y = 0.25;
-    barrel.add(tube, tip);
-    barrel.name = "barrel";
-    g.add(base, body, barrel);
+    const barrel = new THREE.Group(); barrel.name = "barrel";
+    const box = (w: number, h: number, d: number, color: number, x: number, y: number, z: number) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), voxelMaterial(color));
+      m.position.set(x, y, z); m.castShadow = true; return m;
+    };
+    const glow = (w: number, h: number, d: number, color: number, x: number, y: number, z: number, i = 0.9) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), glowMaterial(color, i));
+      m.position.set(x, y, z); return m;
+    };
+
+    if (id === "arrow") {
+      g.add(box(1.5, 0.4, 1.5, stone, 0, -0.4, 0));
+      g.add(box(0.6, 1.1, 0.6, wood, 0, 0.25, 0));
+      barrel.add(box(0.26, 0.26, 1.1, wood, 0, 0, 0.35));          // stock
+      const lL = box(0.16, 0.16, 0.95, woodDark, 0, 0, 0.6); lL.rotation.y = 0.55;
+      const lR = box(0.16, 0.16, 0.95, woodDark, 0, 0, 0.6); lR.rotation.y = -0.55;
+      barrel.add(lL, lR);                                           // crossbow limbs
+      barrel.add(glow(0.16, 0.16, 0.55, accent, 0, 0, 0.95, 1.1));  // glowing bolt
+      barrel.position.y = 0.95;
+    } else if (id === "frost") {
+      g.add(box(1.5, 0.4, 1.5, stoneDark, 0, -0.4, 0));
+      g.add(box(1.0, 0.5, 1.0, 0x9fc7e8, 0, 0.0, 0));
+      for (const [cx, cz, s] of [[-0.32, -0.2, 1.0], [0.32, -0.1, 1.4], [0.0, 0.32, 1.15]] as const) {
+        const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), glowMaterial(0x9fe0ff, 0.65));
+        cr.scale.set(1, s, 1); cr.position.set(cx, 0.45 + s * 0.25, cz); g.add(cr);
+      }
+      const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), glowMaterial(accent, 1.15));
+      orb.position.z = 0.15; barrel.add(orb);
+      barrel.add(glow(0.5, 0.12, 0.12, accent, 0, 0, 0.55, 0.8));
+      barrel.position.y = 1.05;
+    } else if (id === "pylon") {
+      g.add(box(1.4, 0.4, 1.4, metal, 0, -0.4, 0));
+      g.add(box(0.45, 1.5, 0.45, stoneDark, 0, 0.45, 0));
+      const dish = new THREE.Mesh(new THREE.ConeGeometry(0.62, 0.45, 10, 1, true), glowMaterial(accent, 0.45));
+      dish.rotation.x = Math.PI * 0.5 - 0.45; dish.position.z = 0.32; dish.position.y = 0.05;
+      barrel.add(dish);
+      barrel.add(glow(0.22, 0.22, 0.22, accent, 0, 0.08, 0.5, 1.3)); // scanner lens
+      barrel.add(box(0.06, 0.55, 0.06, metal, 0, 0.4, 0));            // antenna
+      barrel.position.y = 1.3;
+    } else if (id === "cannon") {
+      g.add(box(1.8, 0.5, 1.8, stone, 0, -0.35, 0));
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(box(0.36, 0.6, 0.36, stoneDark, sx * 0.72, 0.1, sz * 0.72));
+      g.add(box(1.05, 0.7, 1.05, stoneDark, 0, 0.25, 0));
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 1.3, 10), voxelMaterial(metal));
+      tube.rotation.x = Math.PI / 2 - 0.22; tube.position.set(0, 0.2, 0.55); tube.castShadow = true;
+      barrel.add(tube);
+      barrel.add(glow(0.52, 0.52, 0.22, accent, 0, 0.42, 1.05, 0.8)); // muzzle ring
+      barrel.position.y = 0.75;
+    } else { // sniper
+      g.add(box(1.2, 0.4, 1.2, stone, 0, -0.4, 0));
+      g.add(box(0.85, 1.7, 0.85, stoneDark, 0, 0.65, 0));
+      g.add(box(1.05, 0.3, 1.05, wood, 0, 1.55, 0));
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(0.88, 0.75, 4), voxelMaterial(accent));
+      roof.position.y = 2.1; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+      barrel.add(box(0.14, 0.14, 1.9, metal, 0, 0, 0.75));            // long rifle barrel
+      barrel.add(box(0.22, 0.22, 0.42, stoneDark, 0, 0.14, 0.05));    // scope
+      barrel.add(glow(0.12, 0.12, 0.2, accent, 0, 0, 1.65, 1.3));     // muzzle glow
+      barrel.position.y = 1.6;
+    }
+
+    g.add(barrel);
     g.scale.setScalar(1 + (tier - 1) * 0.14);
     return g;
   }
