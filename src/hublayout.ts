@@ -26,9 +26,9 @@ export const BRIDGE_HW = 3.2;
 export const BRIDGE_OVERLAP = 5;
 /** Distance from world origin to each satellite centre (clears the main island,
  *  whose ground reaches ~48, leaving open water for a bridge to span). */
-const SAT_DIST = 58;
+const SAT_DIST = 64;
 /** Uniform satellite platform radius — same size islands read as evenly placed. */
-const SAT_R = 13;
+const SAT_R = 12;
 
 /** Place a satellite centre on a fan around NORTH (-z): `deg` east of north. */
 function fan(deg: number, d = SAT_DIST): HVec {

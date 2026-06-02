@@ -36,9 +36,9 @@ function _zgate(off: number): THREE.Vector3 {
   return new THREE.Vector3(_ZS.x + _zperp.x * off, 0, _ZS.z + _zperp.z * off);
 }
 const GATES = [
-  { id: "mode_solo", players: 1 as const, pos: _zgate(-7), color: 0x7be08a, label: "SOLO — 1 player", grand: 0 },
+  { id: "mode_solo", players: 1 as const, pos: _zgate(-6), color: 0x7be08a, label: "SOLO — 1 player", grand: 0 },
   { id: "mode_duo", players: 2 as const, pos: _zgate(0), color: 0x6ad7ff, label: "DUO — 2 players (2× harder)", grand: 1 },
-  { id: "mode_quad", players: 4 as const, pos: _zgate(7), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)", grand: 2 },
+  { id: "mode_quad", players: 4 as const, pos: _zgate(6), color: 0xff5a3a, label: "SQUAD — 4 players (4× harder)", grand: 2 },
 ];
 const PADS = [
   { id: "join" as const, pos: new THREE.Vector3(12, 0, 8), color: 0x6ad7ff, label: "Join a Friend's Run" },
@@ -989,8 +989,8 @@ export class Island {
     const perp = { x: -dir.z, z: dir.x };
     const ang = Math.atan2(dir.x, dir.z);
     const PY = 0.45;                       // plank top ≈ 0.56, just above the lawn
-    const start = ISLAND.half - 8;         // anchor on the island's grassy rim
-    const end = d - s.radius + 2;          // land on the platform lip
+    const start = ISLAND.half - 4;         // anchor at the island's very rim
+    const end = d - s.radius + 1;          // land on the platform lip (spans the void between)
     const at = (r: number, off: number, y: number) => new THREE.Vector3(dir.x * r + perp.x * off, y, dir.z * r + perp.z * off);
 
     let row = 0;
@@ -1051,22 +1051,22 @@ export class Island {
     }
   }
 
-  /** Paved cobble spokes from the plaza out to each satellite bridge, riding on
-   *  top of the lawn so there's an obvious, decor-free path to every island. */
+  /** A SHORT cobblestone approach leading up to each satellite bridge, riding on
+   *  top of the lawn. Grey checkered cobble (not dirt) so it reads as a path. */
   private buildHubPaths() {
-    const path = voxelMaterial(VOX.path);
-    const pathDark = voxelMaterial(VOX.dirtDark);
+    const cobble = voxelMaterial(VOX.stone);
+    const cobbleDark = voxelMaterial(VOX.stoneDark);
     for (const s of SATELLITES) {
       const d = Math.hypot(s.center.x, s.center.z) || 1;
       const dir = { x: s.center.x / d, z: s.center.z / d };
       const perp = { x: -dir.z, z: dir.x };
       const ang = Math.atan2(dir.x, dir.z);
-      const start = PLAZA_R - 1;
-      const end = ISLAND.half - 7;
+      const start = ISLAND.half - 12; // a short run up to the bridge mouth
+      const end = ISLAND.half - 3;
       let row = 0;
-      for (let r = start; r <= end; r += 1.7, row++) {
-        for (const off of [-1.5, 0, 1.5]) {
-          const tile = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.2, 1.7), (row + (off > 0 ? 1 : 0)) % 2 ? path : pathDark);
+      for (let r = start; r <= end; r += 1.4, row++) {
+        for (const off of [-1.4, 0, 1.4]) {
+          const tile = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.2, 1.4), (row + (off > 0 ? 1 : 0)) % 2 ? cobble : cobbleDark);
           tile.position.set(dir.x * r + perp.x * off, 0.5, dir.z * r + perp.z * off);
           tile.rotation.y = ang;
           tile.userData.noCast = true;
