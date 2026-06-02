@@ -23,7 +23,15 @@ interface Tower {
   def: TdTowerDef; pos: THREE.Vector3; cooldown: number;
   group: THREE.Group; barrel: THREE.Group;
   spin?: THREE.Object3D;   // orbiting energy ring (idle spin)
+  spin2?: THREE.Object3D;  // inner counter-rotating ring
+  scan?: THREE.Object3D;   // continuously spinning element (radar/etc.)
+  core?: THREE.Object3D;   // pulsing energy core in the body
   muzzle?: THREE.Object3D; // glowing business-end (pulses + flashes on fire)
+  sight?: THREE.Mesh;      // laser sight beam to the current target (world-space, in fx)
+  aim: THREE.Vector3;      // current target world pos (when aiming)
+  aiming: boolean;         // has a target this frame
+  barrelY: number;         // rest Y of the barrel (for hover bob)
+  deploy: number;          // 0..1 build/deploy animation progress
   recoil: number;          // 0..1 kickback decaying after a shot
   flash: number;           // 0..1 muzzle-flash decaying after a shot
 }
@@ -32,6 +40,12 @@ const BUILD_REACH = 4;
 const TURRET_SCALE = 2.1;       // base turret size (they were dwarfed by the pads)
 const NEXT_WAVE_DELAY = 10;     // auto-start the next wave after this many seconds
 const EARLY_CALL_RATE = 2;      // bonus gold per second skipped when calling early
+
+/** Spring-overshoot easing (0..1 → past 1 then settle) for the deploy pop. */
+function easeOutBack(x: number): number {
+  const c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2);
+}
 
 /**
  * Tower-Defense controller, Solo + 1v1 Duel.
@@ -124,7 +138,10 @@ export class TdMode {
     this.active = false;
     this.map.setVisible(false);
     this.creeps.clear();
-    for (const t of this.towers.values()) { this.fx.remove(t.group); this.disposeGroup(t.group); }
+    for (const t of this.towers.values()) {
+      this.fx.remove(t.group); this.disposeGroup(t.group);
+      if (t.sight) { this.fx.remove(t.sight); t.sight.geometry.dispose(); (t.sight.material as THREE.Material).dispose(); }
+    }
     this.towers.clear();
     this.vfx.clear();
     this.ring.visible = false;
@@ -158,16 +175,34 @@ export class TdMode {
     const group = this.makeTurret(id, 1);
     group.position.copy(pos).setY(this.turretY(1));
     this.fx.add(group);
+    // a laser sight beam (world-space, lives in fx) that locks onto the target
+    const sight = new THREE.Mesh(
+      new THREE.BoxGeometry(0.05, 0.05, 1),
+      glowMaterial(def.color, 1.2),
+    );
+    (sight.material as THREE.MeshStandardMaterial).transparent = true;
+    sight.visible = false;
+    this.fx.add(sight);
     const t: Tower = {
       pad, id, tier: 1, target: def.defaultTarget, def, pos, cooldown: 0, group,
       barrel: group.getObjectByName("barrel") as THREE.Group,
-      spin: group.getObjectByName("spin") ?? undefined,
-      muzzle: group.getObjectByName("muzzle") ?? undefined,
+      sight, aim: new THREE.Vector3(), aiming: false, barrelY: 0, deploy: 0,
       recoil: 0, flash: 0,
     };
+    this.grabRefs(t, group);
     this.towers.set(pad, t);
     this.refreshHud();
     return true;
+  }
+  /** Cache the animated child refs off a (re)built turret group. */
+  private grabRefs(t: Tower, group: THREE.Group) {
+    t.barrel = group.getObjectByName("barrel") as THREE.Group;
+    t.spin = group.getObjectByName("spin") ?? undefined;
+    t.spin2 = group.getObjectByName("spin2") ?? undefined;
+    t.scan = group.getObjectByName("scan") ?? undefined;
+    t.core = group.getObjectByName("core") ?? undefined;
+    t.muzzle = group.getObjectByName("muzzle") ?? undefined;
+    t.barrelY = t.barrel ? t.barrel.position.y : 0;
   }
   upgrade(pad: number): boolean {
     const t = this.towers.get(pad);
@@ -183,9 +218,9 @@ export class TdMode {
     ng.position.copy(t.pos).setY(this.turretY(t.tier));
     this.fx.add(ng);
     t.group = ng;
-    t.barrel = ng.getObjectByName("barrel") as THREE.Group;
-    t.spin = ng.getObjectByName("spin") ?? undefined;
-    t.muzzle = ng.getObjectByName("muzzle") ?? undefined;
+    this.grabRefs(t, ng);
+    t.deploy = 0; // replay the deploy pop so the upgrade feels punchy
+    if (t.sight) (t.sight.material as THREE.MeshStandardMaterial).color.setHex(t.def.color);
     this.refreshHud();
     return true;
   }
@@ -195,6 +230,7 @@ export class TdMode {
     this.addGold(tdSellValue(t.id, t.tier));
     this.fx.remove(t.group);
     this.disposeGroup(t.group);
+    if (t.sight) { this.fx.remove(t.sight); t.sight.geometry.dispose(); (t.sight.material as THREE.Material).dispose(); }
     this.towers.delete(pad);
     this.refreshHud();
     return true;
@@ -312,12 +348,15 @@ export class TdMode {
     }));
     for (const t of this.towers.values()) {
       t.cooldown -= dt;
+      t.aiming = false;
       const st = towerStats(t.id, t.tier);
       const tid = pickTarget(t.pos.x, t.pos.z, st.range, targets, t.target);
       if (tid < 0) continue;
       const tgt = view.find((e) => e.id === tid);
       if (!tgt) continue;
       t.barrel.rotation.y = Math.atan2(tgt.pos.x - t.pos.x, tgt.pos.z - t.pos.z);
+      t.aiming = true;
+      t.aim.set(tgt.pos.x, 0.7, tgt.pos.z); // for the laser sight
       if (t.cooldown > 0) continue;
       t.cooldown = 1 / st.fireRate;
       if (st.splash > 0) this.creeps.damageNear(tgt.pos, st.splash, st.damage, t.def.pierce);
@@ -335,30 +374,73 @@ export class TdMode {
     }
   }
 
-  /** Idle + firing life: orbit rings spin, cores breathe, barrels recoil + flash. */
+  /** Idle + firing life: a build/deploy pop, hovering weapon, counter-rotating
+   *  energy rings, a spinning scanner, a pulsing core, recoil/flash, and a laser
+   *  sight that locks onto the target. */
   private animateTowers(dt: number) {
+    const tt = this._tAnim;
     for (const t of this.towers.values()) {
+      // ---- deploy pop: spring up from the pad when built/upgraded ----
+      if (t.deploy < 1) {
+        t.deploy = Math.min(1, t.deploy + dt / 0.4);
+        const e = easeOutBack(t.deploy);
+        t.group.scale.setScalar(this.turretScale(t.tier) * e);
+        t.group.position.y = this.turretY(t.tier) * (0.4 + 0.6 * t.deploy);
+      }
+      const charge = this.towerCharge(t);
+
+      // ---- idle motion ----
       if (t.spin) {
         t.spin.rotation.y += dt * (1.0 + t.tier * 0.35);
-        t.spin.position.y = 0.6 + Math.sin(this._tAnim * 1.6 + t.pad) * 0.07;
+        t.spin.position.y = 0.6 + Math.sin(tt * 1.6 + t.pad) * 0.08;
       }
-      if (t.recoil > 0) {
-        t.recoil = Math.max(0, t.recoil - dt * 5);
-        t.barrel.position.z = -t.recoil * 0.32; // kick back along the barrel's forward
+      if (t.spin2) t.spin2.rotation.y -= dt * (1.6 + t.tier * 0.4); // counter-rotate
+      if (t.scan) t.scan.rotation.y += dt * 2.6;                    // radar sweep
+      // hover bob of the whole weapon (plus recoil along its aim axis)
+      if (t.recoil > 0) t.recoil = Math.max(0, t.recoil - dt * 5);
+      t.barrel.position.y = t.barrelY + Math.sin(tt * 2.0 + t.pad) * 0.06;
+      t.barrel.position.z = -t.recoil * 0.32;
+
+      // ---- pulsing energy core ----
+      if (t.core) {
+        const cm = (t.core as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        if (cm && cm.emissiveIntensity !== undefined) cm.emissiveIntensity = 0.7 + charge * 1.4 + Math.sin(tt * 4 + t.pad) * 0.3;
+        t.core.rotation.y += dt * 1.4;
       }
+
+      // ---- muzzle charge + flash ----
       if (t.muzzle) {
         const m = t.muzzle as THREE.Mesh;
         const mat = m.material as THREE.MeshStandardMaterial;
         if (t.flash > 0) t.flash = Math.max(0, t.flash - dt * 6);
-        // charge-up: the muzzle brightens + swells as the next shot nears ready
-        const interval = 1 / towerStats(t.id, t.tier).fireRate;
-        const charge = interval > 0 ? Math.max(0, Math.min(1, 1 - t.cooldown / interval)) : 1;
-        m.scale.setScalar(1 + t.flash * 1.4 + charge * 0.25);
-        if (mat.emissiveIntensity !== undefined) {
-          mat.emissiveIntensity = 0.6 + charge * 1.1 + t.flash * 2.4 + Math.sin(this._tAnim * 3 + t.pad) * 0.2;
+        m.scale.setScalar(1 + t.flash * 1.4 + charge * 0.3);
+        if (mat.emissiveIntensity !== undefined) mat.emissiveIntensity = 0.6 + charge * 1.3 + t.flash * 2.6 + Math.sin(tt * 3 + t.pad) * 0.2;
+      }
+
+      // ---- laser sight beam to the locked target ----
+      if (t.sight) {
+        if (t.aiming) {
+          const fx = t.pos.x, fz = t.pos.z, fy = 1.5;
+          const dx = t.aim.x - fx, dz = t.aim.z - fz, dy = t.aim.y - fy;
+          const len = Math.hypot(dx, dy, dz) || 0.01;
+          t.sight.position.set(fx + dx / 2, fy + dy / 2, fz + dz / 2);
+          t.sight.scale.set(1, 1, len);
+          t.sight.lookAt(t.aim);
+          const sm = t.sight.material as THREE.MeshStandardMaterial;
+          // sniper paints a bold beam; others just a faint targeting thread
+          sm.opacity = (t.id === "sniper" ? 0.55 : 0.22) + charge * 0.25;
+          t.sight.visible = true;
+        } else if (t.sight.visible) {
+          t.sight.visible = false;
         }
       }
     }
+  }
+
+  /** 0..1 charge toward the tower's next shot (drives core/muzzle brightness). */
+  private towerCharge(t: Tower): number {
+    const interval = 1 / towerStats(t.id, t.tier).fireRate;
+    return interval > 0 ? Math.max(0, Math.min(1, 1 - t.cooldown / interval)) : 1;
   }
 
   // ---- visuals ----
@@ -441,6 +523,10 @@ export class TdMode {
     } else if (id === "pylon") {
       g.add(box(1.4, 0.4, 1.4, metal, 0, -0.4, 0));
       g.add(box(0.45, 1.5, 0.45, stoneDark, 0, 0.45, 0));
+      // a continuously-spinning radar sweep bar (independent of aim)
+      const scan = new THREE.Group(); scan.name = "scan"; scan.position.y = 1.45;
+      scan.add(glow(0.1, 0.04, 1.1, accent, 0, 0, 0.45, 1.0));
+      g.add(scan);
       const dish = new THREE.Mesh(new THREE.ConeGeometry(0.62, 0.45, 10, 1, true), glowMaterial(accent, 0.45));
       dish.rotation.x = Math.PI * 0.5 - 0.45; dish.position.z = 0.32; dish.position.y = 0.05;
       barrel.add(dish);
@@ -512,6 +598,20 @@ export class TdMode {
       spin.add(sh);
     }
     g.add(spin);
+    // an inner counter-rotating ring (tighter, glows brighter) for extra life
+    const spin2 = new THREE.Group(); spin2.name = "spin2"; spin2.position.y = 0.9;
+    const inner = 2 + tier;
+    for (let k = 0; k < inner; k++) {
+      const a = (k / inner) * Math.PI * 2 + 0.5;
+      const sh = new THREE.Mesh(new THREE.OctahedronGeometry(0.08, 0), glowMaterial(0xffffff, 1.2));
+      sh.position.set(Math.cos(a) * 0.6, 0, Math.sin(a) * 0.6);
+      spin2.add(sh);
+    }
+    g.add(spin2);
+    // a pulsing energy CORE floating in the turret body
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), glowMaterial(accent, 1.0));
+    core.name = "core"; core.position.y = 0.55; core.scale.y = 1.4;
+    g.add(core);
     // tier crown: a floating gem above tier-2/3 turrets
     if (tier >= 2) {
       const crown = new THREE.Mesh(new THREE.OctahedronGeometry(0.16 + (tier - 2) * 0.08, 0), glowMaterial(0xfff2c0, 1.3));
