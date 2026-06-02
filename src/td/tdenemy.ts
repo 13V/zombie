@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { VoxelChar } from "../voxelChar";
+import { voxelMaterial, glowMaterial } from "../palette";
 import { TD_PATH, pathLength, pointAt, headingAt, type Vec2 } from "./tdpath";
 
 /**
@@ -45,6 +46,10 @@ export const KIND_TINTS: Record<string, { body: number; head: number; scale: num
 export const CREEP_EYE = 0x111111;
 /** Duration (seconds) of the red hit-flash pulse on damage. */
 export const FLASH_TIME = 0.12;
+/** Lifetime (seconds) of the voxel-chip death-pop burst. */
+export const POP_TIME = 0.45;
+/** How many chips a death pop spits out (scaled up a touch for bosses). */
+const POP_CHIPS = 7;
 
 /** Pre-computed full arc length of the lane (constant for the fixed TD_PATH).
  *  Exposed so the integrator can size wave timing / progress bars off it. */
@@ -79,6 +84,7 @@ export interface TdEnemyView {
 interface Creep {
   id: number;
   char: VoxelChar;
+  kind: string; // visual archetype (drives the per-frame decor animation)
   pos: THREE.Vector3; // live world position (kept in sync with char.root)
   dist: number; // arc-length travelled along TD_PATH
   hp: number;
@@ -93,6 +99,26 @@ interface Creep {
   regen: number; // HP/sec self-heal (regrow)
   revealed: boolean; // lit by a detector this frame (reset each update)
   leakDmg: number; // base-HP damage on leak (Duel)
+  phase: number; // per-creep anim phase so shimmer/throb desync across the wave
+  scale: number; // base rig scale (so decor can pulse around it)
+  decor: THREE.Group; // archetype add-on boxes (eyes/plates/spikes/streak…)
+  ghostMats: THREE.Material[]; // camo body mats toggled solid/translucent on reveal
+  throbMats: THREE.MeshStandardMaterial[]; // regrow mats whose emissive pulses
+  pip?: THREE.Sprite; // floating HP pip (damaged / boss creeps)
+  pipMat?: THREE.SpriteMaterial;
+  pipTex?: THREE.CanvasTexture;
+}
+
+/** A short-lived voxel-chip burst spawned where a creep dies. Scene-owned via the
+ *  manager's `group`; ticked + disposed in `update()` once its life elapses. */
+interface DeathPop {
+  group: THREE.Group;
+  chips: THREE.Mesh[];
+  vels: THREE.Vector3[]; // per-chip velocity (XYZ), gravity applied each frame
+  spins: THREE.Vector3[]; // per-chip angular velocity
+  mat: THREE.MeshStandardMaterial; // one shared material for the whole burst
+  geo: THREE.BoxGeometry; // one shared geometry for the whole burst
+  life: number; // seconds elapsed
 }
 
 /**
@@ -107,6 +133,8 @@ export class TdEnemies {
   private nextId = 1;
   /** Bounties of creeps killed since the last `update()` drain — surfaced once. */
   private pendingBounties: number[] = [];
+  /** Live death-pop bursts; ticked + reaped in `update()`. */
+  private pops: DeathPop[] = [];
 
   constructor(scene: THREE.Scene) {
     scene.add(this.group);
@@ -131,7 +159,8 @@ export class TdEnemies {
    * green by default, with distinct looks for "fast" / "tank" / "boss".
    */
   spawn(spec: TdSpawnSpec): void {
-    const tint = (spec.kind && KIND_TINTS[spec.kind]) || { body: BASE_BODY, head: BASE_HEAD, scale: 1 };
+    const kind = spec.kind ?? "";
+    const tint = (kind && KIND_TINTS[kind]) || { body: BASE_BODY, head: BASE_HEAD, scale: 1 };
     // zombie:true gives the shambling, arms-forward creep silhouette + gait.
     const char = new VoxelChar({ body: tint.body, head: tint.head, eye: CREEP_EYE, zombie: true });
     char.setColor(tint.body, tint.head); // also tints legs to match the body
@@ -143,9 +172,31 @@ export class TdEnemies {
     char.root.position.copy(pos);
     this.group.add(char.root);
 
+    // ---- archetype decor: a small kit of extra voxel boxes bolted to the rig so
+    // each kind reads instantly at the game's zoom. Built once per creep; freed in
+    // disposeCreep(). The lists feed the per-frame shimmer/throb in update().
+    const ghostMats: THREE.Material[] = [];
+    const throbMats: THREE.MeshStandardMaterial[] = [];
+    const decor = this.buildDecor(kind, tint, ghostMats, throbMats);
+    char.root.add(decor);
+
+    // camo: push the rig's own body mats translucent so the creep is ghostly when
+    // unrevealed. We collect them into ghostMats and toggle opacity in update().
+    if (kind === "camo") {
+      char.root.traverse((o) => {
+        const mat = (o as THREE.Mesh).material;
+        if (mat instanceof THREE.MeshStandardMaterial && !ghostMats.includes(mat)) {
+          mat.transparent = true;
+          mat.opacity = 0.32;
+          ghostMats.push(mat);
+        }
+      });
+    }
+
     this.creeps.push({
       id: this.nextId++,
       char,
+      kind,
       pos,
       dist: 0,
       hp: spec.hp,
@@ -160,7 +211,124 @@ export class TdEnemies {
       regen: Math.max(0, spec.regen ?? 0),
       revealed: false,
       leakDmg: Math.max(0, spec.leakDmg ?? 1),
+      phase: Math.random() * Math.PI * 2,
+      scale: tint.scale,
+      decor,
+      ghostMats,
+      throbMats,
     });
+  }
+
+  /**
+   * Build the per-archetype voxel add-on kit. Returns a group (already positioned
+   * in the rig's LOCAL space, so it scales with `char.root.scale`). Collects camo
+   * "ghost" materials into `ghostMats` and regrow pulsing materials into
+   * `throbMats` so `update()` can animate them without re-walking the tree.
+   *
+   * Each archetype gets a distinct, readable silhouette so a player knows the
+   * counter at a glance:
+   *  - fast   — a forward speed-fin + a faint motion streak trailing behind.
+   *  - tank   — bulky shoulder pauldrons + a back hump (heavy mass).
+   *  - boss   — horns, back spikes and glowing eyes (imposing).
+   *  - armored— bolted steel chest/shoulder plates with a metallic sheen.
+   *  - camo   — a translucent shimmer shell (solid look comes on when revealed).
+   *  - regrow — pulsing green spore nodes that throb in sync with self-heal.
+   *  - default— a couple of sickly antennae nubs to sell the grunt.
+   */
+  private buildDecor(
+    kind: string,
+    tint: { body: number; head: number; scale: number },
+    ghostMats: THREE.Material[],
+    throbMats: THREE.MeshStandardMaterial[],
+  ): THREE.Group {
+    const g = new THREE.Group();
+    const box = (w: number, h: number, d: number, x: number, y: number, z: number, color: number, glow = false): THREE.Mesh => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), glow ? glowMaterial(color, 1.1) : voxelMaterial(color));
+      m.position.set(x, y, z);
+      g.add(m);
+      return m;
+    };
+
+    switch (kind) {
+      case "fast": {
+        // sleek forward fin on the head + a swept dorsal fin → "leaning runner"
+        box(0.1, 0.34, 0.5, 0, 2.0, 0.18, 0xeaffd6);
+        box(0.12, 0.28, 0.36, 0, 1.5, -0.34, tint.head); // tail fin
+        // faint motion streak: a stretched translucent slab trailing behind
+        const streakMat = new THREE.MeshBasicMaterial({ color: 0xb2ff59, transparent: true, opacity: 0.22, depthWrite: false });
+        const streak = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 1.1), streakMat);
+        streak.position.set(0, 1.2, -0.8);
+        g.add(streak);
+        break;
+      }
+      case "tank": {
+        // chunky shoulder pauldrons + a heavy back hump
+        for (const sx of [-1, 1]) box(0.34, 0.34, 0.5, sx * 0.56, 1.5, 0, tint.head);
+        box(0.7, 0.5, 0.42, 0, 1.45, -0.34, tint.head); // back hump
+        box(0.86, 0.16, 0.56, 0, 0.66, 0, tint.head); // waist band (heft)
+        break;
+      }
+      case "boss": {
+        // horns, a jagged back-spike ridge, jaw, and big glowing eyes → menace
+        for (const sx of [-1, 1]) {
+          box(0.16, 0.5, 0.16, sx * 0.34, 2.36, 0, 0x3a0000);
+          box(0.13, 0.26, 0.13, sx * 0.42, 2.7, 0, 0x3a0000);
+        }
+        for (let i = 0; i < 4; i++) box(0.16, 0.4 - i * 0.06, 0.16, 0, 1.7, -0.2 - i * 0.22, 0x4a0000);
+        box(0.5, 0.12, 0.2, 0, 1.62, 0.36, 0x3a0000); // heavy jaw
+        // glowing eyes overlaid on the rig's dot-eyes
+        for (const sx of [-1, 1]) box(0.16, 0.16, 0.06, sx * 0.16, 1.88, 0.4, 0xff3b1f, true);
+        break;
+      }
+      case "armored": {
+        // bolted steel chest + shoulder plates with a metallic sheen
+        const plate = (w: number, h: number, d: number, x: number, y: number, z: number) => {
+          const mat = new THREE.MeshStandardMaterial({ color: 0xc4ccd6, roughness: 0.35, metalness: 0.85, flatShading: true });
+          const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+          m.position.set(x, y, z);
+          g.add(m);
+          return m;
+        };
+        plate(0.86, 0.66, 0.12, 0, 1.08, 0.26); // chest plate
+        for (const sx of [-1, 1]) plate(0.4, 0.36, 0.5, sx * 0.54, 1.5, 0); // pauldrons
+        plate(0.78, 0.5, 0.1, 0, 1.85, -0.4); // helmet backplate
+        // bolts (dark studs) so "this is steel — bring piercing"
+        for (const sx of [-0.28, 0.28]) for (const sy of [0.92, 1.24]) box(0.08, 0.08, 0.04, sx, sy, 0.33, 0x3a4048);
+        break;
+      }
+      case "camo": {
+        // a translucent shimmer shell — the creep is hard to see until revealed.
+        // The body/head/leg mats are also pushed translucent in spawn-time toggle.
+        const shellMat = new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.AdditiveBlending });
+        const shell = new THREE.Mesh(new THREE.BoxGeometry(1.0, 2.4, 0.8), shellMat);
+        shell.position.set(0, 1.2, 0);
+        g.add(shell);
+        ghostMats.push(shellMat);
+        break;
+      }
+      case "regrow": {
+        // pulsing spore nodes that throb in sync with the self-heal
+        const node = (x: number, y: number, z: number) => {
+          const m = new THREE.MeshStandardMaterial({ color: 0x69f0ae, emissive: 0x00e676, emissiveIntensity: 0.6, roughness: 0.5 });
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.22), m);
+          mesh.position.set(x, y, z);
+          g.add(mesh);
+          throbMats.push(m);
+        };
+        node(-0.42, 1.3, 0.1); node(0.42, 1.0, 0.12); node(0.0, 1.55, -0.3); node(-0.3, 0.9, -0.2);
+        box(0.16, 0.3, 0.16, 0, 2.18, 0, 0x00e676, true); // crown sprout
+        break;
+      }
+      default: {
+        // plain grunt: two limp sickly antennae so it isn't totally bare
+        for (const sx of [-1, 1]) {
+          box(0.05, 0.26, 0.05, sx * 0.16, 2.22, 0, BASE_HEAD);
+          box(0.1, 0.1, 0.1, sx * 0.16, 2.4, 0, 0xc8e6a0);
+        }
+        break;
+      }
+    }
+    return g;
   }
 
   /**
@@ -181,10 +349,15 @@ export class TdEnemies {
     for (let i = this.creeps.length - 1; i >= 0; i--) {
       const c = this.creeps[i];
 
-      // camo reveal is per-frame: detectors re-light it after this update tick
+      // camo reveal is per-frame: detectors re-light it after this update tick.
+      // Capture last frame's reveal state (set by detectors AFTER the previous
+      // update) so the shimmer can show the "spotted" look before we clear it.
+      const wasRevealed = c.revealed;
       c.revealed = false;
-      // regrow: self-heal up to max if it survived the last hit
-      if (c.regen > 0 && c.hp < c.maxHp) c.hp = Math.min(c.maxHp, c.hp + c.regen * dt);
+      // regrow: self-heal up to max if it survived the last hit. Track whether it
+      // healed this frame so the throb can pulse in sync with the regen.
+      const healing = c.regen > 0 && c.hp < c.maxHp;
+      if (healing) c.hp = Math.min(c.maxHp, c.hp + c.regen * dt);
 
       // expire the active slow, then advance by the (possibly slowed) speed
       if (c.slowTime > 0) {
@@ -217,8 +390,16 @@ export class TdEnemies {
         c.char.setHitFlash(Math.max(0, c.flash / FLASH_TIME));
       }
 
+      // per-archetype juice: shimmer/throb/streak + the floating HP pip
+      c.phase += dt;
+      this.animateDecor(c, wasRevealed, healing);
+      this.updatePip(c);
+
       c.char.update(dt);
     }
+
+    // tick + reap the voxel-chip death pops (scene-owned, freed when expired)
+    if (this.pops.length > 0) this.updatePops(dt);
 
     // drain the pending kill bounties so each surfaces exactly once
     let bounties: number[];
@@ -229,6 +410,185 @@ export class TdEnemies {
       bounties = [];
     }
     return { leaked, leakedDamage, bounties };
+  }
+
+  /**
+   * Per-frame archetype animation: shimmer the camo shell, throb the regrow
+   * nodes in sync with healing, sway the fast runner's streak, and twitch the
+   * boss horns. Cheap trig only; no allocations.
+   */
+  private animateDecor(c: Creep, wasRevealed: boolean, healing: boolean): void {
+    switch (c.kind) {
+      case "camo": {
+        // Unrevealed: ghostly + low opacity, gently shimmering. Spotted (revealed
+        // last frame): snap solid + an outline glow so the player can react.
+        const shimmer = 0.12 + (Math.sin(c.phase * 3 + c.phase) * 0.5 + 0.5) * 0.1;
+        for (const m of c.ghostMats) {
+          const bm = m as THREE.Material & { opacity: number };
+          if (m instanceof THREE.MeshBasicMaterial) {
+            // the additive shimmer shell
+            bm.opacity = wasRevealed ? 0.5 : shimmer;
+            m.color.set(wasRevealed ? 0xfff1a8 : 0xbfe9ff);
+          } else if (m instanceof THREE.MeshStandardMaterial) {
+            // the body parts: opaque + lit when spotted, translucent otherwise.
+            // Don't touch emissive while the hit-flash owns it (avoids fighting it).
+            bm.opacity = wasRevealed ? 1 : 0.3;
+            if (c.flash <= 0) {
+              m.emissive.set(wasRevealed ? 0xffd24a : 0x000000);
+              m.emissiveIntensity = wasRevealed ? 0.5 : 1;
+            }
+          }
+        }
+        break;
+      }
+      case "regrow": {
+        // throb brighter while actively healing; gentle idle pulse otherwise
+        const base = healing ? 1.1 : 0.45;
+        const amp = healing ? 0.9 : 0.25;
+        const pulse = base + (Math.sin(c.phase * 6) * 0.5 + 0.5) * amp;
+        for (const m of c.throbMats) m.emissiveIntensity = pulse;
+        // a little vertical bob on the whole decor sells the "growing" feel
+        c.decor.position.y = Math.sin(c.phase * 4) * 0.03;
+        break;
+      }
+      case "fast": {
+        // the trailing streak flickers with stride speed for a sense of motion
+        const last = c.decor.children[c.decor.children.length - 1] as THREE.Mesh;
+        const mat = last.material as THREE.MeshBasicMaterial;
+        if (mat && mat.opacity !== undefined) mat.opacity = 0.14 + (Math.sin(c.phase * 18) * 0.5 + 0.5) * 0.16;
+        break;
+      }
+      case "boss": {
+        // a slow, heavy menace bob
+        c.decor.position.y = Math.sin(c.phase * 2.2) * 0.04;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Floating HP pip: a tiny billboard bar shown above a creep once it has taken
+   * damage (or always for bosses). Built lazily, recoloured each frame by HP
+   * fraction (green → amber → red). One sprite per creep; freed in disposeCreep().
+   */
+  private updatePip(c: Creep): void {
+    const damaged = c.hp < c.maxHp;
+    const show = damaged || c.kind === "boss";
+    if (!show) {
+      if (c.pip) c.pip.visible = false;
+      return;
+    }
+    if (!c.pip) this.buildPip(c);
+    const pip = c.pip!;
+    pip.visible = true;
+    const frac = Math.max(0, Math.min(1, c.hp / c.maxHp));
+    this.drawPip(c, frac);
+    // park the pip above the head; divide by scale since it's a child of the
+    // scaled rig (keeps the pip a constant on-screen size across archetypes).
+    const s = 1 / Math.max(0.001, c.scale);
+    pip.position.set(0, 2.65, 0);
+    pip.scale.set(1.4 * s, 0.22 * s, 1);
+  }
+
+  /** Lazily create a creep's HP-pip sprite (its own tiny canvas texture). */
+  private buildPip(c: Creep): void {
+    const cv = document.createElement("canvas");
+    cv.width = 48;
+    cv.height = 8;
+    const tex = new THREE.CanvasTexture(cv);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+    const sp = new THREE.Sprite(mat);
+    sp.renderOrder = 999;
+    c.char.root.add(sp);
+    c.pip = sp;
+    c.pipMat = mat;
+    c.pipTex = tex;
+  }
+
+  /** Redraw a creep's HP pip canvas for the current HP fraction. */
+  private drawPip(c: Creep, frac: number): void {
+    const tex = c.pipTex;
+    if (!tex) return;
+    const cv = tex.image as HTMLCanvasElement;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    // dark backing
+    ctx.fillStyle = "rgba(10,12,16,0.85)";
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    // fill: green → amber → red as HP drops
+    const r = frac > 0.5 ? Math.round(255 * (1 - frac) * 2) : 255;
+    const gch = frac > 0.5 ? 200 : Math.round(200 * frac * 2);
+    ctx.fillStyle = `rgb(${r},${gch},60)`;
+    const pad = 1;
+    ctx.fillRect(pad, pad, (cv.width - pad * 2) * frac, cv.height - pad * 2);
+    tex.needsUpdate = true;
+  }
+
+  /**
+   * Spawn a short-lived voxel-chip burst at `pos` tinted to `kind`. Self-contained:
+   * the burst group is added to this manager's scene-owned `group`, animated in
+   * `update()`, and fully disposed when its life elapses (or on `clear()`).
+   */
+  private spawnPop(pos: THREE.Vector3, kind: string, big: boolean): void {
+    const tint = (kind && KIND_TINTS[kind]) || { body: BASE_BODY, head: BASE_HEAD, scale: 1 };
+    const group = new THREE.Group();
+    group.position.copy(pos);
+    const mat = new THREE.MeshStandardMaterial({ color: tint.body, roughness: 0.85, flatShading: true });
+    const geo = new THREE.BoxGeometry(0.18, 0.18, 0.18);
+    const n = big ? POP_CHIPS + 5 : POP_CHIPS;
+    const chips: THREE.Mesh[] = [];
+    const vels: THREE.Vector3[] = [];
+    const spins: THREE.Vector3[] = [];
+    for (let i = 0; i < n; i++) {
+      const m = new THREE.Mesh(geo, mat);
+      const s = 0.5 + Math.random() * 0.9;
+      m.scale.setScalar(s * (big ? 1.5 : 1));
+      m.position.set(0, 1.0 + Math.random() * 0.4, 0);
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 1.5 + Math.random() * 2.5;
+      vels.push(new THREE.Vector3(Math.cos(ang) * speed, 2.5 + Math.random() * 2.5, Math.sin(ang) * speed));
+      spins.push(new THREE.Vector3((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12));
+      group.add(m);
+      chips.push(m);
+    }
+    this.group.add(group);
+    this.pops.push({ group, chips, vels, spins, mat, geo, life: 0 });
+  }
+
+  /** Tick every live death-pop: ballistic chips + fade, reaping expired bursts. */
+  private updatePops(dt: number): void {
+    for (let i = this.pops.length - 1; i >= 0; i--) {
+      const pop = this.pops[i];
+      pop.life += dt;
+      const k = pop.life / POP_TIME;
+      if (k >= 1) {
+        this.group.remove(pop.group);
+        pop.geo.dispose();
+        pop.mat.dispose();
+        this.pops.splice(i, 1);
+        continue;
+      }
+      for (let j = 0; j < pop.chips.length; j++) {
+        const v = pop.vels[j];
+        v.y -= 12 * dt; // gravity
+        const m = pop.chips[j];
+        m.position.x += v.x * dt;
+        m.position.y += v.y * dt;
+        m.position.z += v.z * dt;
+        if (m.position.y < 0) { m.position.y = 0; v.x *= 0.6; v.z *= 0.6; v.y = 0; }
+        const sp = pop.spins[j];
+        m.rotation.x += sp.x * dt;
+        m.rotation.y += sp.y * dt;
+        m.rotation.z += sp.z * dt;
+      }
+      // shrink the chips out over the burst's life (cheap fade without alpha sort)
+      pop.group.scale.setScalar(1 - k * 0.6);
+    }
   }
 
   /**
@@ -323,10 +683,16 @@ export class TdEnemies {
     }
   }
 
-  /** Remove + dispose every creep and reset ids + pending bounties (mode leave). */
+  /** Remove + dispose every creep, death-pop and reset ids + pending bounties. */
   clear(): void {
     for (const c of this.creeps) this.disposeCreep(c);
     this.creeps.length = 0;
+    for (const pop of this.pops) {
+      this.group.remove(pop.group);
+      pop.geo.dispose();
+      pop.mat.dispose();
+    }
+    this.pops.length = 0;
     this.pendingBounties.length = 0;
     this.nextId = 1;
   }
@@ -339,16 +705,22 @@ export class TdEnemies {
     return -1;
   }
 
-  /** Reap the creep at `idx`: queue its bounty, dispose, drop from the list. */
+  /** Reap the creep at `idx`: queue its bounty, fire the death pop, dispose, drop
+   *  from the list. Called from `damage`/`damageNear` so every kill pops once. */
   private kill(idx: number): void {
     const c = this.creeps[idx];
     this.pendingBounties.push(c.bounty);
+    this.spawnPop(c.pos, c.kind, c.kind === "boss" || c.kind === "tank");
     this.disposeCreep(c);
     this.creeps.splice(idx, 1);
   }
 
-  /** Detach a creep's rig and free its GPU resources (VoxelChar has no dispose). */
+  /** Detach a creep's rig and free its GPU resources (VoxelChar has no dispose).
+   *  The decor add-ons + the HP-pip sprite are children of `char.root`, so the
+   *  traverse frees their geometry/material too; the pip's canvas texture needs
+   *  an explicit dispose (SpriteMaterial.dispose() doesn't free its map). */
   private disposeCreep(c: Creep): void {
+    if (c.pipTex) c.pipTex.dispose();
     this.group.remove(c.char.root);
     c.char.root.traverse((o) => {
       const mesh = o as THREE.Mesh;

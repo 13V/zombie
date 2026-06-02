@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { voxelMaterial, glowMaterial, VOX } from "../palette";
+import { voxelMaterial, glowMaterial, toyMaterial, auraMaterial, VOX } from "../palette";
 import { TD_PATH, TD_PADS, TD_GOAL, TD_SPAWN, type Vec2 } from "./tdpath";
 
 /**
@@ -57,6 +57,16 @@ export class TdMap {
   private coreBaseEmissive = 1.2;
   private flashTimer = 0; // seconds of damage-flash remaining
 
+  // ---- ambient motion (updated each frame; preallocated, no per-frame alloc) --
+  private fireflies?: THREE.Points; // tiny glowing motes that bob + drift
+  private fireflyData: { x: number; z: number; y: number; phase: number; speed: number; rad: number }[] = [];
+  private petals?: THREE.Points; // slow falling cherry petals
+  private petalData: { x: number; z: number; y: number; vy: number; sway: number; phase: number }[] = [];
+  private windmillSails?: THREE.Group; // a lazily-turning landmark
+  private bannerFlags: { mesh: THREE.Mesh; phase: number; baseRot: number }[] = [];
+  private water?: THREE.Mesh; // the surrounding sheet (shimmer in update)
+  private laneLanterns: PulseGlow[] = []; // (also pushed into pulses; kept for clarity)
+
   // ---- calm dusk "lofi" mood (TD-only; snapshots + restores the scene) ----
   private scene: THREE.Scene;
   private moodSaved = false;
@@ -67,14 +77,18 @@ export class TdMap {
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+    this.buildSkyDome();
     this.buildBackdrop();
     this.buildGround();
     this.buildLane();
+    this.buildLaneTrim();
     this.buildDecor();
+    this.buildLandmarks();
     this.buildPads();
     this.buildSpawn();
     this.buildBase();
     this.buildAtmosphere();
+    this.buildParticles();
     this.buildMoodLights();
     this.applyShadows();
     scene.add(this.group);
@@ -141,6 +155,49 @@ export class TdMap {
   //  WORLD BUILDING
   // ========================================================================
 
+  /**
+   * A big inward-facing GRADIENT SKY DOME behind the flat-colour background: a
+   * warm peach horizon melting up into soft lavender at the zenith and a dusky
+   * plum near the ground, giving the dusk real atmospheric depth. Vertex-colour
+   * gradient (no shader), unlit (BackSide + no toneMap so it stays soft), and
+   * placed well outside the fog's far plane core so the field still hazes out.
+   */
+  private buildSkyDome() {
+    const R = 240;
+    const geo = new THREE.SphereGeometry(R, 24, 16);
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const colors = new Float32Array(pos.count * 3);
+    const cZenith = new THREE.Color(0xc9b6e0); // soft lavender overhead
+    const cHorizon = new THREE.Color(0xf4cdb0); // warm peach at the horizon
+    const cGround = new THREE.Color(0xb59ab0); // dusky plum below
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      // normalized height of this vertex on the sphere (-1 ground .. +1 zenith)
+      const h = pos.getY(i) / R;
+      if (h >= 0) {
+        // horizon → zenith: ease so the warm band hugs the horizon
+        c.copy(cHorizon).lerp(cZenith, Math.pow(h, 0.7));
+      } else {
+        c.copy(cHorizon).lerp(cGround, Math.min(1, -h * 1.4));
+      }
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    const mat = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      side: THREE.BackSide,
+      fog: false,
+      toneMapped: false,
+      depthWrite: false,
+    });
+    const dome = new THREE.Mesh(geo, mat);
+    dome.userData.noCast = true;
+    dome.renderOrder = -10; // draw behind everything
+    this.group.add(dome);
+  }
+
   /** A dark void plate + a glassy water sheet far below, so the battlefield
    *  reads as a floating diorama (mirrors bwmap's backdrop). */
   private buildBackdrop() {
@@ -167,6 +224,7 @@ export class TdMap {
     water.position.y = -9.5;
     water.userData.noCast = true;
     this.group.add(water);
+    this.water = water;
   }
 
   /**
@@ -265,6 +323,201 @@ export class TdMap {
     };
     lay(a, VOX.cobble);
     lay(b, VOX.cobbleDark);
+  }
+
+  /**
+   * LANE POLISH — low stone curb stones lining the road edges + a handful of
+   * lane-side lanterns at the path corners. The curbs are dropped at evenly
+   * spaced samples just OUTSIDE the road half-width, sitting on the grass (so
+   * their tops are above both grass and lane tiles — no coplanar overlap), and
+   * we skip any sample that lands on a pad/base/spawn to keep gameplay clear.
+   */
+  private buildLaneTrim() {
+    const curbGeo = new THREE.BoxGeometry(0.55, 0.5, 0.55);
+    const curbMat = voxelMaterial(VOX.cobble);
+    const curbMatD = voxelMaterial(VOX.cobbleDark);
+    const offset = LANE_W + 0.55; // just off the road shoulder
+    const blockedSpot = (x: number, z: number): boolean => {
+      for (const p of TD_PADS) if ((p.x - x) ** 2 + (p.z - z) ** 2 < 2.4 ** 2) return true;
+      if ((TD_GOAL.x - x) ** 2 + (TD_GOAL.z - z) ** 2 < 6 ** 2) return true;
+      if ((TD_SPAWN.x - x) ** 2 + (TD_SPAWN.z - z) ** 2 < 6 ** 2) return true;
+      return Math.abs(x) > ARENA_HALF - 1 || Math.abs(z) > ARENA_HALF - 1;
+    };
+    // collect curb-stone positions along both shoulders of each segment
+    const stones: THREE.Vector3[] = [];
+    let toggle = 0;
+    for (let i = 1; i < TD_PATH.length; i++) {
+      const a = TD_PATH[i - 1], b = TD_PATH[i];
+      const dx = b.x - a.x, dz = b.z - a.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const ux = dx / len, uz = dz / len; // along
+      const nx = -uz, nz = ux; // left normal
+      const step = 1.6;
+      for (let s = 0; s <= len; s += step) {
+        const cx = a.x + ux * s, cz = a.z + uz * s;
+        for (const side of [1, -1]) {
+          const x = cx + nx * offset * side;
+          const z = cz + nz * offset * side;
+          if (this.nearLane(x, z, LANE_W - 0.2)) continue; // not into the road
+          if (blockedSpot(x, z)) continue;
+          stones.push(new THREE.Vector3(x, GROUND_TOP + 0.2, z));
+        }
+      }
+    }
+    // two-tone instanced curbs (cheap)
+    if (stones.length) {
+      const m = new THREE.Matrix4();
+      const light: THREE.Vector3[] = [], dark: THREE.Vector3[] = [];
+      stones.forEach((p) => ((toggle++ % 2 === 0 ? light : dark).push(p)));
+      const lay = (ps: THREE.Vector3[], mat: THREE.Material) => {
+        if (!ps.length) return;
+        const inst = new THREE.InstancedMesh(curbGeo, mat, ps.length);
+        ps.forEach((p, i) => { m.makeTranslation(p.x, p.y, p.z); inst.setMatrixAt(i, m); });
+        inst.instanceMatrix.needsUpdate = true;
+        this.group.add(inst);
+      };
+      lay(light, curbMat);
+      lay(dark, curbMatD);
+    }
+
+    // lane-side LANTERNS at the inner path corners (skip endpoints near base/spawn)
+    for (let i = 1; i < TD_PATH.length - 1; i++) {
+      const c = TD_PATH[i];
+      // outward-ish offset using the incoming segment's left normal
+      const a = TD_PATH[i - 1];
+      const dx = c.x - a.x, dz = c.z - a.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const nx = -dz / len, nz = dx / len;
+      const lx = c.x + nx * (LANE_W + 1.4), lz = c.z + nz * (LANE_W + 1.4);
+      if (blockedSpot(lx, lz) || this.nearLane(lx, lz, LANE_W - 0.2)) continue;
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 2.2, 0.3), voxelMaterial(VOX.barkDark));
+      post.position.set(lx, 1.1, lz);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.2, 0.2), voxelMaterial(VOX.barkDark));
+      arm.position.set(lx, 2.1, lz);
+      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.55, 0.4), glowMaterial(VOX.lantern, 1.3));
+      lamp.position.set(lx, 1.95, lz);
+      lamp.userData.noCast = true;
+      this.group.add(post, arm, lamp);
+      const pg: PulseGlow = { mesh: lamp, base: 1.1, amp: 0.4, phase: i * 1.3 };
+      this.pulses.push(pg);
+      this.laneLanterns.push(pg);
+      // a soft warm point light, sparing on count
+      if (i % 2 === 1) {
+        const pl = new THREE.PointLight(0xffc06a, 1.8, 9, 2);
+        pl.position.set(lx, 2.2, lz);
+        this.group.add(pl);
+      }
+    }
+  }
+
+  /**
+   * Diorama LANDMARKS in the open grass corners (away from lane/pads/base/spawn):
+   * a little voxel WINDMILL with turning sails, a six-post GAZEBO, and a small
+   * reflective lily POND. They give the map a storybook focal-point in each quiet
+   * corner without crowding the play area.
+   */
+  private buildLandmarks() {
+    // pick safe open corners well clear of gameplay anchors
+    const safe = (x: number, z: number, rad: number): boolean => {
+      if (this.nearLane(x, z, LANE_W + rad + 1)) return false;
+      for (const p of TD_PADS) if ((p.x - x) ** 2 + (p.z - z) ** 2 < (rad + 3) ** 2) return false;
+      if ((TD_GOAL.x - x) ** 2 + (TD_GOAL.z - z) ** 2 < (rad + 7) ** 2) return false;
+      if ((TD_SPAWN.x - x) ** 2 + (TD_SPAWN.z - z) ** 2 < (rad + 7) ** 2) return false;
+      return Math.abs(x) < ARENA_HALF - rad - 1 && Math.abs(z) < ARENA_HALF - rad - 1;
+    };
+
+    // ---- WINDMILL (north-east open corner) ----
+    {
+      const cand: Vec2[] = [{ x: 27, z: -27 }, { x: -27, z: -27 }, { x: 27, z: 27 }];
+      const at = cand.find((p) => safe(p.x, p.z, 4)) ?? cand[0];
+      const mill = new THREE.Group();
+      // tapered stone tower
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 2.4, 1.0, 8), voxelMaterial(VOX.cobble));
+      base.position.y = 0.5; mill.add(base);
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.9, 4.2, 8), voxelMaterial(VOX.plasterWarm));
+      body.position.y = 3.1; mill.add(body);
+      // conical cap
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(1.6, 1.6, 8), voxelMaterial(VOX.roofRed));
+      cap.position.y = 6.0; mill.add(cap);
+      // a tiny door + window glow
+      const door = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.2, 0.3), voxelMaterial(VOX.doorWood));
+      door.position.set(0, 1.4, 1.85); mill.add(door);
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.2), glowMaterial(VOX.windowGlow, 0.9));
+      win.position.set(0, 3.6, 1.85); win.userData.noCast = true; mill.add(win);
+      // sail hub + four blades (turn in update)
+      const sails = new THREE.Group();
+      sails.position.set(0, 4.4, 1.9);
+      const hub = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), voxelMaterial(VOX.barkDark));
+      sails.add(hub);
+      for (let b = 0; b < 4; b++) {
+        const blade = new THREE.Group();
+        const spar = new THREE.Mesh(new THREE.BoxGeometry(0.18, 3.2, 0.18), voxelMaterial(VOX.bark));
+        spar.position.y = 1.7; blade.add(spar);
+        const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.7, 2.6, 0.1), voxelMaterial(VOX.houseWall));
+        cloth.position.set(0.5, 1.7, 0.06); blade.add(cloth);
+        blade.rotation.z = (b / 4) * Math.PI * 2;
+        sails.add(blade);
+      }
+      mill.add(sails);
+      this.windmillSails = sails;
+      mill.position.set(at.x, 0, at.z);
+      mill.rotation.y = Math.atan2(-at.x, -at.z); // face roughly inward
+      this.group.add(mill);
+    }
+
+    // ---- GAZEBO (a quiet corner) ----
+    {
+      const cand: Vec2[] = [{ x: -27, z: 27 }, { x: 27, z: 27 }, { x: -27, z: -27 }];
+      const at = cand.find((p) => safe(p.x, p.z, 3.5)) ?? cand[0];
+      const gz = new THREE.Group();
+      const deck = new THREE.Mesh(new THREE.CylinderGeometry(3.0, 3.2, 0.4, 6), voxelMaterial(VOX.woodTrim));
+      deck.position.y = 0.2; gz.add(deck);
+      const deck2 = new THREE.Mesh(new THREE.CylinderGeometry(2.7, 2.9, 0.25, 6), voxelMaterial(VOX.crate));
+      deck2.position.y = 0.5; gz.add(deck2);
+      for (let k = 0; k < 6; k++) {
+        const ang = (k / 6) * Math.PI * 2;
+        const px = Math.cos(ang) * 2.4, pz = Math.sin(ang) * 2.4;
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 2.6, 0.3), voxelMaterial(VOX.bark));
+        post.position.set(px, 1.9, pz); gz.add(post);
+      }
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 1.8, 6), voxelMaterial(VOX.roofPurple));
+      roof.position.y = 4.1; gz.add(roof);
+      const finial = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.6, 0.35), glowMaterial(0xc7a6ff, 0.7));
+      finial.position.y = 5.2; finial.userData.noCast = true; gz.add(finial);
+      this.pulses.push({ mesh: finial, base: 0.6, amp: 0.4, phase: 2.0 });
+      gz.position.set(at.x, 0, at.z);
+      this.group.add(gz);
+    }
+
+    // ---- LILY POND (a quiet corner) ----
+    {
+      const cand: Vec2[] = [{ x: 27, z: 27 }, { x: -27, z: 27 }, { x: 27, z: -27 }];
+      const at = cand.find((p) => safe(p.x, p.z, 3.5)) ?? cand[0];
+      // shallow stone rim + a reflective water disc set just below the grass
+      const rim = new THREE.Mesh(new THREE.CylinderGeometry(3.0, 3.0, 0.4, 12), voxelMaterial(VOX.pebble));
+      rim.position.set(at.x, GROUND_TOP + 0.05, at.z); rim.userData.noCast = true; this.group.add(rim);
+      const pondMat = new THREE.MeshStandardMaterial({
+        color: TD_WATER, emissive: TD_WATER, emissiveIntensity: 0.22,
+        transparent: true, opacity: 0.82, roughness: 0.25, metalness: 0.0,
+      });
+      const pond = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 0.3, 12), pondMat);
+      pond.position.set(at.x, GROUND_TOP + 0.02, at.z); pond.userData.noCast = true; this.group.add(pond);
+      this.portalRings.push(pond); // reuse the gentle emissive shimmer driver
+      // a few lily pads + a glowing bloom
+      let s = (Math.abs(at.x) + 7) | 0;
+      const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+      for (let k = 0; k < 5; k++) {
+        const ang = rnd() * Math.PI * 2, r = rnd() * 1.8;
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.12, 0.7), voxelMaterial(0x5a9a5e));
+        pad.position.set(at.x + Math.cos(ang) * r, GROUND_TOP + 0.2, at.z + Math.sin(ang) * r);
+        pad.rotation.y = rnd() * Math.PI; pad.userData.noCast = true; this.group.add(pad);
+        if (k < 2) {
+          const flower = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.28), glowMaterial(VOX.flowerPink, 0.5));
+          flower.position.copy(pad.position); flower.position.y += 0.18; flower.userData.noCast = true;
+          this.group.add(flower);
+        }
+      }
+    }
   }
 
   /** Lush diorama dressing on the grass (away from lane/pads/base/spawn): layered
@@ -407,6 +660,63 @@ export class TdMap {
     }
   }
 
+  /**
+   * AMBIENT PARTICLES — two cheap THREE.Points clouds, animated in update():
+   *   • fireflies: tiny warm glowing motes that bob + drift in lazy circles
+   *   • petals:   slow-falling cherry-blossom flecks that sway and respawn
+   * Both reuse a single preallocated position buffer (no per-frame allocation),
+   * are additive + depthWrite:false so they read as soft light, and `noCast`.
+   */
+  private buildParticles() {
+    let seed = 24601;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+
+    // ---- fireflies ----
+    const FN = 60;
+    const fpos = new Float32Array(FN * 3);
+    for (let i = 0; i < FN; i++) {
+      const x = (rnd() * 2 - 1) * (ARENA_HALF - 4);
+      const z = (rnd() * 2 - 1) * (ARENA_HALF - 4);
+      const y = 1.0 + rnd() * 4.0;
+      this.fireflyData.push({ x, z, y, phase: rnd() * Math.PI * 2, speed: 0.3 + rnd() * 0.5, rad: 0.6 + rnd() * 1.4 });
+      fpos[i * 3] = x; fpos[i * 3 + 1] = y; fpos[i * 3 + 2] = z;
+    }
+    const fgeo = new THREE.BufferGeometry();
+    fgeo.setAttribute("position", new THREE.BufferAttribute(fpos, 3));
+    const fmat = new THREE.PointsMaterial({
+      color: 0xffe6a0, size: 0.5, sizeAttenuation: true,
+      transparent: true, opacity: 0.9, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false,
+    });
+    const fire = new THREE.Points(fgeo, fmat);
+    fire.frustumCulled = false;
+    fire.userData.noCast = true;
+    this.group.add(fire);
+    this.fireflies = fire;
+
+    // ---- falling petals ----
+    const PN = 50;
+    const ppos = new Float32Array(PN * 3);
+    for (let i = 0; i < PN; i++) {
+      const x = (rnd() * 2 - 1) * ARENA_HALF;
+      const z = (rnd() * 2 - 1) * ARENA_HALF;
+      const y = rnd() * 16;
+      this.petalData.push({ x, z, y, vy: 0.4 + rnd() * 0.6, sway: 0.5 + rnd() * 1.2, phase: rnd() * Math.PI * 2 });
+      ppos[i * 3] = x; ppos[i * 3 + 1] = y; ppos[i * 3 + 2] = z;
+    }
+    const pgeo = new THREE.BufferGeometry();
+    pgeo.setAttribute("position", new THREE.BufferAttribute(ppos, 3));
+    const pmat = new THREE.PointsMaterial({
+      color: 0xffc2dd, size: 0.42, sizeAttenuation: true,
+      transparent: true, opacity: 0.85, depthWrite: false, toneMapped: false,
+    });
+    const pet = new THREE.Points(pgeo, pmat);
+    pet.frustumCulled = false;
+    pet.userData.noCast = true;
+    this.group.add(pet);
+    this.petals = pet;
+  }
+
   /** A raised stone build-pad plinth with a glowing rim at every TD_PADS spot. */
   private buildPads() {
     TD_PADS.forEach((p, i) => {
@@ -441,15 +751,44 @@ export class TdMap {
     const pillarMat = voxelMaterial(VOX.stoneDark);
     const half = LANE_W + 0.6; // pillars flank the lane mouth
 
+    // a low stone footing slab so the arch reads as built, not floating
+    const footing = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.5, half * 2 + 2.2), voxelMaterial(VOX.cobbleDark));
+    footing.position.set(0, GROUND_TOP + 0.25, 0);
+    portal.add(footing);
+
     for (const sx of [-1, 1]) {
-      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.9, 5.2, 1.4), pillarMat);
-      pillar.position.set(0, GROUND_TOP + 2.6, sx * half);
+      // layered pillar: a chunky base block, the shaft, and a capital
+      const pbase = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.7, 1.8), voxelMaterial(VOX.cobble));
+      pbase.position.set(0, GROUND_TOP + 0.85, sx * half);
+      portal.add(pbase);
+      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.9, 4.4, 1.4), pillarMat);
+      pillar.position.set(0, GROUND_TOP + 3.0, sx * half);
       portal.add(pillar);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.5, 1.8), voxelMaterial(VOX.cobble));
+      cap.position.set(0, GROUND_TOP + 5.3, sx * half);
+      portal.add(cap);
+      // a glowing rune inset on each pillar (caught by bloom)
+      const rune = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.9, 0.3), glowMaterial(0xc7a6ff, 1.0));
+      rune.position.set(0.5, GROUND_TOP + 3.0, sx * half);
+      rune.userData.noCast = true;
+      portal.add(rune);
+      this.pulses.push({ mesh: rune, base: 0.8, amp: 0.5, phase: sx + 1 });
     }
-    // lintel across the top
-    const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.9, half * 2 + 1.4), voxelMaterial(VOX.stone));
-    lintel.position.set(0, GROUND_TOP + 5.0, 0);
+    // lintel across the top + a crenellated cap row
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.9, half * 2 + 2.2), voxelMaterial(VOX.stone));
+    lintel.position.set(0, GROUND_TOP + 5.7, 0);
     portal.add(lintel);
+    for (let k = -2; k <= 2; k++) {
+      const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.6, 0.7), voxelMaterial(VOX.cobbleDark));
+      tooth.position.set(0, GROUND_TOP + 6.4, k * 1.7);
+      portal.add(tooth);
+    }
+    // a small keystone glow at the apex
+    const keystone = new THREE.Mesh(new THREE.OctahedronGeometry(0.55, 0), glowMaterial(0x9b6fff, 1.2));
+    keystone.position.set(0, GROUND_TOP + 6.0, 0);
+    keystone.userData.noCast = true;
+    portal.add(keystone);
+    this.pulses.push({ mesh: keystone, base: 0.9, amp: 0.6, phase: 0.5 });
 
     // shimmering portal pane (glow, caught by bloom) inside the arch
     const pane = new THREE.Mesh(
@@ -489,35 +828,84 @@ export class TdMap {
   /** The BASE you defend at TD_GOAL — a chunky stone keep crowned by an emissive
    *  crystal core (pulses gently; `flashBase()` makes it flare when damaged). */
   private buildBase() {
-    // stepped stone keep
+    // wide stepped foundation (two skirts) so the keep reads as monumental
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(7.2, 0.5, 7.2), voxelMaterial(VOX.cobbleDark));
+    skirt.position.y = GROUND_TOP + 0.25;
+    this.base.add(skirt);
     const plinth = new THREE.Mesh(new THREE.BoxGeometry(6, 1.0, 6), voxelMaterial(VOX.cobble));
-    plinth.position.y = GROUND_TOP + 0.5;
+    plinth.position.y = GROUND_TOP + 0.75;
     this.base.add(plinth);
     const keep = new THREE.Mesh(new THREE.BoxGeometry(4.4, 2.6, 4.4), voxelMaterial(VOX.stone));
-    keep.position.y = GROUND_TOP + 2.3;
+    keep.position.y = GROUND_TOP + 2.55;
     this.base.add(keep);
+    // a contrasting masonry band around the keep
+    const band = new THREE.Mesh(new THREE.BoxGeometry(4.7, 0.5, 4.7), voxelMaterial(VOX.stoneDark));
+    band.position.y = GROUND_TOP + 1.7;
+    this.base.add(band);
     const battle = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.6, 5.0), voxelMaterial(VOX.stoneDark));
-    battle.position.y = GROUND_TOP + 3.9;
+    battle.position.y = GROUND_TOP + 4.15;
     this.base.add(battle);
 
-    // four corner merlons for a little castle silhouette
+    // glowing arched doorway facing the lane (toward -z, where creeps arrive)
+    const doorGlow = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.8, 0.3), glowMaterial(0x6ad7ff, 0.8));
+    doorGlow.position.set(0, GROUND_TOP + 2.1, -2.25);
+    doorGlow.userData.noCast = true;
+    this.base.add(doorGlow);
+    this.pulses.push({ mesh: doorGlow, base: 0.5, amp: 0.4, phase: 1.4 });
+
+    // four corner towers with merlons + brazier cups (a sturdier silhouette)
     for (const mx of [-1, 1]) {
       for (const mz of [-1, 1]) {
-        const merlon = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), voxelMaterial(VOX.cobbleDark));
-        merlon.position.set(mx * 2.1, GROUND_TOP + 4.45, mz * 2.1);
+        const turret = new THREE.Mesh(new THREE.BoxGeometry(1.1, 3.6, 1.1), voxelMaterial(VOX.stone));
+        turret.position.set(mx * 2.25, GROUND_TOP + 2.6, mz * 2.25);
+        this.base.add(turret);
+        const merlon = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.7, 1.3), voxelMaterial(VOX.cobbleDark));
+        merlon.position.set(mx * 2.25, GROUND_TOP + 4.6, mz * 2.25);
         this.base.add(merlon);
+        const cup = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.4, 0.55), glowMaterial(VOX.emberHot, 1.3));
+        cup.position.set(mx * 2.25, GROUND_TOP + 5.05, mz * 2.25);
+        cup.userData.noCast = true;
+        this.base.add(cup);
+        this.pulses.push({ mesh: cup, base: 1.0, amp: 0.6, phase: mx * 1.3 + mz });
       }
     }
 
-    // the defended CRYSTAL CORE — a faceted glowing gem floating above the keep
+    // two hanging BANNERS flanking the front, in the player's crystal-blue, with
+    // a stored phase so they ripple gently in update()
+    for (const sx of [-1, 1]) {
+      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.18, 4.0, 0.18), voxelMaterial(VOX.barkDark));
+      pole.position.set(sx * 1.6, GROUND_TOP + 2.4, -3.4);
+      this.base.add(pole);
+      const flag = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.6, 1.2), toyMaterial(0x4a78d6, { emissive: 0x274a86, emissiveIntensity: 0.4 }));
+      flag.position.set(sx * 1.6, GROUND_TOP + 3.4, -2.9);
+      this.base.add(flag);
+      this.bannerFlags.push({ mesh: flag, phase: sx, baseRot: 0 });
+      const crest = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.4, 0.4), glowMaterial(0x6ad7ff, 0.7));
+      crest.position.set(sx * 1.6, GROUND_TOP + 3.7, -2.9);
+      crest.userData.noCast = true;
+      this.base.add(crest);
+      this.pulses.push({ mesh: crest, base: 0.5, amp: 0.4, phase: sx + 0.7 });
+    }
+
+    // the defended CRYSTAL CORE — a faceted glowing gem floating above the keep,
+    // wrapped in a faint additive halo shell for a softer glow
     const core = new THREE.Mesh(new THREE.OctahedronGeometry(1.1, 0), glowMaterial(0x6ad7ff, this.coreBaseEmissive));
     (core.geometry as THREE.BufferGeometry).scale(1, 1.5, 1);
-    core.position.y = GROUND_TOP + 5.6;
+    core.position.y = GROUND_TOP + 5.9;
     this.base.add(core);
     this.coreGem = core;
+    const halo = new THREE.Mesh(new THREE.OctahedronGeometry(1.7, 0), auraMaterial(0x6ad7ff, 0.5));
+    (halo.geometry as THREE.BufferGeometry).scale(1, 1.4, 1);
+    halo.position.y = GROUND_TOP + 5.9;
+    halo.userData.noCast = true;
+    this.base.add(halo);
+    // a cool point light at the core so the keep glows from within
+    const coreLight = new THREE.PointLight(0x6ad7ff, 2.4, 14, 2);
+    coreLight.position.set(0, GROUND_TOP + 5.9, 0);
+    this.base.add(coreLight);
 
     // a glowing dais ring around the keep base so the goal reads clearly
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.18, 6, 24), glowMaterial(0x6ad7ff, 0.7));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.7, 0.18, 6, 24), glowMaterial(0x6ad7ff, 0.7));
     ring.rotation.x = Math.PI / 2;
     ring.position.y = GROUND_TOP + 0.6;
     ring.userData.noCast = true;
@@ -592,7 +980,53 @@ export class TdMap {
       if (c.group.position.x > ARENA_HALF + 14) c.group.position.x = -ARENA_HALF - 14;
     }
 
-    // generic emissive pulses (pad rims, portal rings, base dais ring, braziers)
+    // windmill sails turn lazily
+    if (this.windmillSails) this.windmillSails.rotation.z += dt * 0.45;
+
+    // base banners ripple gently (tilt + slight twist)
+    for (const b of this.bannerFlags) {
+      b.mesh.rotation.z = Math.sin(t * 1.6 + b.phase) * 0.12;
+      b.mesh.rotation.y = b.baseRot + Math.sin(t * 1.1 + b.phase) * 0.08;
+    }
+
+    // surrounding water shimmer: a soft breathing emissive (subtle, calm)
+    if (this.water) {
+      (this.water.material as THREE.MeshStandardMaterial).emissiveIntensity =
+        0.15 + (Math.sin(t * 0.8) + 1) * 0.06;
+    }
+
+    // fireflies: bob + drift in lazy little circles around their home point
+    if (this.fireflies) {
+      const attr = this.fireflies.geometry.attributes.position as THREE.BufferAttribute;
+      const arr = attr.array as Float32Array;
+      for (let i = 0; i < this.fireflyData.length; i++) {
+        const f = this.fireflyData[i];
+        const a = t * f.speed + f.phase;
+        arr[i * 3] = f.x + Math.cos(a) * f.rad;
+        arr[i * 3 + 1] = f.y + Math.sin(a * 1.7) * 0.6;
+        arr[i * 3 + 2] = f.z + Math.sin(a * 0.8) * f.rad;
+      }
+      attr.needsUpdate = true;
+      (this.fireflies.material as THREE.PointsMaterial).opacity = 0.7 + (Math.sin(t * 3) + 1) * 0.12;
+    }
+
+    // petals: drift down + sway, respawn at the top once they reach the ground
+    if (this.petals) {
+      const attr = this.petals.geometry.attributes.position as THREE.BufferAttribute;
+      const arr = attr.array as Float32Array;
+      for (let i = 0; i < this.petalData.length; i++) {
+        const p = this.petalData[i];
+        p.y -= p.vy * dt;
+        if (p.y < 0.3) { p.y = 15 + (i % 5); p.x = ((i * 53) % (ARENA_HALF * 2)) - ARENA_HALF; }
+        arr[i * 3] = p.x + Math.sin(t * p.sway + p.phase) * 0.8;
+        arr[i * 3 + 1] = p.y;
+        arr[i * 3 + 2] = p.z + Math.cos(t * p.sway * 0.7 + p.phase) * 0.8;
+      }
+      attr.needsUpdate = true;
+    }
+
+    // generic emissive pulses (pad rims, portal rings, base dais ring, braziers,
+    // lane lanterns, banners' crests, landmark accents)
     for (const p of this.pulses) {
       (p.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity =
         p.base + (Math.sin(t * 2.4 + p.phase) + 1) * 0.5 * p.amp;
