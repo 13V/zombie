@@ -35,6 +35,12 @@ const TD_GRASS_DARK = 0x80b266;
 const TD_GRASS_LIGHT = 0xaedc92;
 const TD_WATER = 0x9db9d2;
 
+// calm dusk vs ominous boss-wave palette (lerped by bossMood in update)
+const _FOG_CALM = new THREE.Color(0xd9c3c9);
+const _FOG_BOSS = new THREE.Color(0xc06450);
+const _BG_CALM = new THREE.Color(0xe6cfca);
+const _BG_BOSS = new THREE.Color(0xcf7a66);
+
 interface PulseGlow {
   mesh: THREE.Mesh;
   base: number; // rest emissive intensity
@@ -56,6 +62,9 @@ export class TdMap {
   private laneFlow: { mesh: THREE.Mesh; arc: number }[] = []; // glowing chevrons flowing to the base
   private shield?: THREE.Mesh;   // base shield dome (drains + flares with HP)
   private shieldFrac = 1;        // current base health fraction (0..1)
+  private bossMoodTarget = 0;    // 0 calm dusk → 1 ominous boss-wave red
+  private bossMoodCur = 0;
+  private spawnPulse = 0;        // portal flare on a wave start
   private coreGem?: THREE.Mesh; // the base crystal core (pulses / flashes)
   private coreBaseEmissive = 1.2;
   private flashTimer = 0; // seconds of damage-flash remaining
@@ -939,6 +948,16 @@ export class TdMap {
     this.shieldFrac = Math.max(0, Math.min(1, frac));
   }
 
+  /** Shift the dusk mood toward an ominous red haze during boss waves. */
+  setBossMood(on: boolean) {
+    this.bossMoodTarget = on ? 1 : 0;
+  }
+
+  /** Flare the spawn portal (a wave is starting). */
+  pulseSpawn() {
+    this.spawnPulse = 0.7;
+  }
+
   /** Glowing chevron arrows along the lane that pulse TOWARD the base, so the
    *  creep direction reads at a glance and the road feels alive. */
   private buildLaneFlow() {
@@ -999,6 +1018,14 @@ export class TdMap {
     this.t += dt;
     const t = this.t;
 
+    // boss-wave mood: ease the fog + sky toward an ominous red during boss waves
+    this.bossMoodCur += (this.bossMoodTarget - this.bossMoodCur) * Math.min(1, dt * 1.6);
+    const bm = this.bossMoodCur;
+    const fog = this.scene.fog as THREE.Fog | null;
+    if (fog && fog.color) { fog.color.lerpColors(_FOG_CALM, _FOG_BOSS, bm); fog.far = 96 - 30 * bm; }
+    if (this.scene.background instanceof THREE.Color) this.scene.background.lerpColors(_BG_CALM, _BG_BOSS, bm * 0.7);
+    if (this.spawnPulse > 0) this.spawnPulse = Math.max(0, this.spawnPulse - dt);
+
     // lane flow: a brightness wave ripples along the chevrons toward the base
     for (const f of this.laneFlow) {
       const mat = f.mesh.material as THREE.MeshStandardMaterial;
@@ -1022,11 +1049,12 @@ export class TdMap {
       sm.emissiveIntensity = hit ? 1.6 : 0.5 + (1 - target) * 0.6;
     }
 
-    // spawn-portal shimmer: the pane breathes its emissive + opacity
+    // spawn-portal shimmer: the pane breathes its emissive + opacity, and FLARES
+    // when a wave starts (spawnPulse)
     for (const pane of this.portalRings) {
       const mat = pane.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 0.9 + (Math.sin(t * 2.0) + 1) * 0.4;
-      mat.opacity = 0.5 + (Math.sin(t * 1.4) + 1) * 0.12;
+      mat.emissiveIntensity = 0.9 + (Math.sin(t * 2.0) + 1) * 0.4 + this.spawnPulse * 4;
+      mat.opacity = Math.min(1, 0.5 + (Math.sin(t * 1.4) + 1) * 0.12 + this.spawnPulse * 0.5);
     }
 
     // base core: slow spin + bob + gentle pulse, with a damage-flash override

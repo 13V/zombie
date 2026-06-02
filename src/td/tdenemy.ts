@@ -101,6 +101,7 @@ interface Creep {
   leakDmg: number; // base-HP damage on leak (Duel)
   phase: number; // per-creep anim phase so shimmer/throb desync across the wave
   scale: number; // base rig scale (so decor can pulse around it)
+  pop: number; // 0→1 spawn scale-in progress
   decor: THREE.Group; // archetype add-on boxes (eyes/plates/spikes/streak…)
   ghostMats: THREE.Material[]; // camo body mats toggled solid/translucent on reveal
   throbMats: THREE.MeshStandardMaterial[]; // regrow mats whose emissive pulses
@@ -213,10 +214,12 @@ export class TdEnemies {
       leakDmg: Math.max(0, spec.leakDmg ?? 1),
       phase: Math.random() * Math.PI * 2,
       scale: tint.scale,
+      pop: 0, // 0→1 spawn scale-in
       decor,
       ghostMats,
       throbMats,
     });
+    char.root.scale.setScalar(tint.scale * 0.15); // start tiny, pop in via update()
   }
 
   /**
@@ -388,6 +391,13 @@ export class TdEnemies {
       if (c.flash > 0) {
         c.flash -= dt;
         c.char.setHitFlash(Math.max(0, c.flash / FLASH_TIME));
+      }
+
+      // spawn pop-in: the creep springs up to full size as it emerges
+      if (c.pop < 1) {
+        c.pop = Math.min(1, c.pop + dt * 4);
+        const e = 1 + 2.7 * Math.pow(c.pop - 1, 3) + 1.7 * Math.pow(c.pop - 1, 2); // easeOutBack
+        c.char.root.scale.setScalar(c.scale * Math.max(0.15, e));
       }
 
       // per-archetype juice: shimmer/throb/streak + the floating HP pip

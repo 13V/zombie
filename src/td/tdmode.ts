@@ -14,6 +14,7 @@ import {
 } from "./tdduel";
 import { TdFx } from "./tdfx";
 import { TdHud, type TdHudState } from "./tdhud";
+import { TdAudio } from "./tdaudio";
 
 export type TdGameMode = "solo" | "duel";
 
@@ -34,6 +35,7 @@ interface Tower {
   deploy: number;          // 0..1 build/deploy animation progress
   recoil: number;          // 0..1 kickback decaying after a shot
   flash: number;           // 0..1 muzzle-flash decaying after a shot
+  lastTarget: number;      // creep id locked last frame (for the acquire telegraph)
 }
 
 const BUILD_REACH = 4;
@@ -77,9 +79,13 @@ export class TdMode {
   private soloGold = TD_START_GOLD;
   private soloLives = TD_START_LIVES;
 
+  private audio = new TdAudio();
+  private ghost?: THREE.Group;  // translucent build preview at the nearest empty pad
   wave = 0;
   private _tAnim = 0; // animation clock for turret idle motion
   private _shakeImpulse = 0; // camera shake to hand to main (consumed each frame)
+  private _hitStop = 0;      // brief freeze request to hand to main (consumed each frame)
+  private _ended = false;    // guards the one-shot win/lose sting
   private spawnQueue: TdSpawnSpec[] = [];
   private spawnTimer = 0;
   private betweenWaves = true;
@@ -133,6 +139,7 @@ export class TdMode {
     this.duel = mode === "duel" ? duelInit() : undefined;
     this.pendingBotSends = [];
     this.wave = 0;
+    this._ended = false;
     this.spawnQueue = [];
     this.spawnTimer = 0;
     this.betweenWaves = true;
@@ -154,6 +161,8 @@ export class TdMode {
     this.towers.clear();
     this.vfx.clear();
     this.ring.visible = false;
+    if (this.ghost) { this.fx.remove(this.ghost); this.disposeGroup(this.ghost); this.ghost = undefined; }
+    this.map.setBossMood(false);
     this.ui?.destroy();
     this.ui = undefined;
   }
@@ -196,10 +205,11 @@ export class TdMode {
       pad, id, tier: 1, target: def.defaultTarget, def, pos, cooldown: 0, group,
       barrel: group.getObjectByName("barrel") as THREE.Group,
       sight, aim: new THREE.Vector3(), aiming: false, barrelY: 0, deploy: 0,
-      recoil: 0, flash: 0,
+      recoil: 0, flash: 0, lastTarget: -1,
     };
     this.grabRefs(t, group);
     this.towers.set(pad, t);
+    this.audio.build();
     this.refreshHud();
     return true;
   }
@@ -230,6 +240,7 @@ export class TdMode {
     this.grabRefs(t, ng);
     t.deploy = 0; // replay the deploy pop so the upgrade feels punchy
     if (t.sight) (t.sight.material as THREE.MeshStandardMaterial).color.setHex(t.def.color);
+    this.audio.upgrade();
     this.refreshHud();
     return true;
   }
@@ -241,9 +252,12 @@ export class TdMode {
     this.disposeGroup(t.group);
     if (t.sight) { this.fx.remove(t.sight); t.sight.geometry.dispose(); (t.sight.material as THREE.Material).dispose(); }
     this.towers.delete(pad);
+    this.audio.sell();
     this.refreshHud();
     return true;
   }
+  /** Brief hit-stop request (seconds) for main to apply, then reset. */
+  consumeHitStop(): number { const s = this._hitStop; this._hitStop = 0; return s; }
   /** Cycle a tower's target priority (First→Last→Strong→Close). */
   cycleTarget(pad: number): boolean {
     const t = this.towers.get(pad);
@@ -286,6 +300,9 @@ export class TdMode {
     this.betweenWaves = false;
     const boss = this.wave % 5 === 0;
     this.ui?.banner(boss ? `Wave ${this.wave} — BOSS` : `Wave ${this.wave}`);
+    this.map.setBossMood(boss);   // ominous red haze on boss waves
+    this.map.pulseSpawn();        // flare the spawn portal
+    this.audio.waveStart(boss);
     this.refreshHud();
   }
 
@@ -310,6 +327,7 @@ export class TdMode {
     for (const b of res.bounties) this.addGold(b);
     if (res.leaked > 0) {
       this.map.flashBase(0.4);
+      this.audio.leak();
       this._shakeImpulse = Math.min(0.5, this._shakeImpulse + 0.12 + res.leaked * 0.02);
       const dmg = this.mode === "duel" ? res.leakedDamage : res.leaked;
       this.vfx.floatText(new THREE.Vector3(TD_GOAL.x, 2.2, TD_GOAL.z), `-${dmg}`, 0xff5a4a);
@@ -336,6 +354,7 @@ export class TdMode {
 
     // wave cleared?
     if (!this.betweenWaves && this.spawnQueue.length === 0 && this.creeps.count === 0) {
+      this.map.setBossMood(false); // clear the boss haze once the wave is down
       if (this.mode === "duel" && this.duel) {
         this.pendingBotSends = duelEndWave(this.duel, this.duelDifficulty);
         if (this.duel.over) this.result = { over: true, win: this.duel.win };
@@ -347,6 +366,13 @@ export class TdMode {
         if (this.wave >= TD_TOTAL_WAVES) this.result = { over: true, win: true };
         else { this.betweenWaves = true; this.nextWaveIn = NEXT_WAVE_DELAY; }
       }
+    }
+
+    // one-shot win/lose sting + clear any boss haze
+    if (this.result.over && !this._ended) {
+      this._ended = true;
+      this.map.setBossMood(false);
+      if (this.result.win) this.audio.win(); else this.audio.lose();
     }
 
     this.refreshHud();
@@ -372,6 +398,11 @@ export class TdMode {
       t.barrel.rotation.y = Math.atan2(tgt.pos.x - t.pos.x, tgt.pos.z - t.pos.z);
       t.aiming = true;
       t.aim.set(tgt.pos.x, 0.7, tgt.pos.z); // for the laser sight
+      // acquire telegraph: a quick lock-ring pops when a tower picks a NEW target
+      if (tid !== t.lastTarget) {
+        this.vfx.ring(new THREE.Vector3(tgt.pos.x, 0.6, tgt.pos.z), t.def.color, 1.1);
+        t.lastTarget = tid;
+      }
       if (t.cooldown > 0) continue;
       t.cooldown = 1 / st.fireRate;
       if (st.splash > 0) this.creeps.damageNear(tgt.pos, st.splash, st.damage, t.def.pierce);
@@ -384,9 +415,13 @@ export class TdMode {
       const kind = (t.id === "sniper" || t.id === "pylon") ? "beam" : t.id === "cannon" ? "shell" : "bolt";
       const big = st.splash > 0;
       this.vfx.muzzleFlash(from, dir, t.def.color);
-      this.vfx.tracer(from, to, t.def.color, kind, (p, c) => this.vfx.impact(p, c, big));
+      this.vfx.tracer(from, to, t.def.color, kind, (p, c) => { this.vfx.impact(p, c, big); this.audio.impact(big); });
+      this.audio.fire(t.id);
       t.recoil = 1; t.flash = 1; // kick + muzzle glow
-      if (t.id === "cannon") this._shakeImpulse = Math.min(0.5, this._shakeImpulse + 0.04); // boom
+      if (t.id === "cannon") { // a heavy boom: shake + a sliver of hit-stop
+        this._shakeImpulse = Math.min(0.5, this._shakeImpulse + 0.05);
+        this._hitStop = Math.max(this._hitStop, 0.045);
+      }
     }
   }
 
@@ -464,15 +499,42 @@ export class TdMode {
     const pad = this.nearestPad(playerPos);
     const t = pad >= 0 ? this.towers.get(pad) : undefined;
     if (t) {
+      // standing at an owned tower → show its real range
       const r = towerStats(t.id, t.tier).range;
       this.ring.position.set(t.pos.x, 0.4, t.pos.z);
       this.ring.scale.set(r, r, 1);
       (this.ring.material as THREE.MeshBasicMaterial).color.setHex(t.def.color);
       this.ring.visible = true;
+      this.hideGhost();
+    } else if (pad >= 0) {
+      // standing at an EMPTY pad → build preview: green range ring + a ghost turret
+      const p = TD_PADS[pad];
+      const r = TD_TOWERS.arrow.range;
+      this.ring.position.set(p.x, 0.4, p.z);
+      this.ring.scale.set(r, r, 1);
+      (this.ring.material as THREE.MeshBasicMaterial).color.setHex(0x9fffb0);
+      this.ring.visible = true;
+      this.showGhost(p.x, p.z);
     } else {
       this.ring.visible = false;
+      this.hideGhost();
     }
   }
+  private showGhost(x: number, z: number) {
+    if (!this.ghost) {
+      this.ghost = new THREE.Group();
+      const mat = () => new THREE.MeshStandardMaterial({ color: 0x9fffb0, emissive: 0x4fd06a, emissiveIntensity: 0.5, transparent: true, opacity: 0.32, depthWrite: false, toneMapped: false });
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.3, 0.5, 8), mat()); base.position.y = 0.25;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), mat()); body.position.y = 1.3;
+      const tip = new THREE.Mesh(new THREE.OctahedronGeometry(0.4, 0), mat()); tip.position.y = 2.3;
+      this.ghost.add(base, body, tip);
+      this.fx.add(this.ghost);
+    }
+    this.ghost.position.set(x, 0.4 + Math.sin(this._tAnim * 3) * 0.1, z);
+    this.ghost.rotation.y = this._tAnim * 0.8;
+    this.ghost.visible = true;
+  }
+  private hideGhost() { if (this.ghost) this.ghost.visible = false; }
 
   /**
    * A distinct voxel turret model per archetype (the rotating weapon lives in a

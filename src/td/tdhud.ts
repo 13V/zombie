@@ -105,8 +105,26 @@ const STYLE_CSS = `
   font-size: 19px; font-weight: 800; line-height: 1.05;
   display: flex; align-items: center; gap: 6px;
 }
-#tdh .tdh-gold .tdh-val { color: #ffd24a; }
-#tdh .tdh-lives .tdh-val { color: #ff8a7a; }
+#tdh .tdh-gold .tdh-val { color: #ffd24a; transition: transform 0.18s cubic-bezier(0.25,0.8,0.3,1), color 0.18s ease; transform-origin: left center; will-change: transform; }
+#tdh .tdh-gold .tdh-val.tdh-pop { animation: tdh-goldpop 0.42s cubic-bezier(0.2,0.8,0.3,1); }
+@keyframes tdh-goldpop {
+  0%   { transform: scale(1); color: #ffd24a; }
+  28%  { transform: scale(1.22); color: #fff4c4; text-shadow: 0 0 10px rgba(255,210,74,0.6); }
+  100% { transform: scale(1); color: #ffd24a; text-shadow: none; }
+}
+#tdh .tdh-lives .tdh-val { color: #ff8a7a; transition: transform 0.16s ease; transform-origin: left center; }
+#tdh .tdh-lives .tdh-val.tdh-livesdrop { animation: tdh-livesdrop 0.5s ease; }
+@keyframes tdh-livesdrop {
+  0%   { transform: scale(1); color: #ff8a7a; }
+  20%  { transform: scale(1.18); color: #ff5a47; text-shadow: 0 0 12px rgba(255,80,60,0.7); }
+  100% { transform: scale(1); color: #ff8a7a; text-shadow: none; }
+}
+#tdh .tdh-lives .tdh-val.tdh-livesup { animation: tdh-livesup 0.5s ease; }
+@keyframes tdh-livesup {
+  0%   { transform: scale(1); color: #ff8a7a; }
+  25%  { transform: scale(1.12); color: #7be08a; text-shadow: 0 0 10px rgba(123,224,138,0.6); }
+  100% { transform: scale(1); color: #ff8a7a; text-shadow: none; }
+}
 #tdh .tdh-wave .tdh-val { color: #7fd4ff; }
 #tdh .tdh-income .tdh-val { color: #7be08a; }
 
@@ -116,16 +134,51 @@ const STYLE_CSS = `
   margin-top: 4px; height: 11px; border-radius: 999px; overflow: hidden;
   background: rgba(0,0,0,0.42); border: 1px solid rgba(255,255,255,0.1);
 }
+#tdh .tdh-hp .tdh-bar { position: relative; }
 #tdh .tdh-hp .tdh-fill {
   height: 100%; width: 100%; border-radius: 999px;
-  transition: width 0.35s cubic-bezier(0.25,0.8,0.3,1);
+  transition: width 0.35s cubic-bezier(0.25,0.8,0.3,1), background 0.18s ease, box-shadow 0.18s ease;
 }
 #tdh .tdh-hp.tdh-you .tdh-fill { background: linear-gradient(90deg,#5fe08a,#7be08a); }
 #tdh .tdh-hp.tdh-you .tdh-lbl { color: #7be08a; }
 #tdh .tdh-hp.tdh-bot .tdh-fill { background: linear-gradient(90deg,#b98aff,#c89bff); }
 #tdh .tdh-hp.tdh-bot .tdh-lbl { color: #c89bff; }
 #tdh .tdh-hp .tdh-hprow { display: flex; justify-content: space-between; align-items: baseline; }
-#tdh .tdh-hp .tdh-hpnum { font-size: 13px; font-weight: 800; }
+#tdh .tdh-hp .tdh-hpnum { font-size: 13px; font-weight: 800; transition: transform 0.16s ease; transform-origin: right center; }
+
+/* HP damage: red flash on the fill + a short shake on the whole bar */
+#tdh .tdh-hp.tdh-hurt .tdh-fill {
+  background: linear-gradient(90deg,#ff6a52,#ff8a7a) !important;
+  box-shadow: 0 0 10px rgba(255,90,70,0.7) inset, 0 0 8px rgba(255,90,70,0.5);
+}
+#tdh .tdh-hp.tdh-hurt .tdh-bar { animation: tdh-shake 0.36s cubic-bezier(0.36,0.07,0.19,0.97); }
+#tdh .tdh-hp.tdh-hurt .tdh-hpnum { color: #ff7a68; transform: scale(1.16); }
+@keyframes tdh-shake {
+  0%,100% { transform: translateX(0); }
+  15% { transform: translateX(-3px); }
+  30% { transform: translateX(3px); }
+  45% { transform: translateX(-2px); }
+  60% { transform: translateX(2px); }
+  80% { transform: translateX(-1px); }
+}
+/* HP regen: soft green pulse on the bar */
+#tdh .tdh-hp.tdh-heal .tdh-bar { animation: tdh-healpulse 0.6s ease; }
+@keyframes tdh-healpulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(123,224,138,0); }
+  40% { box-shadow: 0 0 0 3px rgba(123,224,138,0.35), 0 0 8px rgba(123,224,138,0.5); }
+}
+/* floating damage tag */
+#tdh .tdh-hp .tdh-dmg {
+  position: absolute; right: 0; top: -16px; font-size: 12px; font-weight: 900;
+  color: #ff6a52; text-shadow: 0 1px 3px rgba(0,0,0,0.6); pointer-events: none;
+  opacity: 0; white-space: nowrap;
+}
+#tdh .tdh-hp .tdh-dmg.tdh-show { animation: tdh-dmgfloat 0.7s ease forwards; }
+@keyframes tdh-dmgfloat {
+  0%   { opacity: 0; transform: translateY(4px) scale(0.8); }
+  25%  { opacity: 1; transform: translateY(-2px) scale(1.05); }
+  100% { opacity: 0; transform: translateY(-12px) scale(1); }
+}
 
 /* ── wave / call-wave pill ──────────────────────────────────────────────── */
 #tdh .tdh-wavebar {
@@ -141,12 +194,26 @@ const STYLE_CSS = `
 }
 #tdh .tdh-pill.tdh-call {
   border-color: rgba(255,210,74,0.6); cursor: pointer;
-  animation: tdh-glow 2.2s ease-in-out infinite;
+  animation: tdh-glow 2.2s ease-in-out infinite, tdh-breathe 2.2s ease-in-out infinite;
 }
+#tdh .tdh-pill.tdh-call:hover { border-color: rgba(255,210,74,0.85); }
+#tdh .tdh-pill.tdh-call:active { transform: scale(0.96); }
 @keyframes tdh-glow {
   0%,100% { box-shadow: 0 6px 18px rgba(0,0,0,0.34), 0 0 0 0 rgba(255,210,74,0.0); }
   50%     { box-shadow: 0 6px 22px rgba(0,0,0,0.38), 0 0 0 4px rgba(255,210,74,0.16); }
 }
+@keyframes tdh-breathe {
+  0%,100% { transform: scale(1); }
+  50%     { transform: scale(1.025); }
+}
+/* quick highlight when the early-call bonus appears / increases */
+#tdh .tdh-pill.tdh-callflash { animation: tdh-callflash 0.55s ease; }
+@keyframes tdh-callflash {
+  0%   { box-shadow: 0 6px 18px rgba(0,0,0,0.34), 0 0 0 0 rgba(255,210,74,0.0); border-color: rgba(255,210,74,0.6); }
+  35%  { box-shadow: 0 6px 26px rgba(0,0,0,0.4), 0 0 0 7px rgba(255,210,74,0.32); border-color: rgba(255,232,150,0.95); }
+  100% { box-shadow: 0 6px 18px rgba(0,0,0,0.34), 0 0 0 0 rgba(255,210,74,0.0); border-color: rgba(255,210,74,0.6); }
+}
+#tdh .tdh-pill .tdh-bonus.tdh-bonuspop { animation: tdh-goldpop 0.45s cubic-bezier(0.2,0.8,0.3,1); display: inline-block; }
 #tdh .tdh-pill .tdh-key {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 22px; height: 22px; padding: 0 6px; border-radius: 7px;
@@ -181,7 +248,15 @@ const STYLE_CSS = `
   transition: transform 0.1s, border-color 0.12s, background 0.12s, opacity 0.12s;
 }
 #tdh .tdh-tower:hover:not(.tdh-dim) { transform: translateY(-3px); }
-#tdh .tdh-tower.tdh-dim { opacity: 0.4; cursor: not-allowed; }
+#tdh .tdh-tower:active:not(.tdh-dim) { transform: translateY(-1px) scale(0.96); }
+#tdh .tdh-tower.tdh-dim { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.5); }
+/* gentle highlight when a tower just became affordable */
+#tdh .tdh-tower.tdh-justafford { animation: tdh-unlock 0.6s cubic-bezier(0.2,0.8,0.3,1); }
+@keyframes tdh-unlock {
+  0%   { transform: translateY(0) scale(1); box-shadow: 0 6px 18px rgba(0,0,0,0.34), 0 0 0 0 rgba(127,212,255,0); }
+  35%  { transform: translateY(-4px) scale(1.06); box-shadow: 0 10px 24px rgba(0,0,0,0.4), 0 0 0 3px rgba(255,210,74,0.35); }
+  100% { transform: translateY(0) scale(1); box-shadow: 0 6px 18px rgba(0,0,0,0.34), 0 0 0 0 rgba(127,212,255,0); }
+}
 #tdh .tdh-tower .tdh-key {
   position: absolute; top: 5px; left: 6px;
   min-width: 18px; height: 18px; padding: 0 4px; border-radius: 6px;
@@ -241,11 +316,23 @@ const STYLE_CSS = `
 }
 #tdh .tdh-banner.tdh-show { animation: tdh-banner 2.1s cubic-bezier(0.2,0.7,0.3,1) forwards; }
 @keyframes tdh-banner {
-  0%   { opacity: 0; transform: translate(-50%,-50%) scale(0.8); }
-  14%  { opacity: 1; transform: translate(-50%,-50%) scale(1.04); }
-  24%  { transform: translate(-50%,-50%) scale(1); }
+  0%   { opacity: 0; transform: translate(-50%,-50%) scale(0.62) rotate(-1.5deg); filter: blur(4px); }
+  10%  { opacity: 1; transform: translate(-50%,-50%) scale(1.12) rotate(0.5deg); filter: blur(0); }
+  18%  { transform: translate(-50%,-50%) scale(0.97) rotate(0deg); }
+  26%  { transform: translate(-50%,-50%) scale(1.02); }
+  34%  { transform: translate(-50%,-50%) scale(1); }
   78%  { opacity: 1; transform: translate(-50%,-50%) scale(1); }
-  100% { opacity: 0; transform: translate(-50%,-50%) scale(1.06); }
+  100% { opacity: 0; transform: translate(-50%,-50%) scale(1.1); filter: blur(2px); }
+}
+/* boss banner: warmer red accent + a pulsing alert glow */
+#tdh .tdh-banner.tdh-boss {
+  border-color: rgba(255,90,70,0.85); color: #ffd0c4;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.55), 0 0 14px rgba(255,80,60,0.45);
+}
+#tdh .tdh-banner.tdh-boss.tdh-show { animation: tdh-banner 2.1s cubic-bezier(0.2,0.7,0.3,1) forwards, tdh-bossglow 0.5s ease-in-out 3; }
+@keyframes tdh-bossglow {
+  0%,100% { box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 0 rgba(255,80,60,0); }
+  50%     { box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 6px rgba(255,80,60,0.3); }
 }
 
 /* ── win / lose overlay ─────────────────────────────────────────────────── */
@@ -257,10 +344,23 @@ const STYLE_CSS = `
 }
 #tdh .tdh-over.tdh-show { display: flex; animation: tdh-fadein 0.5s ease forwards; }
 @keyframes tdh-fadein { from { opacity: 0; } to { opacity: 1; } }
-#tdh .tdh-over .tdh-otitle { font-size: 56px; font-weight: 900; letter-spacing: 1px; text-shadow: 0 4px 14px rgba(0,0,0,0.6); }
+#tdh .tdh-over .tdh-otitle {
+  font-size: 56px; font-weight: 900; letter-spacing: 1px; text-shadow: 0 4px 14px rgba(0,0,0,0.6);
+}
+#tdh .tdh-over.tdh-show .tdh-otitle { animation: tdh-overtitle 0.7s cubic-bezier(0.2,0.8,0.3,1) both; }
+@keyframes tdh-overtitle {
+  0%   { opacity: 0; transform: scale(0.6) translateY(14px); filter: blur(6px); }
+  55%  { opacity: 1; transform: scale(1.08) translateY(0); filter: blur(0); }
+  100% { transform: scale(1) translateY(0); }
+}
 #tdh .tdh-over.tdh-win .tdh-otitle { color: #ffe08a; }
 #tdh .tdh-over.tdh-lose .tdh-otitle { color: #ff8a7a; }
 #tdh .tdh-over .tdh-osub { font-size: 16px; font-weight: 700; color: #c4cfd6; }
+#tdh .tdh-over.tdh-show .tdh-osub { animation: tdh-oversub 0.6s ease 0.2s both; }
+@keyframes tdh-oversub {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 @media (max-width: 560px) {
   #tdh .tdh-tower { width: 64px; min-height: 76px; }
@@ -284,6 +384,15 @@ function hex(color: number): string {
   return "#" + (color & 0xffffff).toString(16).padStart(6, "0");
 }
 
+/** Element refs for one HP bar (fill, % label, bar wrapper, floating damage tag). */
+interface HpRef {
+  wrap: HTMLElement;
+  bar: HTMLElement;
+  fill: HTMLElement;
+  num: HTMLElement;
+  dmg: HTMLElement;
+}
+
 export class TdHud {
   private root: HTMLElement;
   private el: HTMLElement;
@@ -295,8 +404,8 @@ export class TdHud {
   private livesEl!: HTMLElement;
   private waveEl!: HTMLElement;
   private incomeEl!: HTMLElement;
-  private youHp!: { wrap: HTMLElement; fill: HTMLElement; num: HTMLElement };
-  private botHp!: { wrap: HTMLElement; fill: HTMLElement; num: HTMLElement };
+  private youHp!: HpRef;
+  private botHp!: HpRef;
 
   // wave control refs
   private waveBarEl!: HTMLElement;
@@ -325,6 +434,18 @@ export class TdHud {
   private prevAffordKey = "";
   private prevTopMode: "" | "solo" | "duel" = "";
 
+  // ── juice state ───────────────────────────────────────────────────────────
+  // animated gold counter: `goldShown` eases toward `goldTarget` per frame
+  private goldTarget = 0;
+  private goldShown = 0;
+  private goldInit = false;
+  // last rendered HP per bar (for damage/regen detection)
+  private prevHp: Record<string, number> = {};
+  // per-tower affordability (to detect the affordable crossing)
+  private prevAfford: boolean[] = [];
+  // early-call bonus (to highlight when it appears / grows)
+  private prevBonus = -1;
+
   constructor(parent: HTMLElement, opts: TdHudOpts = {}) {
     this.root = parent;
     this.opts = opts;
@@ -336,11 +457,11 @@ export class TdHud {
       <div class="tdh-top">
         <div class="tdh-chip tdh-hp tdh-you" data-show="duel">
           <div class="tdh-hprow"><span class="tdh-lbl">You</span><span class="tdh-hpnum">100%</span></div>
-          <div class="tdh-bar"><div class="tdh-fill"></div></div>
+          <div class="tdh-bar"><div class="tdh-fill"></div><span class="tdh-dmg"></span></div>
         </div>
         <div class="tdh-chip tdh-hp tdh-bot" data-show="duel">
           <div class="tdh-hprow"><span class="tdh-lbl">Rival</span><span class="tdh-hpnum">100%</span></div>
-          <div class="tdh-bar"><div class="tdh-fill"></div></div>
+          <div class="tdh-bar"><div class="tdh-fill"></div><span class="tdh-dmg"></span></div>
         </div>
         <div class="tdh-chip tdh-gold"><span class="tdh-lbl">Gold</span><span class="tdh-val">0</span></div>
         <div class="tdh-chip tdh-lives" data-show="solo"><span class="tdh-lbl">Lives</span><span class="tdh-val">0</span></div>
@@ -420,6 +541,7 @@ export class TdHud {
       return btn;
     });
     this.prevAffordKey = ""; // force re-eval next update
+    this.prevAfford = []; // first eval seeds state without a spurious unlock flash
   }
 
   /** Swap the bottom bar to the owned-tower panel, or null to show the palette. */
@@ -455,13 +577,13 @@ export class TdHud {
       });
     }
 
-    this.setText(this.goldEl, "gold", `${GOLD}${Math.floor(s.gold)}`);
+    this.renderGold(s.gold);
 
     const total = s.totalWaves != null ? `/${s.totalWaves}` : "";
     this.setText(this.waveEl, "wave", `${s.wave}${total}`);
 
     if (s.mode === "solo") {
-      this.setText(this.livesEl, "lives", `❤️ ${s.lives ?? 0}`);
+      this.renderLives(s.lives ?? 0);
     } else {
       this.setText(this.incomeEl, "income", `+${s.income ?? 0}/wave`);
       this.setHp(this.youHp, "youhp", s.playerHp);
@@ -476,6 +598,8 @@ export class TdHud {
   /** Show a big transient center banner that animates in then fades. */
   banner(text: string): void {
     this.bannerEl.textContent = text;
+    // boss banners get a warmer red accent + alert glow
+    this.bannerEl.classList.toggle("tdh-boss", /boss/i.test(text));
     this.bannerEl.classList.remove("tdh-show");
     void this.bannerEl.offsetWidth; // restart animation
     this.bannerEl.classList.add("tdh-show");
@@ -498,6 +622,53 @@ export class TdHud {
 
   // ── internals ──────────────────────────────────────────────────────────────
 
+  /** Animated gold counter: eases the displayed number toward the real value,
+   *  with a brief scale/colour pop when gold increases. */
+  private renderGold(gold: number): void {
+    const target = Math.max(0, Math.floor(gold));
+    if (!this.goldInit) {
+      // first frame: snap (no tick from 0)
+      this.goldInit = true;
+      this.goldTarget = target;
+      this.goldShown = target;
+      this.setText(this.goldEl, "gold", `${GOLD}${target}`);
+      return;
+    }
+    if (target > this.goldTarget) {
+      // gold went up — a satisfying pop on the counter
+      this.retrigger(this.goldEl, "tdh-pop", 420);
+    }
+    this.goldTarget = target;
+
+    // ease the shown value toward the target (~60fps; settle quickly but visibly)
+    const diff = this.goldTarget - this.goldShown;
+    if (diff !== 0) {
+      const step = diff * 0.28;
+      // ensure we always move at least 1 toward the target and snap when close
+      if (Math.abs(diff) <= 1) {
+        this.goldShown = this.goldTarget;
+      } else {
+        this.goldShown += step > 0 ? Math.max(1, step) : Math.min(-1, step);
+      }
+    }
+    const shown = Math.round(this.goldShown);
+    this.setText(this.goldEl, "gold", `${GOLD}${shown}`);
+  }
+
+  /** Solo lives with a red drop-flash / green regen-flash on change. */
+  private renderLives(lives: number): void {
+    const text = `❤️ ${lives}`;
+    const prevRaw = this.prevHp["lives"];
+    const changed = this.prev["lives"] !== text;
+    this.setText(this.livesEl, "lives", text);
+    if (!changed) return;
+    if (prevRaw !== undefined) {
+      if (lives < prevRaw) this.retrigger(this.livesEl, "tdh-livesdrop", 500);
+      else if (lives > prevRaw) this.retrigger(this.livesEl, "tdh-livesup", 500);
+    }
+    this.prevHp["lives"] = lives;
+  }
+
   private renderWave(s: TdHudState): void {
     const key = `${s.betweenWaves ? "b" : "a"}|${s.wave}|${s.earlyCallBonus}`;
     if (this.prev["__wavebar"] === key) return;
@@ -514,10 +685,18 @@ export class TdHud {
         <span>Wave ${s.wave} — start now</span>
         <span class="tdh-bonus">+${s.earlyCallBonus}${GOLD}</span>`;
       this.pillEl.onclick = () => this.opts.onCall?.();
+      // quick highlight when the early-call bonus first appears / grows
+      if (s.earlyCallBonus > 0 && s.earlyCallBonus > this.prevBonus) {
+        this.retrigger(this.pillEl, "tdh-callflash", 550);
+        const bonusEl = this.pillEl.querySelector(".tdh-bonus") as HTMLElement | null;
+        if (bonusEl) this.retrigger(bonusEl, "tdh-bonuspop", 450);
+      }
+      this.prevBonus = s.earlyCallBonus;
     } else {
       this.pillEl.className = "tdh-pill";
       this.pillEl.innerHTML = `<span>Wave ${s.wave}</span><span class="tdh-prog"></span>`;
       this.pillEl.onclick = null;
+      this.prevBonus = -1;
     }
   }
 
@@ -528,7 +707,15 @@ export class TdHud {
     this.prevAffordKey = key;
     this.towers.forEach((t, i) => {
       const btn = this.towerBtns[i];
-      if (btn) btn.classList.toggle("tdh-dim", g < t.cost);
+      if (!btn) return;
+      const affordable = g >= t.cost;
+      btn.classList.toggle("tdh-dim", !affordable);
+      const was = this.prevAfford[i];
+      // gentle unlock highlight when a tower just crossed into affordability
+      if (affordable && was === false) {
+        this.retrigger(btn, "tdh-justafford", 600);
+      }
+      this.prevAfford[i] = affordable;
     });
   }
 
@@ -549,12 +736,38 @@ export class TdHud {
         : "Your base was overrun.";
   }
 
-  private setHp(ref: { wrap: HTMLElement; fill: HTMLElement; num: HTMLElement }, slot: string, hp: number | undefined): void {
+  private setHp(ref: HpRef, slot: string, hp: number | undefined): void {
     const pct = Math.max(0, Math.min(100, Math.round(hp ?? 100)));
     if (this.prev[slot] === String(pct)) return;
+    const had = slot in this.prevHp;
+    const prevPct = this.prevHp[slot] ?? pct;
     this.prev[slot] = String(pct);
+    this.prevHp[slot] = pct;
+
+    // width transitions smoothly via CSS; just set the target
     ref.fill.style.width = `${pct}%`;
     ref.num.textContent = `${pct}%`;
+
+    if (!had) return; // first render: no flash
+
+    const delta = pct - prevPct;
+    if (delta < 0) {
+      // damage: red flash + shake + floating "-N"
+      this.retrigger(ref.wrap, "tdh-hurt", 360);
+      ref.dmg.textContent = `-${-delta}`;
+      this.retrigger(ref.dmg, "tdh-show", 700);
+    } else if (delta > 0) {
+      // regen: soft green pulse
+      this.retrigger(ref.wrap, "tdh-heal", 600);
+    }
+  }
+
+  /** Re-apply a one-shot animation class (forces the keyframes to restart). */
+  private retrigger(el: HTMLElement, cls: string, ms: number): void {
+    el.classList.remove(cls);
+    void el.offsetWidth; // reflow so the animation restarts
+    el.classList.add(cls);
+    window.setTimeout(() => el.classList.remove(cls), ms);
   }
 
   private setText(el: HTMLElement, slot: string, text: string): void {
@@ -563,12 +776,14 @@ export class TdHud {
     el.textContent = text;
   }
 
-  private hpRefs(sel: string): { wrap: HTMLElement; fill: HTMLElement; num: HTMLElement } {
+  private hpRefs(sel: string): HpRef {
     const wrap = this.q(sel);
     return {
       wrap,
+      bar: wrap.querySelector(".tdh-bar") as HTMLElement,
       fill: wrap.querySelector(".tdh-fill") as HTMLElement,
       num: wrap.querySelector(".tdh-hpnum") as HTMLElement,
+      dmg: wrap.querySelector(".tdh-dmg") as HTMLElement,
     };
   }
 

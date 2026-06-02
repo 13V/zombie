@@ -150,6 +150,7 @@ class Game implements GameApi {
   private _bwEndTimer = 0;   // countdown after a BW match ends, then return to hub
   private td?: TdMode;       // Tower-Defense mode controller (lazy)
   private _tdEndTimer = 0;   // countdown after a TD run ends, then return to hub
+  private _tdFreeze = 0;     // TD hit-stop timer (briefly slows the sim on big hits)
 
   // multiplayer (undefined = single-player)
   private net?: NetClient;
@@ -1639,12 +1640,16 @@ class Game implements GameApi {
       return;
     }
 
+    // hit-stop: briefly slow the TD sim on big hits (decay by REAL dt, then scale)
+    this._tdFreeze = Math.max(0, this._tdFreeze - dt);
+    const simDt = this._tdFreeze > 0 ? dt * 0.12 : dt;
+
     // move the engineer (no aiming/firing — towers fight for you)
     const axis = this.input.moveAxis(this._axis);
-    this.player.update(dt, axis.x, -axis.y, this.input.aimPoint, false);
+    this.player.update(simDt, axis.x, -axis.y, this.input.aimPoint, false);
     td.clamp(this.player.pos);
     this.player.group.position.copy(this.player.pos);
-    this.pets.forEach((p, i) => p.update(dt, this.player.pos.x, this.player.pos.z, i, this.pets.length, null));
+    this.pets.forEach((p, i) => p.update(simDt, this.player.pos.x, this.player.pos.z, i, this.pets.length, null));
 
     // Context-sensitive controls:
     //  • at an empty pad → 1-5 build a tower
@@ -1676,8 +1681,9 @@ class Game implements GameApi {
 
     if (td.isBetweenWaves && this.input.pressed("Space")) td.startNextWave();
 
-    td.tick(dt, this.player.pos);
+    td.tick(simDt, this.player.pos);
     this.shake = Math.min(0.6, this.shake + td.consumeShake()); // TD events shake the camera
+    this._tdFreeze = Math.max(this._tdFreeze, td.consumeHitStop()); // big hits freeze briefly
 
     if (td.result.over) {
       this.hud.hidePrompt();
