@@ -53,6 +53,7 @@ export class TdMap {
     this.buildBackdrop();
     this.buildGround();
     this.buildLane();
+    this.buildDecor();
     this.buildPads();
     this.buildSpawn();
     this.buildBase();
@@ -112,23 +113,27 @@ export class TdMap {
   private buildGround() {
     const span = ARENA_HALF * 2;
 
-    // chunky stone underbelly (two tapering tiers — the floating-diorama look)
+    // chunky stone underbelly (two tapering tiers — the floating-diorama look).
+    // Its TOP sits just below the grass tile bottoms (y -0.5) so it never shares
+    // a plane with the grass/road tops (that coplanar overlap was z-fighting).
     const belly = new THREE.Mesh(new THREE.BoxGeometry(span, 2.4, span), voxelMaterial(VOX.stone));
-    belly.position.y = GROUND_TOP - 1.2;
+    belly.position.y = GROUND_TOP - 1.7;
     this.group.add(belly);
     const root = new THREE.Mesh(new THREE.BoxGeometry(span - 6, 2.6, span - 6), voxelMaterial(VOX.stoneDark));
-    root.position.y = GROUND_TOP - 3.4;
+    root.position.y = GROUND_TOP - 3.9;
     this.group.add(root);
 
-    // grass cap — alternating tones via two InstancedMeshes (cheap & crisp)
+    // grass cap — alternating tones + occasional sun-kissed highlight via three
+    // InstancedMeshes (cheap & crisp), matching the island's lawn.
     const tileH = 0.5;
     const tileGeo = new THREE.BoxGeometry(TILE * 0.98, tileH, TILE * 0.98);
     const n = Math.floor(ARENA_HALF / TILE);
 
-    // gather instance transforms, splitting into light/dark checker buckets and
-    // skipping tiles the lane will cover.
+    let seed = 4711;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     const light: THREE.Vector3[] = [];
     const dark: THREE.Vector3[] = [];
+    const lit: THREE.Vector3[] = [];
     for (let ix = -n; ix <= n; ix++) {
       for (let iz = -n; iz <= n; iz++) {
         const x = ix * TILE;
@@ -136,13 +141,15 @@ export class TdMap {
         if (Math.abs(x) > ARENA_HALF - 0.2 || Math.abs(z) > ARENA_HALF - 0.2) continue;
         if (this.nearLane(x, z, LANE_W + 0.5)) continue; // leave a gap for the road
         const pos = new THREE.Vector3(x, GROUND_TOP - tileH / 2, z);
-        if ((ix + iz) % 2 === 0) light.push(pos);
+        if (rnd() < 0.1) lit.push(pos);
+        else if ((ix + iz) % 2 === 0) light.push(pos);
         else dark.push(pos);
       }
     }
 
     const m = new THREE.Matrix4();
     const buildField = (positions: THREE.Vector3[], color: number) => {
+      if (positions.length === 0) return;
       const inst = new THREE.InstancedMesh(tileGeo, voxelMaterial(color), positions.length);
       positions.forEach((p, i) => {
         m.makeTranslation(p.x, p.y, p.z);
@@ -154,50 +161,99 @@ export class TdMap {
     };
     buildField(light, VOX.grass);
     buildField(dark, VOX.grassDark);
+    buildField(lit, VOX.grassLight);
   }
 
   /**
-   * The LANE — a continuous ribbon of darker dirt/path tiles following each
-   * TD_PATH segment. Every segment in TD_PATH is axis-aligned, so each becomes
-   * a single flat box covering its length × (2·LANE_W) footprint; the joints
-   * overlap at the corners and read as a seamless road. The road surface sits
-   * a hair below grass so it reads as inset.
+   * The LANE — a sunken cobble road following TD_PATH. Built as NON-overlapping
+   * grid tiles (two cobble tones, checkered) covering every grid cell within
+   * LANE_W of the path, sitting a hair below the grass so it reads as an inset
+   * road. Grid tiles never overlap, so there is no coplanar z-fighting (the old
+   * per-segment slabs overlapped at every corner and flickered).
    */
   private buildLane() {
-    const roadMat = voxelMaterial(VOX.path);
-    const edgeMat = voxelMaterial(VOX.dirtDark);
-    const roadH = 0.42;
-    const roadY = GROUND_TOP - roadH / 2 + 0.04; // top just below grass top
+    const tileH = 0.5;
+    const geo = new THREE.BoxGeometry(TILE * 0.98, tileH, TILE * 0.98);
+    const n = Math.floor(ARENA_HALF / TILE);
+    const top = GROUND_TOP - 0.06; // just below the grass surface
+    const a: THREE.Vector3[] = [];
+    const b: THREE.Vector3[] = [];
+    for (let ix = -n; ix <= n; ix++) {
+      for (let iz = -n; iz <= n; iz++) {
+        const x = ix * TILE;
+        const z = iz * TILE;
+        if (Math.abs(x) > ARENA_HALF - 0.2 || Math.abs(z) > ARENA_HALF - 0.2) continue;
+        if (!this.nearLane(x, z, LANE_W)) continue;
+        const pos = new THREE.Vector3(x, top - tileH / 2, z);
+        ((ix + iz) % 2 === 0 ? a : b).push(pos);
+      }
+    }
+    const m = new THREE.Matrix4();
+    const lay = (positions: THREE.Vector3[], color: number) => {
+      if (!positions.length) return;
+      const inst = new THREE.InstancedMesh(geo, voxelMaterial(color), positions.length);
+      positions.forEach((p, i) => { m.makeTranslation(p.x, p.y, p.z); inst.setMatrixAt(i, m); });
+      inst.instanceMatrix.needsUpdate = true;
+      inst.userData.noCast = true;
+      this.group.add(inst);
+    };
+    lay(a, VOX.cobble);
+    lay(b, VOX.cobbleDark);
+  }
 
-    for (let i = 1; i < TD_PATH.length; i++) {
-      const a = TD_PATH[i - 1];
-      const b = TD_PATH[i];
-      // clamp the spawn end to the arena edge so the road doesn't shoot far into
-      // the void (TD_SPAWN sits off the west edge at x = -30).
-      const ax = clamp(a.x, -ARENA_HALF, ARENA_HALF);
-      const az = clamp(a.z, -ARENA_HALF, ARENA_HALF);
-      const bx = clamp(b.x, -ARENA_HALF, ARENA_HALF);
-      const bz = clamp(b.z, -ARENA_HALF, ARENA_HALF);
+  /** Scatter trees + rocks on the grass (away from the lane, pads, base & spawn)
+   *  for depth and life — the same diorama dressing as the island. */
+  private buildDecor() {
+    let seed = 90125;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const trunkMat = voxelMaterial(0x7a5230);
+    const leaves = [voxelMaterial(0x6ab04a), voxelMaterial(0x4f8a3a), voxelMaterial(0xd99a3a), voxelMaterial(0xc24a35)];
+    const rockMat = voxelMaterial(VOX.stone);
+    const rockMatD = voxelMaterial(VOX.stoneDark);
 
-      const minX = Math.min(ax, bx);
-      const maxX = Math.max(ax, bx);
-      const minZ = Math.min(az, bz);
-      const maxZ = Math.max(az, bz);
-      const w = maxX - minX + LANE_W * 2; // pad the half-width on both ends
-      const d = maxZ - minZ + LANE_W * 2;
-      const cx = (minX + maxX) / 2;
-      const cz = (minZ + maxZ) / 2;
+    const blocked = (x: number, z: number): boolean => {
+      if (this.nearLane(x, z, LANE_W + 2.4)) return true;
+      for (const p of TD_PADS) if ((p.x - x) ** 2 + (p.z - z) ** 2 < 3.4 * 3.4) return true;
+      if ((TD_GOAL.x - x) ** 2 + (TD_GOAL.z - z) ** 2 < 8 * 8) return true;
+      if ((TD_SPAWN.x - x) ** 2 + (TD_SPAWN.z - z) ** 2 < 7 * 7) return true;
+      return false;
+    };
 
-      // a thin dark "edge" mat slightly larger underneath, then the road slab
-      const edge = new THREE.Mesh(new THREE.BoxGeometry(w + 0.8, roadH * 0.6, d + 0.8), edgeMat);
-      edge.position.set(cx, GROUND_TOP - roadH * 0.7, cz);
-      edge.userData.noCast = true;
-      this.group.add(edge);
-
-      const slab = new THREE.Mesh(new THREE.BoxGeometry(w, roadH, d), roadMat);
-      slab.position.set(cx, roadY, cz);
-      slab.userData.noCast = true;
-      this.group.add(slab);
+    let placed = 0, tries = 0;
+    while (placed < 60 && tries++ < 600) {
+      const x = (rnd() * 2 - 1) * (ARENA_HALF - 3);
+      const z = (rnd() * 2 - 1) * (ARENA_HALF - 3);
+      if (blocked(x, z)) continue;
+      placed++;
+      const g = new THREE.Group();
+      if (rnd() < 0.72) {
+        // chunky broadleaf: tapered trunk + a bushy 2-3 box crown
+        const th = 1.2 + rnd() * 1.1;
+        const tk = new THREE.Mesh(new THREE.BoxGeometry(0.5, th, 0.5), trunkMat);
+        tk.position.y = th / 2;
+        g.add(tk);
+        const leaf = leaves[Math.floor(rnd() * leaves.length)];
+        const crowns = 2 + Math.floor(rnd() * 2);
+        for (let k = 0; k < crowns; k++) {
+          const w = 2.2 - k * 0.5;
+          const c = new THREE.Mesh(new THREE.BoxGeometry(w, w * 0.7, w), leaf);
+          c.position.set((rnd() - 0.5) * 0.5, th + 0.3 + k * 0.7, (rnd() - 0.5) * 0.5);
+          g.add(c);
+        }
+      } else {
+        // a little rock cluster
+        const cnt = 1 + Math.floor(rnd() * 3);
+        for (let k = 0; k < cnt; k++) {
+          const s = 0.7 + rnd() * 1.0;
+          const rk = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.8, s), rnd() < 0.5 ? rockMat : rockMatD);
+          rk.position.set((rnd() - 0.5) * 1.4, s * 0.4, (rnd() - 0.5) * 1.4);
+          rk.rotation.y = rnd() * Math.PI;
+          g.add(rk);
+        }
+      }
+      g.position.set(x, 0, z);
+      g.scale.setScalar(0.85 + rnd() * 0.5);
+      this.group.add(g);
     }
   }
 
