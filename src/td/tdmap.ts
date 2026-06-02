@@ -28,6 +28,13 @@ const TILE = 2; // voxel tile pitch
 // the visible road ~3 units to either side of the centre-line of the polyline.
 const LANE_W = 3; // half-width of the walkable road (so road ≈ 6 wide)
 
+// Soft, low-contrast pastel turf + dusky water — a calm lofi palette instead of
+// the bright midday lime (the warm dusk mood lighting does the rest).
+const TD_GRASS = 0x8fc174;
+const TD_GRASS_DARK = 0x80b266;
+const TD_GRASS_LIGHT = 0xaedc92;
+const TD_WATER = 0x9db9d2;
+
 interface PulseGlow {
   mesh: THREE.Mesh;
   base: number; // rest emissive intensity
@@ -50,7 +57,16 @@ export class TdMap {
   private coreBaseEmissive = 1.2;
   private flashTimer = 0; // seconds of damage-flash remaining
 
+  // ---- calm dusk "lofi" mood (TD-only; snapshots + restores the scene) ----
+  private scene: THREE.Scene;
+  private moodSaved = false;
+  private savedFog: THREE.Scene["fog"] = null;
+  private savedBg: THREE.Color | THREE.Texture | null = null;
+  private savedEnv = 0.5;
+  private lightOrig = new Map<THREE.Light, { intensity: number; color: number }>();
+
   constructor(scene: THREE.Scene) {
+    this.scene = scene;
     this.buildBackdrop();
     this.buildGround();
     this.buildLane();
@@ -59,6 +75,7 @@ export class TdMap {
     this.buildSpawn();
     this.buildBase();
     this.buildAtmosphere();
+    this.buildMoodLights();
     this.applyShadows();
     scene.add(this.group);
     this.group.visible = false; // shown only while in the Tower-Defense mode
@@ -66,6 +83,53 @@ export class TdMap {
 
   setVisible(on: boolean) {
     this.group.visible = on;
+    if (on) this.enterMood();
+    else this.exitMood();
+  }
+
+  /** Soft mood lights under the group (only active while TD is visible): a low
+   *  peach key + a cool lavender fill — warm/cool dusk balance for a chill vibe. */
+  private buildMoodLights() {
+    const hemi = new THREE.HemisphereLight(0xffd6c0, 0x6a5a72, 0.4); // peach sky / dusky ground
+    const sun = new THREE.DirectionalLight(0xffb98a, 0.6); // low amber sunset key
+    sun.position.set(-24, 14, 18);
+    const cool = new THREE.DirectionalLight(0xb9a6e6, 0.3); // soft lavender counter-fill
+    cool.position.set(18, 9, -16);
+    this.group.add(hemi, sun, cool);
+  }
+
+  private enterMood() {
+    if (!this.moodSaved) {
+      this.savedFog = this.scene.fog;
+      this.savedBg = this.scene.background as THREE.Color | THREE.Texture | null;
+      this.savedEnv = this.scene.environmentIntensity ?? 0.5;
+      for (const c of this.scene.children) {
+        const l = c as THREE.Light;
+        if (l.isLight) this.lightOrig.set(l, { intensity: l.intensity, color: l.color.getHex() });
+      }
+      this.moodSaved = true;
+    }
+    // soft hazy dusk: a muted lavender-peach sky + gentle haze hugging the field,
+    // dimmed IBL so the warm key + bloom carry the calm lofi mood.
+    this.scene.fog = new THREE.Fog(0xd9c3c9, 34, 96);
+    this.scene.background = new THREE.Color(0xe6cfca);
+    this.scene.environmentIntensity = 0.3;
+    for (const [l, o] of this.lightOrig) {
+      const isKey = o.intensity > 1;
+      l.intensity = o.intensity * (isKey ? 0.4 : 0.55);
+      l.color.setHex(isKey ? 0xffc69a : 0xe3cdbf);
+    }
+  }
+
+  private exitMood() {
+    if (!this.moodSaved) return;
+    this.scene.fog = this.savedFog;
+    this.scene.background = this.savedBg;
+    this.scene.environmentIntensity = this.savedEnv;
+    for (const [l, o] of this.lightOrig) {
+      l.intensity = o.intensity;
+      l.color.setHex(o.color);
+    }
   }
 
   /** Flash the base core (call when the base takes damage). */
@@ -91,8 +155,8 @@ export class TdMap {
     const water = new THREE.Mesh(
       new THREE.BoxGeometry(ARENA_HALF * 2 + 24, 0.4, ARENA_HALF * 2 + 24),
       new THREE.MeshStandardMaterial({
-        color: VOX.water,
-        emissive: VOX.water,
+        color: TD_WATER,
+        emissive: TD_WATER,
         emissiveIntensity: 0.18,
         transparent: true,
         opacity: 0.78,
@@ -161,9 +225,9 @@ export class TdMap {
       inst.userData.noCast = true; // big field receives shadow, stays out of shadow map
       this.group.add(inst);
     };
-    buildField(light, VOX.grass);
-    buildField(dark, VOX.grassDark);
-    buildField(lit, VOX.grassLight);
+    buildField(light, TD_GRASS);
+    buildField(dark, TD_GRASS_DARK);
+    buildField(lit, TD_GRASS_LIGHT);
   }
 
   /**
@@ -275,7 +339,7 @@ export class TdMap {
     }
 
     // ---- low ground cover: grass tufts + wildflowers (carpet, breaks the checker) ----
-    const tuftMat = voxelMaterial(VOX.grassLight);
+    const tuftMat = voxelMaterial(TD_GRASS_LIGHT);
     const flowerCols = [0xff6f91, 0xffd24a, 0xfff4e0, 0xff5a4a, 0x9b6fff];
     let f = 0, ftries = 0;
     while (f < 150 && ftries++ < 1400) {
