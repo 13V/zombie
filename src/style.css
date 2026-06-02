@@ -1624,4 +1624,6 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 }
 #td-hud .td-gold { color: #ffd24a; }
 #td-hud .td-lives { color: #ff6f6f; }
+#td-hud .td-bot { color: #c89bff; }
+#td-hud .td-income { color: #7be08a; }
 #td-hud .td-wave { color: #7fd4ff; }

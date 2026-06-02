@@ -43,6 +43,7 @@ import { skinTexture } from "./skintex";
 import { BedWarsMode } from "./bedwars/bwmode";
 import { TdMode } from "./td/tdmode";
 import { TD_TOWER_IDS } from "./td/tdtowers";
+import { duelSendById } from "./td/tdduel";
 import { makeItem, rollRarity, rollRarityPity, resetPity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, AffixCode, warmServer, getServerUrl, setServerUrl } from "./net";
@@ -1596,7 +1597,7 @@ class Game implements GameApi {
 
   /** Enter Tower-Defense: hide hub/arena, load the TD field; you're the engineer
    *  who walks between pads raising towers while waves march your lane. */
-  private enterTd() {
+  private enterTd(mode: "solo" | "duel" = "solo") {
     if (!this.td) this.td = new TdMode(this.scene);
     this.disconnectIslandPresence();
     this.island.setVisible(false);
@@ -1611,7 +1612,7 @@ class Game implements GameApi {
     this.weapons = [];                // no personal weapon — your towers do the shooting
     this.bullets.clear();
     this._tdEndTimer = 0;
-    this.td.enter();
+    this.td.enter(mode);
     this.player.pos.copy(this.td.spawn());
     this.player.group.position.copy(this.player.pos);
     this.camZoomTarget = 2.2;         // pull back to read the whole lane
@@ -1645,20 +1646,30 @@ class Game implements GameApi {
     this.player.group.position.copy(this.player.pos);
     this.pets.forEach((p, i) => p.update(dt, this.player.pos.x, this.player.pos.z, i, this.pets.length, null));
 
-    // build / upgrade / sell at the nearest pad
+    // Context-sensitive controls:
+    //  • at an empty pad → 1-5 build a tower
+    //  • at your tower   → E upgrade · X sell · T cycle target
+    //  • away from pads (Duel) → 1-5 send a creep tier at the opponent
     const pad = td.nearestPad(this.player.pos);
+    const dkeys = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"] as const;
     if (pad >= 0) {
       const occ = td.towerAt(pad);
       if (occ) {
-        this.hud.showPrompt(`${occ.id} ${"★".repeat(occ.tier)} — E upgrade · X sell`, true);
+        this.hud.showPrompt(`${occ.id} ★${occ.tier} [${occ.target}] — E upgrade · X sell · T target`, true);
         if (this.input.pressed("KeyE")) td.upgrade(pad);
         if (this.input.pressed("KeyX")) td.sell(pad);
+        if (this.input.pressed("KeyT")) td.cycleTarget(pad);
       } else {
-        this.hud.showPrompt("Build: 1 Arrow 50 · 2 Frost 75 · 3 Cannon 110", true);
-        if (this.input.pressed("Digit1")) td.build(pad, TD_TOWER_IDS[0]);
-        if (this.input.pressed("Digit2")) td.build(pad, TD_TOWER_IDS[1]);
-        if (this.input.pressed("Digit3")) td.build(pad, TD_TOWER_IDS[2]);
+        this.hud.showPrompt("Build:  1 Arrow 50 · 2 Frost 75 · 3 Pylon 90 · 4 Cannon 110 · 5 Sniper 150", true);
+        for (let i = 0; i < TD_TOWER_IDS.length; i++) if (this.input.pressed(dkeys[i])) td.build(pad, TD_TOWER_IDS[i]);
       }
+    } else if (td.mode === "duel") {
+      const sends = td.unlockedSendIds();
+      this.hud.showPrompt(
+        "Send at opponent: " + sends.map((id, i) => `${i + 1} ${duelSendById(id)?.name}`).join(" · "),
+        true,
+      );
+      for (let i = 0; i < sends.length; i++) if (this.input.pressed(dkeys[i])) td.send(sends[i]);
     } else {
       this.hud.hidePrompt();
     }
@@ -1975,6 +1986,11 @@ class Game implements GameApi {
         })),
       );
       this.hud.showPrompt(`Hatch ${egg.name} — ${egg.cost.toLocaleString()}g  [E]`, affordable);
+    } else if (near?.kind === "td") {
+      // Tower Defense portal offers two modes: E = Solo, 2 = 1v1 Duel.
+      this.hud.hideEggPanel();
+      this.hud.showPrompt("Tower Defense —  E: Solo   ·   2: 1v1 Duel", true);
+      if (this.input.pressed("Digit2")) { this.enterTd("duel"); return; }
     } else {
       this.hud.hideEggPanel();
       if (near) this.hud.showPrompt(near.label + "  [E]", true);
@@ -2034,7 +2050,7 @@ class Game implements GameApi {
         this.enterBedWars();
         break;
       case "td":
-        this.enterTd();
+        this.enterTd("solo");
         break;
       case "soon":
         this.hud.toast("🚧 New island coming soon!");

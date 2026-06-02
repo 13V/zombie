@@ -34,6 +34,12 @@ export const KIND_TINTS: Record<string, { body: number; head: number; scale: num
   tank: { body: 0x7e57c2, head: 0x4527a0, scale: 1.35 },
   // boss: angry red, looming
   boss: { body: 0xd32f2f, head: 0x7f0000, scale: 1.9 },
+  // armored: cold grey steel, sturdy
+  armored: { body: 0x9aa3ad, head: 0x5c636b, scale: 1.15 },
+  // camo: ghostly pale blue, faint
+  camo: { body: 0xbfe9ff, head: 0x8fd0ee, scale: 0.95 },
+  // regrow: sickly bright green, pulsing
+  regrow: { body: 0x69f0ae, head: 0x00bfa5, scale: 1.0 },
 };
 /** Eye tint shared by all creeps. */
 export const CREEP_EYE = 0x111111;
@@ -49,7 +55,11 @@ export interface TdSpawnSpec {
   hp: number; // starting / max HP
   speed: number; // arc-length units travelled per second (before slow)
   bounty: number; // gold awarded to the integrator when this creep is killed
-  kind?: string; // visual variant: "fast" | "tank" | "boss" | (default)
+  kind?: string; // visual variant: "fast"|"tank"|"boss"|"armored"|"camo"|"regrow"|(default)
+  armor?: number; // 0..0.9 damage reduction vs NON-piercing towers (armored answer = cannon/sniper)
+  camo?: boolean; // untargetable unless revealed by a detector pylon
+  regen?: number; // HP regenerated per second if not killed (regrow answer = burst)
+  leakDmg?: number; // base HP damage if it reaches the base (Duel); default 1
 }
 
 /** A live-creep snapshot row for tower targeting (see `enemies()`). */
@@ -60,6 +70,9 @@ export interface TdEnemyView {
   maxHp: number; // for health-bar rendering / overkill checks
   dist: number; // arc-length travelled — target the largest to defend the base
   alive: boolean;
+  armor: number; // 0..0.9 reduction vs non-piercing damage
+  camo: boolean; // untargetable unless revealed this frame
+  revealed: boolean; // a detector pylon has it lit this frame
 }
 
 /** One live creep: its rig, lane progress, HP and transient timers. */
@@ -75,6 +88,11 @@ interface Creep {
   flash: number; // remaining hit-flash time
   slowFactor: number; // active speed multiplier (1 = none)
   slowTime: number; // seconds remaining on the active slow
+  armor: number; // 0..0.9 reduction vs non-piercing damage
+  camo: boolean; // untargetable unless revealed
+  regen: number; // HP/sec self-heal (regrow)
+  revealed: boolean; // lit by a detector this frame (reset each update)
+  leakDmg: number; // base-HP damage on leak (Duel)
 }
 
 /**
@@ -137,6 +155,11 @@ export class TdEnemies {
       flash: 0,
       slowFactor: 1,
       slowTime: 0,
+      armor: Math.max(0, Math.min(0.9, spec.armor ?? 0)),
+      camo: !!spec.camo,
+      regen: Math.max(0, spec.regen ?? 0),
+      revealed: false,
+      leakDmg: Math.max(0, spec.leakDmg ?? 1),
     });
   }
 
@@ -151,11 +174,17 @@ export class TdEnemies {
    *    `update()` (by `damage`/`damageNear`), drained here so each kill is
    *    credited EXACTLY once. Leaked creeps pay no bounty.
    */
-  update(dt: number): { leaked: number; bounties: number[] } {
+  update(dt: number): { leaked: number; leakedDamage: number; bounties: number[] } {
     let leaked = 0;
+    let leakedDamage = 0;
     // iterate back-to-front so splice-on-leak doesn't skip the next creep
     for (let i = this.creeps.length - 1; i >= 0; i--) {
       const c = this.creeps[i];
+
+      // camo reveal is per-frame: detectors re-light it after this update tick
+      c.revealed = false;
+      // regrow: self-heal up to max if it survived the last hit
+      if (c.regen > 0 && c.hp < c.maxHp) c.hp = Math.min(c.maxHp, c.hp + c.regen * dt);
 
       // expire the active slow, then advance by the (possibly slowed) speed
       if (c.slowTime > 0) {
@@ -167,6 +196,7 @@ export class TdEnemies {
       const p = pointAt(c.dist, TD_PATH);
       if (p.done) {
         // reached the base — leaked. Remove + dispose; no bounty.
+        leakedDamage += c.leakDmg;
         this.disposeCreep(c);
         this.creeps.splice(i, 1);
         leaked++;
@@ -198,7 +228,7 @@ export class TdEnemies {
     } else {
       bounties = [];
     }
-    return { leaked, bounties };
+    return { leaked, leakedDamage, bounties };
   }
 
   /**
@@ -210,9 +240,21 @@ export class TdEnemies {
   enemies(): TdEnemyView[] {
     const out: TdEnemyView[] = [];
     for (const c of this.creeps) {
-      out.push({ id: c.id, pos: c.pos, hp: c.hp, maxHp: c.maxHp, dist: c.dist, alive: c.hp > 0 });
+      out.push({ id: c.id, pos: c.pos, hp: c.hp, maxHp: c.maxHp, dist: c.dist, alive: c.hp > 0, armor: c.armor, camo: c.camo, revealed: c.revealed });
     }
     return out;
+  }
+
+  /** A detector pylon lights every CAMO creep within `radius` (XZ) of `pos` for
+   *  this frame, making them targetable by all towers. Call after update(),
+   *  before towers pick targets. */
+  revealZone(pos: THREE.Vector3, radius: number): void {
+    const r2 = radius * radius;
+    for (const c of this.creeps) {
+      if (!c.camo || c.revealed) continue;
+      const dx = c.pos.x - pos.x, dz = c.pos.z - pos.z;
+      if (dx * dx + dz * dz <= r2) c.revealed = true;
+    }
   }
 
   /**
@@ -221,11 +263,11 @@ export class TdEnemies {
    * its bounty is queued for the next `update()` return. Returns true iff this
    * hit was the killing blow; false if the creep survived or `id` is unknown.
    */
-  damage(id: number, dmg: number): boolean {
+  damage(id: number, dmg: number, pierce = false): boolean {
     const idx = this.indexOf(id);
     if (idx < 0) return false;
     const c = this.creeps[idx];
-    c.hp -= dmg;
+    c.hp -= pierce ? dmg : dmg * (1 - c.armor); // armored creeps shrug off non-piercing hits
     c.flash = FLASH_TIME;
     c.char.setHitFlash(1);
     if (c.hp <= 0) {
@@ -240,7 +282,7 @@ export class TdEnemies {
    * `radius` (XZ) of `pos`. Killed creeps are removed + disposed and their
    * bounties queued for the next `update()`. Returns the number KILLED.
    */
-  damageNear(pos: THREE.Vector3, radius: number, dmg: number): number {
+  damageNear(pos: THREE.Vector3, radius: number, dmg: number, pierce = false): number {
     const r2 = radius * radius;
     let kills = 0;
     // back-to-front so kill-splice doesn't skip the next creep
@@ -249,7 +291,7 @@ export class TdEnemies {
       const dx = c.pos.x - pos.x;
       const dz = c.pos.z - pos.z;
       if (dx * dx + dz * dz > r2) continue;
-      c.hp -= dmg;
+      c.hp -= pierce ? dmg : dmg * (1 - c.armor);
       c.flash = FLASH_TIME;
       c.char.setHitFlash(1);
       if (c.hp <= 0) {

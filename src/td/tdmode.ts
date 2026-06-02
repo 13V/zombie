@@ -1,30 +1,44 @@
 import * as THREE from "three";
 import { voxelMaterial, glowMaterial } from "../palette";
 import { TdMap } from "./tdmap";
-import { TdEnemies } from "./tdenemy";
+import { TdEnemies, type TdSpawnSpec } from "./tdenemy";
 import { TD_PADS } from "./tdpath";
-import { TD_TOWERS, towerStats, tdUpgradeCost, tdSellValue, pickTarget, type TdTowerId, type TdTargetable } from "./tdtowers";
-import { buildWave, spawnInterval, TD_START_GOLD, TD_START_LIVES, TD_TOTAL_WAVES, TD_WAVE_CLEAR_BONUS } from "./tdwaves";
+import {
+  TD_TOWERS, towerStats, tdUpgradeCost, tdSellValue, pickTarget,
+  TD_TARGET_MODES, type TdTowerId, type TdTargetMode, type TdTargetable, type TdTowerDef,
+} from "./tdtowers";
+import { buildWave, spawnInterval, waveClearBonus, TD_START_GOLD, TD_START_LIVES, TD_TOTAL_WAVES } from "./tdwaves";
+import {
+  duelInit, duelSend, duelPlayerLeak, duelEndWave, duelUnlockedSends,
+  type DuelState,
+} from "./tdduel";
+
+export type TdGameMode = "solo" | "duel";
 
 /** A built turret occupying one pad. */
 interface Tower {
-  pad: number; id: TdTowerId; tier: number;
-  pos: THREE.Vector3; cooldown: number;
+  pad: number; id: TdTowerId; tier: number; target: TdTargetMode;
+  def: TdTowerDef; pos: THREE.Vector3; cooldown: number;
   group: THREE.Group; barrel: THREE.Group;
 }
-/** A fading shot tracer. */
 interface Tracer { mesh: THREE.Mesh; life: number }
 
-const BUILD_REACH = 4;        // how close the engineer must stand to a pad
-const NEXT_WAVE_DELAY = 8;    // auto-start the next wave after this many seconds
+const BUILD_REACH = 4;
+const NEXT_WAVE_DELAY = 10;     // auto-start the next wave after this many seconds
+const EARLY_CALL_RATE = 2;      // bonus gold per second skipped when calling early
 const TRACER_LIFE = 0.12;
 const _a = new THREE.Vector3();
 
 /**
- * Tower-Defense controller. Owns the map, the creeps, the placed towers, the
- * gold/lives economy, and the wave state machine. main drives it:
- * enter() / tick() / build()/upgrade()/sell() / leave(), keeping the player
- * (the "engineer" you walk between pads), camera and input.
+ * Tower-Defense controller, Solo + 1v1 Duel.
+ *
+ * Solo: survive TD_TOTAL_WAVES; lives lost on leaks. Duel: you + an AI bot each
+ * defend a lane against the same shared waves; you spend gold to SEND creeps at
+ * the bot (which permanently grows your income), leaks chip base HP, first to 0
+ * loses. The bot's lane is simulated in tdduel; only yours is rendered.
+ *
+ * main drives it: enter(mode) / tick() / build/upgrade/sell/cycleTarget / send /
+ * startNextWave / leave, keeping the player (the engineer), camera and input.
  */
 export class TdMode {
   private map: TdMap;
@@ -32,11 +46,19 @@ export class TdMode {
   private towers = new Map<number, Tower>(); // keyed by pad index
   private fx = new THREE.Group();
   private tracers: Tracer[] = [];
+  private ring: THREE.Mesh;                    // range preview around the nearest tower
 
-  gold = TD_START_GOLD;
-  lives = TD_START_LIVES;
+  mode: TdGameMode = "solo";
+  private duel?: DuelState;
+  private duelDifficulty = 0.5;
+  private pendingBotSends: TdSpawnSpec[] = [];
+
+  // solo economy
+  private soloGold = TD_START_GOLD;
+  private soloLives = TD_START_LIVES;
+
   wave = 0;
-  private spawnQueue: ReturnType<typeof buildWave> = [];
+  private spawnQueue: TdSpawnSpec[] = [];
   private spawnTimer = 0;
   private betweenWaves = true;
   private nextWaveIn = NEXT_WAVE_DELAY;
@@ -49,22 +71,37 @@ export class TdMode {
     this.map = new TdMap(scene);
     this.creeps = new TdEnemies(scene);
     scene.add(this.fx);
+    this.ring = new THREE.Mesh(
+      new THREE.TorusGeometry(1, 0.12, 6, 40),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false }),
+    );
+    this.ring.rotation.x = Math.PI / 2;
+    this.ring.visible = false;
+    this.fx.add(this.ring);
   }
 
-  spawn(): THREE.Vector3 { return new THREE.Vector3(0, 0, 0); } // engineer starts mid-field
+  spawn(): THREE.Vector3 { return new THREE.Vector3(0, 0, 0); }
   clamp(pos: THREE.Vector3) {
     pos.x = Math.max(-34, Math.min(34, pos.x));
     pos.z = Math.max(-26, Math.min(30, pos.z));
     pos.y = 0;
   }
 
-  enter() {
+  // ---- gold helpers (solo bank vs duel state) ----
+  get gold(): number { return this.mode === "duel" && this.duel ? this.duel.playerGold : this.soloGold; }
+  private addGold(n: number) { if (this.mode === "duel" && this.duel) this.duel.playerGold += n; else this.soloGold += n; }
+  private spendGold(n: number) { this.addGold(-n); }
+
+  enter(mode: TdGameMode = "solo") {
     if (this.active) return;
     this.active = true;
+    this.mode = mode;
     this.result = { over: false, win: false };
     this.map.setVisible(true);
-    this.gold = TD_START_GOLD;
-    this.lives = TD_START_LIVES;
+    this.soloGold = TD_START_GOLD;
+    this.soloLives = TD_START_LIVES;
+    this.duel = mode === "duel" ? duelInit() : undefined;
+    this.pendingBotSends = [];
     this.wave = 0;
     this.spawnQueue = [];
     this.spawnTimer = 0;
@@ -78,16 +115,16 @@ export class TdMode {
     this.active = false;
     this.map.setVisible(false);
     this.creeps.clear();
-    for (const t of this.towers.values()) this.fx.remove(t.group), this.disposeGroup(t.group);
+    for (const t of this.towers.values()) { this.fx.remove(t.group); this.disposeGroup(t.group); }
     this.towers.clear();
     for (const tr of this.tracers) { this.fx.remove(tr.mesh); tr.mesh.geometry.dispose(); (tr.mesh.material as THREE.Material).dispose(); }
     this.tracers.length = 0;
+    this.ring.visible = false;
     this.hud?.remove();
     this.hud = undefined;
   }
 
-  // ── pads / building ─────────────────────────────────────────────────────
-  /** Nearest pad index within build reach of `pos`, or -1. */
+  // ---- pads / building ----
   nearestPad(pos: THREE.Vector3): number {
     let best = -1, bestD = BUILD_REACH * BUILD_REACH;
     for (let i = 0; i < TD_PADS.length; i++) {
@@ -98,23 +135,23 @@ export class TdMode {
     return best;
   }
   padOccupied(i: number): boolean { return this.towers.has(i); }
-  towerAt(i: number): { id: TdTowerId; tier: number } | null {
+  towerAt(i: number): { id: TdTowerId; tier: number; target: TdTargetMode } | null {
     const t = this.towers.get(i);
-    return t ? { id: t.id, tier: t.tier } : null;
+    return t ? { id: t.id, tier: t.tier, target: t.target } : null;
   }
 
   build(pad: number, id: TdTowerId): boolean {
     if (this.towers.has(pad) || this.result.over) return false;
-    const cost = TD_TOWERS[id].cost;
-    if (this.gold < cost) return false;
-    this.gold -= cost;
+    const def = TD_TOWERS[id];
+    if (this.gold < def.cost) return false;
+    this.spendGold(def.cost);
     const p = TD_PADS[pad];
     const pos = new THREE.Vector3(p.x, 0, p.z);
     const group = this.makeTurret(id, 1);
     group.position.copy(pos).setY(0.6);
     this.fx.add(group);
     const barrel = group.getObjectByName("barrel") as THREE.Group;
-    this.towers.set(pad, { pad, id, tier: 1, pos, cooldown: 0, group, barrel });
+    this.towers.set(pad, { pad, id, tier: 1, target: def.defaultTarget, def, pos, cooldown: 0, group, barrel });
     this.refreshHud();
     return true;
   }
@@ -123,38 +160,66 @@ export class TdMode {
     if (!t || this.result.over) return false;
     const cost = tdUpgradeCost(t.id, t.tier);
     if (cost == null || this.gold < cost) return false;
-    this.gold -= cost;
+    this.spendGold(cost);
     t.tier++;
-    // visibly bulk the turret up a notch
-    const s = 1 + (t.tier - 1) * 0.14;
-    t.group.scale.setScalar(s);
+    t.group.scale.setScalar(1 + (t.tier - 1) * 0.14);
     this.refreshHud();
     return true;
   }
   sell(pad: number): boolean {
     const t = this.towers.get(pad);
     if (!t) return false;
-    this.gold += tdSellValue(t.id, t.tier);
+    this.addGold(tdSellValue(t.id, t.tier));
     this.fx.remove(t.group);
     this.disposeGroup(t.group);
     this.towers.delete(pad);
     this.refreshHud();
     return true;
   }
+  /** Cycle a tower's target priority (First→Last→Strong→Close). */
+  cycleTarget(pad: number): boolean {
+    const t = this.towers.get(pad);
+    if (!t) return false;
+    const i = TD_TARGET_MODES.indexOf(t.target);
+    t.target = TD_TARGET_MODES[(i + 1) % TD_TARGET_MODES.length];
+    this.refreshHud();
+    return true;
+  }
 
-  // ── waves ───────────────────────────────────────────────────────────────
+  // ---- duel sends ----
+  /** Unlocked send ids for the prompt (duel only). */
+  unlockedSendIds(): string[] {
+    return this.mode === "duel" && this.duel ? duelUnlockedSends(this.duel).map((s) => s.id) : [];
+  }
+  /** Spend gold to send creeps at the bot (raises your income). Returns success. */
+  send(id: string): boolean {
+    if (this.mode !== "duel" || !this.duel) return false;
+    return duelSend(this.duel, id);
+  }
+
+  // ---- waves ----
   get isBetweenWaves(): boolean { return this.betweenWaves; }
-  /** Start the next wave early (player pressed the call key). */
+  /** Bonus gold you'd get for calling the next wave RIGHT NOW (early-call). */
+  earlyCallBonus(): number {
+    return this.betweenWaves ? Math.round(EARLY_CALL_RATE * Math.max(0, this.nextWaveIn)) : 0;
+  }
   startNextWave() {
     if (!this.betweenWaves || this.result.over) return;
-    this.wave++;
-    this.spawnQueue = buildWave(this.wave);
+    this.addGold(this.earlyCallBonus()); // reward calling early
+    if (this.mode === "duel" && this.duel) {
+      this.wave = this.duel.wave;
+      this.spawnQueue = buildWave(this.wave).concat(this.pendingBotSends);
+      this.pendingBotSends = [];
+    } else {
+      this.wave++;
+      this.spawnQueue = buildWave(this.wave);
+    }
     this.spawnTimer = 0;
     this.betweenWaves = false;
     this.refreshHud();
   }
 
-  tick(dt: number, _playerPos?: THREE.Vector3) {
+  tick(dt: number, playerPos?: THREE.Vector3) {
     if (!this.active || this.result.over) return;
     this.map.update(dt);
 
@@ -170,54 +235,86 @@ export class TdMode {
       }
     }
 
-    // advance creeps; bank kills, dock lives on leaks
+    // advance creeps; bank kills, take leaks
     const res = this.creeps.update(dt);
+    for (const b of res.bounties) this.addGold(b);
     if (res.leaked > 0) {
-      this.lives -= res.leaked;
       this.map.flashBase(0.4);
-      if (this.lives <= 0) { this.lives = 0; this.result = { over: true, win: false }; }
+      if (this.mode === "duel" && this.duel) {
+        duelPlayerLeak(this.duel, res.leakedDamage);
+        if (this.duel.over) this.result = { over: true, win: this.duel.win };
+      } else {
+        this.soloLives -= res.leaked;
+        if (this.soloLives <= 0) { this.soloLives = 0; this.result = { over: true, win: false }; }
+      }
     }
-    for (const b of res.bounties) this.gold += b;
 
-    // wave cleared?
-    if (!this.betweenWaves && this.spawnQueue.length === 0 && this.creeps.count === 0) {
-      this.gold += TD_WAVE_CLEAR_BONUS;
-      if (this.wave >= TD_TOTAL_WAVES) this.result = { over: true, win: true };
-      else { this.betweenWaves = true; this.nextWaveIn = NEXT_WAVE_DELAY; }
+    // detectors reveal camo creeps before towers pick targets
+    for (const t of this.towers.values()) {
+      if (t.def.detect) this.creeps.revealZone(t.pos, towerStats(t.id, t.tier).range);
     }
 
     this.fireTowers(dt);
     this.updateTracers(dt);
+    if (playerPos) this.updateRing(playerPos);
+
+    // wave cleared?
+    if (!this.betweenWaves && this.spawnQueue.length === 0 && this.creeps.count === 0) {
+      if (this.mode === "duel" && this.duel) {
+        this.pendingBotSends = duelEndWave(this.duel, this.duelDifficulty);
+        if (this.duel.over) this.result = { over: true, win: this.duel.win };
+        else { this.betweenWaves = true; this.nextWaveIn = NEXT_WAVE_DELAY; }
+      } else {
+        this.addGold(waveClearBonus(this.wave));
+        if (this.wave >= TD_TOTAL_WAVES) this.result = { over: true, win: true };
+        else { this.betweenWaves = true; this.nextWaveIn = NEXT_WAVE_DELAY; }
+      }
+    }
+
     this.refreshHud();
   }
 
-  // ── tower firing ──────────────────────────────────────────────────────────
+  // ---- tower firing ----
   private fireTowers(dt: number) {
     if (this.towers.size === 0) return;
     const view = this.creeps.enemies();
-    if (view.length === 0) { for (const t of this.towers.values()) t.cooldown = Math.max(0, t.cooldown - dt); return; }
-    // adapt the creep snapshot to the targeting shape (x/z only)
-    const targets: TdTargetable[] = view.map((e) => ({ id: e.id, pos: { x: e.pos.x, z: e.pos.z }, dist: e.dist, alive: e.alive }));
+    // adapt to the targeting shape (camo gated by reveal)
+    const targets: TdTargetable[] = view.map((e) => ({
+      id: e.id, pos: { x: e.pos.x, z: e.pos.z }, dist: e.dist, hp: e.hp,
+      alive: e.alive, targetable: !e.camo || e.revealed,
+    }));
     for (const t of this.towers.values()) {
       t.cooldown -= dt;
       const st = towerStats(t.id, t.tier);
-      const tid = pickTarget(t.pos.x, t.pos.z, st.range, targets);
+      const tid = pickTarget(t.pos.x, t.pos.z, st.range, targets, t.target);
       if (tid < 0) continue;
       const tgt = view.find((e) => e.id === tid);
       if (!tgt) continue;
-      // always face the target
       t.barrel.rotation.y = Math.atan2(tgt.pos.x - t.pos.x, tgt.pos.z - t.pos.z);
       if (t.cooldown > 0) continue;
       t.cooldown = 1 / st.fireRate;
-      // hit
-      if (st.splash > 0) this.creeps.damageNear(tgt.pos, st.splash, st.damage);
-      else this.creeps.damage(tid, st.damage);
+      if (st.splash > 0) this.creeps.damageNear(tgt.pos, st.splash, st.damage, t.def.pierce);
+      else this.creeps.damage(tid, st.damage, t.def.pierce);
       if (st.slow > 0) this.creeps.applySlow(tid, st.slow, st.slowTime);
-      this.spawnTracer(t.pos, tgt.pos, TD_TOWERS[t.id].color);
+      this.spawnTracer(t.pos, tgt.pos, t.def.color);
     }
   }
 
-  // ── visuals ─────────────────────────────────────────────────────────────
+  // ---- visuals ----
+  private updateRing(playerPos: THREE.Vector3) {
+    const pad = this.nearestPad(playerPos);
+    const t = pad >= 0 ? this.towers.get(pad) : undefined;
+    if (t) {
+      const r = towerStats(t.id, t.tier).range;
+      this.ring.position.set(t.pos.x, 0.4, t.pos.z);
+      this.ring.scale.set(r, r, 1);
+      (this.ring.material as THREE.MeshBasicMaterial).color.setHex(t.def.color);
+      this.ring.visible = true;
+    } else {
+      this.ring.visible = false;
+    }
+  }
+
   private makeTurret(id: TdTowerId, tier: number): THREE.Group {
     const def = TD_TOWERS[id];
     const g = new THREE.Group();
@@ -254,10 +351,7 @@ export class TdMode {
       tr.life -= dt;
       const m = tr.mesh.material as THREE.MeshStandardMaterial;
       m.opacity = Math.max(0, tr.life / TRACER_LIFE);
-      if (tr.life <= 0) {
-        this.fx.remove(tr.mesh); tr.mesh.geometry.dispose(); m.dispose();
-        this.tracers.splice(i, 1);
-      }
+      if (tr.life <= 0) { this.fx.remove(tr.mesh); tr.mesh.geometry.dispose(); m.dispose(); this.tracers.splice(i, 1); }
     }
   }
   private disposeGroup(g: THREE.Object3D) {
@@ -270,7 +364,7 @@ export class TdMode {
     });
   }
 
-  // ── HUD ───────────────────────────────────────────────────────────────────
+  // ---- HUD ----
   private buildHud() {
     if (this.hud) return;
     const el = document.createElement("div");
@@ -282,13 +376,23 @@ export class TdMode {
   private refreshHud() {
     if (!this.hud) return;
     const phase = this.result.over
-      ? (this.result.win ? "🏆 Cleared!" : "💀 Overrun")
+      ? (this.result.win ? "🏆 Victory!" : "💀 Defeat")
       : this.betweenWaves
-        ? `⏳ Wave ${this.wave + 1} in ${Math.ceil(this.nextWaveIn)}s`
-        : `🌊 Wave ${this.wave}/${TD_TOTAL_WAVES}`;
-    this.hud.innerHTML =
-      `<span class="td-r td-gold">🪙 ${this.gold}</span>` +
-      `<span class="td-r td-lives">❤ ${this.lives}</span>` +
-      `<span class="td-r td-wave">${phase}</span>`;
+        ? `⏳ Wave ${(this.mode === "duel" && this.duel ? this.duel.wave : this.wave + 1)} — Space (+${this.earlyCallBonus()}g)`
+        : `🌊 Wave ${this.wave}${this.mode === "duel" ? "" : "/" + TD_TOTAL_WAVES}`;
+    if (this.mode === "duel" && this.duel) {
+      const d = this.duel;
+      this.hud.innerHTML =
+        `<span class="td-r td-lives">❤ ${Math.ceil(d.playerHp)}</span>` +
+        `<span class="td-r td-bot">🤖 ${Math.ceil(d.botHp)}</span>` +
+        `<span class="td-r td-gold">🪙 ${Math.floor(d.playerGold)}</span>` +
+        `<span class="td-r td-income">📈 ${Math.round(d.playerIncome)}/wave</span>` +
+        `<span class="td-r td-wave">${phase}</span>`;
+    } else {
+      this.hud.innerHTML =
+        `<span class="td-r td-gold">🪙 ${Math.floor(this.soloGold)}</span>` +
+        `<span class="td-r td-lives">❤ ${this.soloLives}</span>` +
+        `<span class="td-r td-wave">${phase}</span>`;
+    }
   }
 }
