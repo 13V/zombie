@@ -20,6 +20,10 @@ interface Tower {
   pad: number; id: TdTowerId; tier: number; target: TdTargetMode;
   def: TdTowerDef; pos: THREE.Vector3; cooldown: number;
   group: THREE.Group; barrel: THREE.Group;
+  spin?: THREE.Object3D;   // orbiting energy ring (idle spin)
+  muzzle?: THREE.Object3D; // glowing business-end (pulses + flashes on fire)
+  recoil: number;          // 0..1 kickback decaying after a shot
+  flash: number;           // 0..1 muzzle-flash decaying after a shot
 }
 interface Tracer { mesh: THREE.Mesh; life: number }
 
@@ -58,6 +62,7 @@ export class TdMode {
   private soloLives = TD_START_LIVES;
 
   wave = 0;
+  private _tAnim = 0; // animation clock for turret idle motion
   private spawnQueue: TdSpawnSpec[] = [];
   private spawnTimer = 0;
   private betweenWaves = true;
@@ -150,8 +155,14 @@ export class TdMode {
     const group = this.makeTurret(id, 1);
     group.position.copy(pos).setY(0.6);
     this.fx.add(group);
-    const barrel = group.getObjectByName("barrel") as THREE.Group;
-    this.towers.set(pad, { pad, id, tier: 1, target: def.defaultTarget, def, pos, cooldown: 0, group, barrel });
+    const t: Tower = {
+      pad, id, tier: 1, target: def.defaultTarget, def, pos, cooldown: 0, group,
+      barrel: group.getObjectByName("barrel") as THREE.Group,
+      spin: group.getObjectByName("spin") ?? undefined,
+      muzzle: group.getObjectByName("muzzle") ?? undefined,
+      recoil: 0, flash: 0,
+    };
+    this.towers.set(pad, t);
     this.refreshHud();
     return true;
   }
@@ -162,7 +173,16 @@ export class TdMode {
     if (cost == null || this.gold < cost) return false;
     this.spendGold(cost);
     t.tier++;
-    t.group.scale.setScalar(1 + (t.tier - 1) * 0.14);
+    // rebuild the model so the tower visibly evolves (more shards, bigger weapon)
+    this.fx.remove(t.group);
+    this.disposeGroup(t.group);
+    const ng = this.makeTurret(t.id, t.tier);
+    ng.position.copy(t.pos).setY(0.6);
+    this.fx.add(ng);
+    t.group = ng;
+    t.barrel = ng.getObjectByName("barrel") as THREE.Group;
+    t.spin = ng.getObjectByName("spin") ?? undefined;
+    t.muzzle = ng.getObjectByName("muzzle") ?? undefined;
     this.refreshHud();
     return true;
   }
@@ -254,7 +274,9 @@ export class TdMode {
       if (t.def.detect) this.creeps.revealZone(t.pos, towerStats(t.id, t.tier).range);
     }
 
+    this._tAnim += dt;
     this.fireTowers(dt);
+    this.animateTowers(dt);
     this.updateTracers(dt);
     if (playerPos) this.updateRing(playerPos);
 
@@ -297,6 +319,28 @@ export class TdMode {
       else this.creeps.damage(tid, st.damage, t.def.pierce);
       if (st.slow > 0) this.creeps.applySlow(tid, st.slow, st.slowTime);
       this.spawnTracer(t.pos, tgt.pos, t.def.color);
+      t.recoil = 1; t.flash = 1; // kick + muzzle flash
+    }
+  }
+
+  /** Idle + firing life: orbit rings spin, cores breathe, barrels recoil + flash. */
+  private animateTowers(dt: number) {
+    for (const t of this.towers.values()) {
+      if (t.spin) {
+        t.spin.rotation.y += dt * (1.0 + t.tier * 0.35);
+        t.spin.position.y = 0.6 + Math.sin(this._tAnim * 1.6 + t.pad) * 0.07;
+      }
+      if (t.recoil > 0) {
+        t.recoil = Math.max(0, t.recoil - dt * 5);
+        t.barrel.position.z = -t.recoil * 0.32; // kick back along the barrel's forward
+      }
+      if (t.muzzle) {
+        const m = t.muzzle as THREE.Mesh;
+        const mat = m.material as THREE.MeshStandardMaterial;
+        if (t.flash > 0) t.flash = Math.max(0, t.flash - dt * 6);
+        m.scale.setScalar(1 + t.flash * 1.4);              // flash punch
+        if (mat.emissiveIntensity !== undefined) mat.emissiveIntensity = 0.9 + t.flash * 2.2 + Math.sin(this._tAnim * 3 + t.pad) * 0.25;
+      }
     }
   }
 
@@ -345,7 +389,7 @@ export class TdMode {
       const lL = box(0.16, 0.16, 0.95, woodDark, 0, 0, 0.6); lL.rotation.y = 0.55;
       const lR = box(0.16, 0.16, 0.95, woodDark, 0, 0, 0.6); lR.rotation.y = -0.55;
       barrel.add(lL, lR);                                           // crossbow limbs
-      barrel.add(glow(0.16, 0.16, 0.55, accent, 0, 0, 0.95, 1.1));  // glowing bolt
+      { const mz = glow(0.16, 0.16, 0.55, accent, 0, 0, 0.95, 1.1); mz.name = "muzzle"; barrel.add(mz); } // glowing bolt
       barrel.position.y = 0.95;
     } else if (id === "frost") {
       g.add(box(1.5, 0.4, 1.5, stoneDark, 0, -0.4, 0));
@@ -355,7 +399,7 @@ export class TdMode {
         cr.scale.set(1, s, 1); cr.position.set(cx, 0.45 + s * 0.25, cz); g.add(cr);
       }
       const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), glowMaterial(accent, 1.15));
-      orb.position.z = 0.15; barrel.add(orb);
+      orb.position.z = 0.15; orb.name = "muzzle"; barrel.add(orb);
       barrel.add(glow(0.5, 0.12, 0.12, accent, 0, 0, 0.55, 0.8));
       barrel.position.y = 1.05;
     } else if (id === "pylon") {
@@ -364,7 +408,7 @@ export class TdMode {
       const dish = new THREE.Mesh(new THREE.ConeGeometry(0.62, 0.45, 10, 1, true), glowMaterial(accent, 0.45));
       dish.rotation.x = Math.PI * 0.5 - 0.45; dish.position.z = 0.32; dish.position.y = 0.05;
       barrel.add(dish);
-      barrel.add(glow(0.22, 0.22, 0.22, accent, 0, 0.08, 0.5, 1.3)); // scanner lens
+      { const mz = glow(0.22, 0.22, 0.22, accent, 0, 0.08, 0.5, 1.3); mz.name = "muzzle"; barrel.add(mz); } // scanner lens
       barrel.add(box(0.06, 0.55, 0.06, metal, 0, 0.4, 0));            // antenna
       barrel.position.y = 1.3;
     } else if (id === "cannon") {
@@ -374,7 +418,7 @@ export class TdMode {
       const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 1.3, 10), voxelMaterial(metal));
       tube.rotation.x = Math.PI / 2 - 0.22; tube.position.set(0, 0.2, 0.55); tube.castShadow = true;
       barrel.add(tube);
-      barrel.add(glow(0.52, 0.52, 0.22, accent, 0, 0.42, 1.05, 0.8)); // muzzle ring
+      { const mz = glow(0.52, 0.52, 0.22, accent, 0, 0.42, 1.05, 0.8); mz.name = "muzzle"; barrel.add(mz); } // muzzle ring
       barrel.position.y = 0.75;
     } else { // sniper
       g.add(box(1.2, 0.4, 1.2, stone, 0, -0.4, 0));
@@ -384,12 +428,35 @@ export class TdMode {
       roof.position.y = 2.1; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
       barrel.add(box(0.14, 0.14, 1.9, metal, 0, 0, 0.75));            // long rifle barrel
       barrel.add(box(0.22, 0.22, 0.42, stoneDark, 0, 0.14, 0.05));    // scope
-      barrel.add(glow(0.12, 0.12, 0.2, accent, 0, 0, 1.65, 1.3));     // muzzle glow
+      { const mz = glow(0.12, 0.12, 0.2, accent, 0, 0, 1.65, 1.3); mz.name = "muzzle"; barrel.add(mz); } // muzzle glow
       barrel.position.y = 1.6;
     }
 
     g.add(barrel);
-    g.scale.setScalar(1 + (tier - 1) * 0.14);
+
+    // ---- shared flourishes (life + an upgrade tell) ----
+    // a glowing rune ring grounding the turret (matches the build pads)
+    const rune = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.07, 6, 24), glowMaterial(accent, 0.5));
+    rune.rotation.x = Math.PI / 2; rune.position.y = -0.18;
+    g.add(rune);
+    // orbiting energy shards — MORE + faster per tier (so upgrades read at a glance)
+    const spin = new THREE.Group(); spin.name = "spin"; spin.position.y = 0.6;
+    const shards = 2 + tier; // 3 / 4 / 5
+    for (let k = 0; k < shards; k++) {
+      const a = (k / shards) * Math.PI * 2;
+      const sh = new THREE.Mesh(new THREE.OctahedronGeometry(0.1 + tier * 0.02, 0), glowMaterial(accent, 1.0));
+      sh.position.set(Math.cos(a) * 1.0, 0, Math.sin(a) * 1.0);
+      spin.add(sh);
+    }
+    g.add(spin);
+    // tier crown: a floating gem above tier-2/3 turrets
+    if (tier >= 2) {
+      const crown = new THREE.Mesh(new THREE.OctahedronGeometry(0.16 + (tier - 2) * 0.08, 0), glowMaterial(0xfff2c0, 1.3));
+      crown.position.y = (id === "sniper" ? 2.7 : id === "pylon" ? 2.1 : 1.7);
+      g.add(crown);
+    }
+
+    g.scale.setScalar(1 + (tier - 1) * 0.1);
     return g;
   }
 
