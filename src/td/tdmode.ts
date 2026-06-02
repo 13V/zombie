@@ -4,7 +4,7 @@ import { TdMap } from "./tdmap";
 import { TdEnemies, type TdSpawnSpec } from "./tdenemy";
 import { TD_PADS } from "./tdpath";
 import {
-  TD_TOWERS, towerStats, tdUpgradeCost, tdSellValue, pickTarget,
+  TD_TOWERS, TD_TOWER_IDS, towerStats, tdUpgradeCost, tdSellValue, pickTarget,
   TD_TARGET_MODES, type TdTowerId, type TdTargetMode, type TdTargetable, type TdTowerDef,
 } from "./tdtowers";
 import { buildWave, spawnInterval, waveClearBonus, TD_START_GOLD, TD_START_LIVES, TD_TOTAL_WAVES } from "./tdwaves";
@@ -12,6 +12,8 @@ import {
   duelInit, duelSend, duelPlayerLeak, duelEndWave, duelUnlockedSends,
   type DuelState,
 } from "./tdduel";
+import { TdFx } from "./tdfx";
+import { TdHud, type TdHudState } from "./tdhud";
 
 export type TdGameMode = "solo" | "duel";
 
@@ -25,14 +27,11 @@ interface Tower {
   recoil: number;          // 0..1 kickback decaying after a shot
   flash: number;           // 0..1 muzzle-flash decaying after a shot
 }
-interface Tracer { mesh: THREE.Mesh; life: number }
 
 const BUILD_REACH = 4;
 const TURRET_SCALE = 2.1;       // base turret size (they were dwarfed by the pads)
 const NEXT_WAVE_DELAY = 10;     // auto-start the next wave after this many seconds
 const EARLY_CALL_RATE = 2;      // bonus gold per second skipped when calling early
-const TRACER_LIFE = 0.12;
-const _a = new THREE.Vector3();
 
 /**
  * Tower-Defense controller, Solo + 1v1 Duel.
@@ -49,9 +48,10 @@ export class TdMode {
   private map: TdMap;
   private creeps: TdEnemies;
   private towers = new Map<number, Tower>(); // keyed by pad index
+  private scene: THREE.Scene;
   private fx = new THREE.Group();
-  private tracers: Tracer[] = [];
-  private bursts: { mesh: THREE.Mesh; life: number }[] = []; // impact pops at the target
+  private vfx!: TdFx;                           // pooled muzzle/tracer/impact/text effects (per match)
+  private ui?: TdHud;                           // build-palette + status HUD
   private ring: THREE.Mesh;                    // range preview around the nearest tower
 
   mode: TdGameMode = "solo";
@@ -70,11 +70,11 @@ export class TdMode {
   private betweenWaves = true;
   private nextWaveIn = NEXT_WAVE_DELAY;
   private active = false;
-  private hud?: HTMLElement;
 
   result: { over: boolean; win: boolean } = { over: false, win: false };
 
   constructor(scene: THREE.Scene) {
+    this.scene = scene;
     this.map = new TdMap(scene);
     this.creeps = new TdEnemies(scene);
     scene.add(this.fx);
@@ -114,7 +114,9 @@ export class TdMode {
     this.spawnTimer = 0;
     this.betweenWaves = true;
     this.nextWaveIn = NEXT_WAVE_DELAY;
+    this.vfx = new TdFx(this.scene);
     this.buildHud();
+    this.ui?.banner(mode === "duel" ? "1v1 DUEL" : "TOWER DEFENSE");
   }
 
   leave() {
@@ -124,13 +126,10 @@ export class TdMode {
     this.creeps.clear();
     for (const t of this.towers.values()) { this.fx.remove(t.group); this.disposeGroup(t.group); }
     this.towers.clear();
-    for (const tr of this.tracers) { this.fx.remove(tr.mesh); tr.mesh.geometry.dispose(); (tr.mesh.material as THREE.Material).dispose(); }
-    this.tracers.length = 0;
-    for (const b of this.bursts) { this.fx.remove(b.mesh); b.mesh.geometry.dispose(); (b.mesh.material as THREE.Material).dispose(); }
-    this.bursts.length = 0;
+    this.vfx.clear();
     this.ring.visible = false;
-    this.hud?.remove();
-    this.hud = undefined;
+    this.ui?.destroy();
+    this.ui = undefined;
   }
 
   // ---- pads / building ----
@@ -240,6 +239,8 @@ export class TdMode {
     }
     this.spawnTimer = 0;
     this.betweenWaves = false;
+    const boss = this.wave % 5 === 0;
+    this.ui?.banner(boss ? `Wave ${this.wave} — BOSS` : `Wave ${this.wave}`);
     this.refreshHud();
   }
 
@@ -281,9 +282,8 @@ export class TdMode {
     this._tAnim += dt;
     this.fireTowers(dt);
     this.animateTowers(dt);
-    this.updateTracers(dt);
-    this.updateImpacts(dt);
-    if (playerPos) this.updateRing(playerPos);
+    this.vfx.update(dt);
+    if (playerPos) { this.updateRing(playerPos); this.updateTowerPanel(playerPos); }
 
     // wave cleared?
     if (!this.betweenWaves && this.spawnQueue.length === 0 && this.creeps.count === 0) {
@@ -323,9 +323,15 @@ export class TdMode {
       if (st.splash > 0) this.creeps.damageNear(tgt.pos, st.splash, st.damage, t.def.pierce);
       else this.creeps.damage(tid, st.damage, t.def.pierce);
       if (st.slow > 0) this.creeps.applySlow(tid, st.slow, st.slowTime);
-      this.spawnTracer(t.pos, tgt.pos, t.def.color);
-      this.spawnImpact(tgt.pos, t.def.color);
-      t.recoil = 1; t.flash = 1; // kick + muzzle flash
+      // VFX: muzzle flash at the barrel, a travelling shot, an impact on arrival
+      const from = new THREE.Vector3(t.pos.x, 1.4, t.pos.z);
+      const to = new THREE.Vector3(tgt.pos.x, 0.7, tgt.pos.z);
+      const dir = new THREE.Vector3(tgt.pos.x - t.pos.x, 0, tgt.pos.z - t.pos.z).normalize();
+      const kind = (t.id === "sniper" || t.id === "pylon") ? "beam" : t.id === "cannon" ? "shell" : "bolt";
+      const big = st.splash > 0;
+      this.vfx.muzzleFlash(from, dir, t.def.color);
+      this.vfx.tracer(from, to, t.def.color, kind, (p, c) => this.vfx.impact(p, c, big));
+      t.recoil = 1; t.flash = 1; // kick + muzzle glow
     }
   }
 
@@ -526,46 +532,6 @@ export class TdMode {
     return 0.6 * this.turretScale(tier);
   }
 
-  private spawnTracer(from: THREE.Vector3, to: { x: number; z: number }, color: number) {
-    _a.set(to.x - from.x, 0, to.z - from.z);
-    const len = _a.length() || 0.01;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, len), glowMaterial(color, 0.9));
-    mesh.position.set((from.x + to.x) / 2, 0.85, (from.z + to.z) / 2);
-    mesh.rotation.y = Math.atan2(_a.x, _a.z);
-    (mesh.material as THREE.MeshStandardMaterial).transparent = true;
-    this.fx.add(mesh);
-    this.tracers.push({ mesh, life: TRACER_LIFE });
-    if (this.tracers.length > 60) { const old = this.tracers.shift()!; this.fx.remove(old.mesh); old.mesh.geometry.dispose(); (old.mesh.material as THREE.Material).dispose(); }
-  }
-  /** A quick voxel pop at the target on hit (scales up + fades). */
-  private spawnImpact(pos: { x: number; z: number }, color: number) {
-    const mesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.35, 0), glowMaterial(color, 1.2));
-    mesh.position.set(pos.x, 0.7, pos.z);
-    (mesh.material as THREE.MeshStandardMaterial).transparent = true;
-    this.fx.add(mesh);
-    this.bursts.push({ mesh, life: 0.2 });
-    if (this.bursts.length > 50) { const old = this.bursts.shift()!; this.fx.remove(old.mesh); old.mesh.geometry.dispose(); (old.mesh.material as THREE.Material).dispose(); }
-  }
-  private updateImpacts(dt: number) {
-    for (let i = this.bursts.length - 1; i >= 0; i--) {
-      const b = this.bursts[i];
-      b.life -= dt;
-      const f = Math.max(0, b.life / 0.2);
-      b.mesh.scale.setScalar(0.5 + (1 - f) * 1.6);          // expand
-      b.mesh.rotation.y += dt * 8;
-      (b.mesh.material as THREE.MeshStandardMaterial).opacity = f;
-      if (b.life <= 0) { this.fx.remove(b.mesh); b.mesh.geometry.dispose(); (b.mesh.material as THREE.Material).dispose(); this.bursts.splice(i, 1); }
-    }
-  }
-  private updateTracers(dt: number) {
-    for (let i = this.tracers.length - 1; i >= 0; i--) {
-      const tr = this.tracers[i];
-      tr.life -= dt;
-      const m = tr.mesh.material as THREE.MeshStandardMaterial;
-      m.opacity = Math.max(0, tr.life / TRACER_LIFE);
-      if (tr.life <= 0) { this.fx.remove(tr.mesh); tr.mesh.geometry.dispose(); m.dispose(); this.tracers.splice(i, 1); }
-    }
-  }
   private disposeGroup(g: THREE.Object3D) {
     g.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -578,33 +544,46 @@ export class TdMode {
 
   // ---- HUD ----
   private buildHud() {
-    if (this.hud) return;
-    const el = document.createElement("div");
-    el.id = "td-hud";
-    (document.getElementById("ui") ?? document.body).appendChild(el);
-    this.hud = el;
+    if (this.ui) return;
+    this.ui = new TdHud(document.getElementById("ui") ?? document.body);
+    this.ui.setTowers(TD_TOWER_IDS.map((id, i) => ({
+      name: TD_TOWERS[id].name, cost: TD_TOWERS[id].cost, key: String(i + 1), color: TD_TOWERS[id].color,
+    })));
     this.refreshHud();
   }
-  private refreshHud() {
-    if (!this.hud) return;
-    const phase = this.result.over
-      ? (this.result.win ? "🏆 Victory!" : "💀 Defeat")
-      : this.betweenWaves
-        ? `⏳ Wave ${(this.mode === "duel" && this.duel ? this.duel.wave : this.wave + 1)} — Space (+${this.earlyCallBonus()}g)`
-        : `🌊 Wave ${this.wave}${this.mode === "duel" ? "" : "/" + TD_TOTAL_WAVES}`;
+  /** Build the per-frame HUD state snapshot. */
+  private hudState(): TdHudState {
     if (this.mode === "duel" && this.duel) {
       const d = this.duel;
-      this.hud.innerHTML =
-        `<span class="td-r td-lives">❤ ${Math.ceil(d.playerHp)}</span>` +
-        `<span class="td-r td-bot">🤖 ${Math.ceil(d.botHp)}</span>` +
-        `<span class="td-r td-gold">🪙 ${Math.floor(d.playerGold)}</span>` +
-        `<span class="td-r td-income">📈 ${Math.round(d.playerIncome)}/wave</span>` +
-        `<span class="td-r td-wave">${phase}</span>`;
+      return {
+        mode: "duel", gold: Math.floor(d.playerGold), wave: this.wave || d.wave,
+        betweenWaves: this.betweenWaves, earlyCallBonus: this.earlyCallBonus(),
+        playerHp: d.playerHp, botHp: d.botHp, income: Math.round(d.playerIncome),
+        over: this.result.over, win: this.result.win,
+      };
+    }
+    return {
+      mode: "solo", gold: Math.floor(this.soloGold), wave: this.wave, totalWaves: TD_TOTAL_WAVES,
+      betweenWaves: this.betweenWaves, earlyCallBonus: this.earlyCallBonus(), lives: this.soloLives,
+      over: this.result.over, win: this.result.win,
+    };
+  }
+  private refreshHud() {
+    this.ui?.update(this.hudState());
+  }
+  /** Drive the bottom panel: show an owned tower's upgrade/sell/target info when
+   *  the engineer stands at it, else the build palette. Called from tick. */
+  private updateTowerPanel(playerPos: THREE.Vector3) {
+    if (!this.ui) return;
+    const pad = this.nearestPad(playerPos);
+    const t = pad >= 0 ? this.towers.get(pad) : undefined;
+    if (t) {
+      this.ui.showTowerPanel({
+        name: t.def.name, tier: t.tier, target: t.target,
+        upgradeCost: tdUpgradeCost(t.id, t.tier), sellValue: tdSellValue(t.id, t.tier),
+      });
     } else {
-      this.hud.innerHTML =
-        `<span class="td-r td-gold">🪙 ${Math.floor(this.soloGold)}</span>` +
-        `<span class="td-r td-lives">❤ ${this.soloLives}</span>` +
-        `<span class="td-r td-wave">${phase}</span>`;
+      this.ui.showTowerPanel(null);
     }
   }
 }

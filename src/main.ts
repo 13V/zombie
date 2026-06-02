@@ -1650,18 +1650,18 @@ class Game implements GameApi {
     //  • at an empty pad → 1-5 build a tower
     //  • at your tower   → E upgrade · X sell · T cycle target
     //  • away from pads (Duel) → 1-5 send a creep tier at the opponent
+    // (The TD HUD shows the build palette + tower panel; here we just read keys.)
     const pad = td.nearestPad(this.player.pos);
     const dkeys = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"] as const;
     if (pad >= 0) {
-      const occ = td.towerAt(pad);
-      if (occ) {
-        this.hud.showPrompt(`${occ.id} ★${occ.tier} [${occ.target}] — E upgrade · X sell · T target`, true);
+      if (td.towerAt(pad)) {
         if (this.input.pressed("KeyE")) td.upgrade(pad);
         if (this.input.pressed("KeyX")) td.sell(pad);
         if (this.input.pressed("KeyT")) td.cycleTarget(pad);
+        this.hud.hidePrompt();
       } else {
-        this.hud.showPrompt("Build:  1 Arrow 50 · 2 Frost 75 · 3 Pylon 90 · 4 Cannon 110 · 5 Sniper 150", true);
         for (let i = 0; i < TD_TOWER_IDS.length; i++) if (this.input.pressed(dkeys[i])) td.build(pad, TD_TOWER_IDS[i]);
+        this.hud.hidePrompt();
       }
     } else if (td.mode === "duel") {
       const sends = td.unlockedSendIds();
