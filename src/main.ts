@@ -1012,6 +1012,8 @@ class Game implements GameApi {
     this.setLocalAura(0); this.setLocalPlate(false); // drop the lobby cosmetics for the run
     this.hud.setIslandMode(false);
     this.hud.hidePrompt();
+    this.hud.setIslandPopulation(-1);     // no social chip during a run
+    this.emoteMenu?.setAvailable(false);  // no island emote button in combat
     this.resetRun();
     this.hud.hideStart();
     this.hud.hideGameOver();

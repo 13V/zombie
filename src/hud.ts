@@ -124,9 +124,9 @@ export class Hud {
   private build() {
     this.root.innerHTML = `
       <div class="hud-top">
-        <div class="pill round"><span class="label">Round</span><span class="value" id="hud-round">1</span></div>
-        <div class="pill points"><span class="label">Points</span><span class="value" id="hud-points">0</span></div>
-        <div class="pill room hidden" id="hud-room"><span class="label">Room</span><span class="value" id="hud-room-code"></span></div>
+        <div class="pill round"><span class="pico">🌊</span><span class="label">Round</span><span class="value" id="hud-round">1</span></div>
+        <div class="pill points"><span class="pico">⭐</span><span class="label">Points</span><span class="value" id="hud-points">0</span></div>
+        <div class="pill room hidden" id="hud-room"><span class="pico">🚪</span><span class="label">Room</span><span class="value" id="hud-room-code"></span></div>
       </div>
       <div class="powerups" id="hud-powerups"></div>
       <div class="combo" id="hud-combo">
@@ -160,12 +160,14 @@ export class Hud {
 
       <div class="overlay splash" id="overlay-start">
         <button class="overlay-close" id="overlay-close" title="Back to island">✕</button>
-        <h1>TINY <span class="dead">DEAD</span></h1>
-        <p class="tagline">A cozy little world overrun by ten flavors of undead. Survive, loot, spin for wild guns — every run earns <b>Essence</b>.</p>
-        <div class="bestline" id="best-line"></div>
-        <!-- Primary actions FIRST so they're always visible without scrolling past the shop. -->
-        <button class="play" id="btn-start">Play Solo</button>
-        <button class="play secondary" id="btn-island">🏝️ Enter Island</button>
+        <div class="splash-hero">
+          <h1>TINY <span class="dead">DEAD</span></h1>
+          <p class="tagline">A cozy little world overrun by ten flavors of undead. Survive, loot, spin for wild guns — every run earns <b>Essence</b>.</p>
+          <div class="bestline" id="best-line"></div>
+          <!-- Primary actions FIRST so they're always visible without scrolling past the shop. -->
+          <button class="play" id="btn-island">🏝️ Enter Island</button>
+          <button class="play secondary" id="btn-start">▶ Play Solo</button>
+        </div>
         <div class="coop">
           <button class="coop-btn" id="btn-host">Host Co-op</button>
           <div class="join-row">
@@ -1179,13 +1181,15 @@ export class Hud {
             `<span class="lb-sc">${e.score.toLocaleString()}</span></div>`;
         })
         .join("");
-      lb = `<div class="lb-title">★ Best Runs ★</div><div class="lb">${rows}</div>`;
+      lb = `<div class="lb-title">Best Runs</div><div class="lb">${rows}</div>`;
     }
     this.overStats.innerHTML = `
-      ${newBest ? '<p class="stat newbest">★ NEW BEST ★</p>' : ""}
-      <p class="stat">Reached Round ${round}</p>
-      <p class="stat">${points} points banked</p>
-      <p class="stat essence-earn">+${essenceEarned} ✦ Essence earned</p>
+      ${newBest ? '<div class="newbest-ribbon">★ NEW PERSONAL BEST ★</div>' : ""}
+      <div class="over-grid">
+        <div class="over-stat"><span class="os-ico">🌊</span><span class="os-val">${round}</span><span class="os-lbl">Round reached</span></div>
+        <div class="over-stat"><span class="os-ico">⭐</span><span class="os-val">${points.toLocaleString()}</span><span class="os-lbl">Points banked</span></div>
+        <div class="over-stat earn"><span class="os-ico">✦</span><span class="os-val">+${essenceEarned}</span><span class="os-lbl">Essence earned</span></div>
+      </div>
       ${lb}`;
     this.overOverlay.classList.remove("hidden");
   }
