@@ -62,6 +62,11 @@ type State = "menu" | "island" | "playing" | "paused" | "over" | "levelup" | "be
 
 class Game implements GameApi {
   private renderer: THREE.WebGLRenderer;
+  // ---- adaptive resolution: scale render DPR down when frames run long ----
+  private _dprCap = 1.5; // device tier ceiling (1 on mobile, 1.5 desktop)
+  private _dprScale = 1; // live multiplier, stepped by the frame-time governor
+  private _ftSmooth = 1 / 60; // exponentially-smoothed frame time (seconds)
+  private _adaptT = 0; // seconds since the governor last adjusted
   private scene = new THREE.Scene();
   private camera: THREE.OrthographicCamera;
   private viewSize = 15; // half-height of the orthographic view, in world units
@@ -213,10 +218,16 @@ class Game implements GameApi {
     this.camera.lookAt(0, 0, 0);
 
     // LOW-SPEC (mobile): cap pixel ratio harder, drop the heavy post stack
-    // (bloom + tilt-shift are the fill-rate hogs), and shrink the bullet cap —
-    // a phone GPU can't afford 140 additive tracers + full post.
+    // (bloom + tilt-shift are the fill-rate hogs), shrink the bullet cap — and
+    // DISABLE shadow maps entirely: the art passes added hundreds of casters,
+    // and re-rendering them into the shadow depth pass every frame is the
+    // single biggest mobile cost (the toy look holds up on ambient + hemi).
     const lowSpec = isTouchDevice();
-    if (lowSpec) this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1));
+    this._dprCap = lowSpec ? 1 : 1.5;
+    if (lowSpec) {
+      this.renderer.setPixelRatio(Math.min(devicePixelRatio, this._dprCap));
+      this.renderer.shadowMap.enabled = false;
+    }
 
     // Soft image-based ambient light — the key to the "soft 3D" cozy look.
     const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -1485,9 +1496,39 @@ class Game implements GameApi {
   }
 
   // ---- main loop ----
+  /** Apply the current adaptive DPR to the renderer + composer (rebuilds the
+   *  post-stack buffers at the new internal resolution). */
+  private applyPixelRatio() {
+    const pr = Math.min(devicePixelRatio, this._dprCap) * this._dprScale;
+    this.renderer.setPixelRatio(pr);
+    this.composer.setPixelRatio(pr);
+    this.composer.setSize(innerWidth, innerHeight);
+  }
+
+  /** Frame-time governor: if frames run long for a sustained stretch, step the
+   *  internal resolution down (to 55% min); recover slowly when there's
+   *  headroom. This is what keeps dense waves playable on phones. */
+  private governFrameBudget(dt: number) {
+    this._ftSmooth += (dt - this._ftSmooth) * 0.05;
+    this._adaptT += dt;
+    if (this._adaptT < 1.5) return; // adjust at most every 1.5s (no thrash)
+    if (this._ftSmooth > 0.026 && this._dprScale > 0.55) {
+      // sustained under ~38fps → drop internal res a step
+      this._dprScale = Math.max(0.55, this._dprScale - 0.15);
+      this.applyPixelRatio();
+      this._adaptT = 0;
+    } else if (this._ftSmooth < 0.0168 && this._dprScale < 1) {
+      // comfortable headroom → climb back gently
+      this._dprScale = Math.min(1, this._dprScale + 0.07);
+      this.applyPixelRatio();
+      this._adaptT = 0;
+    }
+  }
+
   private loop = () => {
     requestAnimationFrame(this.loop);
     let dt = Math.min(0.05, this.clock.getDelta());
+    this.governFrameBudget(dt);
 
     if (this.input.pressed("KeyP") || this.input.pressed("Escape")) {
       if (this.state === "playing") this.state = "paused";
