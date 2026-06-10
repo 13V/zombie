@@ -1804,3 +1804,49 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 }
 #overlay-over .over-buttons { margin-top: 18px; }
 #overlay-over .over-buttons .play { border-radius: 16px; background: linear-gradient(180deg, var(--gold2), #e0a635); }
+
+/* ============================================================
+   LEVEL-UP picker — mobile layout (compact row cards that fit)
+   On phones the 3 tall cards overflowed + forced scrolling. Here
+   each card becomes a horizontal row (icon | name/desc/stats) via
+   grid, so all three + the header + reroll fit one screen.
+   ============================================================ */
+@media (max-width: 560px) {
+  #overlay-levelup { padding: 14px 12px; justify-content: center; gap: 8px; }
+  .lvl-title { font-size: 30px; margin: 0; }
+  .lvl-num { font-size: 16px; }
+  .lvl-sub { font-size: 11.5px; margin-top: 2px; }
+  .lvl-foot { margin-top: 12px; }
+
+  .cards {
+    flex-direction: column; flex-wrap: nowrap;
+    gap: 10px; margin-top: 12px; width: 100%;
+    perspective: none; align-items: stretch;
+  }
+  .card {
+    width: 100%; min-height: 0;
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    column-gap: 12px; row-gap: 1px;
+    align-items: center;
+    padding: 12px 14px;
+    text-align: left;
+    /* gentle slide-in instead of the 3D flip (no perspective on mobile) */
+    animation: deal-row 0.32s backwards cubic-bezier(0.2,1,0.4,1);
+    animation-delay: calc(var(--i) * 0.07s);
+  }
+  @keyframes deal-row { 0% { transform: translateX(-18px); opacity: 0; } 100% { transform: none; opacity: 1; } }
+  .card:hover { transform: none; } /* no lift on touch */
+  .card:active { transform: scale(0.98); }
+  .card .c-icon {
+    grid-column: 1; grid-row: 1 / span 3;
+    font-size: 34px; margin: 0; align-self: center; justify-self: center;
+  }
+  .card .c-name { grid-column: 2; text-align: left; font-size: 17px; }
+  .card .c-desc { grid-column: 2; text-align: left; font-size: 11.5px; }
+  .card .c-stats { grid-column: 2; flex-direction: row; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .card .c-stat { font-size: 10.5px; padding: 2px 7px; }
+  /* keep the tier ribbon, drop the number-key badge on touch (you tap) */
+  .card .c-key { display: none; }
+  .card .c-tier { font-size: 8px; padding: 3px 9px; }
+}
