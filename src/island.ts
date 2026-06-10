@@ -843,6 +843,29 @@ export class Island {
   /** Big layered rock outcrops near the shore — a craggy skyline that frames the
    *  village like the cliffs in the reference (placed behind the tree band). */
   private buildBackdrop() {
+    // A big inward-facing GRADIENT SKY DOME so the lobby reads as a warm dusk
+    // bowl instead of a flat fill — peach at the horizon melting up to soft
+    // lavender, dusky plum below. Vertex-colour gradient (no shader), unlit,
+    // fog-exempt, drawn first behind everything.
+    {
+      const geo = new THREE.SphereGeometry(220, 24, 16);
+      const pos = geo.attributes.position as THREE.BufferAttribute;
+      const colors = new Float32Array(pos.count * 3);
+      const cZen = new THREE.Color(0xcdb6e6), cHor = new THREE.Color(0xfbcd9a), cGnd = new THREE.Color(0xb89ab2);
+      const c = new THREE.Color();
+      for (let i = 0; i < pos.count; i++) {
+        const h = pos.getY(i) / 220; // -1 ground .. +1 zenith
+        if (h >= 0) c.copy(cHor).lerp(cZen, Math.pow(h, 0.7));
+        else c.copy(cHor).lerp(cGnd, Math.min(1, -h * 1.4));
+        colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+      }
+      geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      const dome = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, toneMapped: false, depthWrite: false }));
+      dome.renderOrder = -10;
+      dome.userData.noCast = true;
+      this.group.add(dome);
+    }
+
     const tones = [VOX.rock, VOX.rockDark, VOX.stone, VOX.stoneDark, 0x8a8d86];
     let seed = 24680;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
