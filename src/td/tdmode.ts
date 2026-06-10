@@ -15,6 +15,14 @@ import {
 import { TdFx } from "./tdfx";
 import { TdHud, type TdHudState } from "./tdhud";
 import { TdAudio } from "./tdaudio";
+import type { TdDailyMods } from "./tddaily";
+
+/** Entry options: endless keeps waves coming past TD_TOTAL_WAVES (score = wave
+ *  reached); daily layers the day's seeded modifier on top of endless. */
+export interface TdEnterOpts {
+  endless?: boolean;
+  daily?: TdDailyMods;
+}
 
 export type TdGameMode = "solo" | "duel";
 
@@ -82,6 +90,9 @@ export class TdMode {
   private audio = new TdAudio();
   private ghost?: THREE.Group;  // translucent build preview at the nearest empty pad
   wave = 0;
+  /** Waves fully cleared this session (cross-mode daily-quest metric). */
+  wavesCleared = 0;
+  private opts: TdEnterOpts = {};
   private _tAnim = 0; // animation clock for turret idle motion
   private _shakeImpulse = 0; // camera shake to hand to main (consumed each frame)
   private _hitStop = 0;      // brief freeze request to hand to main (consumed each frame)
@@ -120,6 +131,18 @@ export class TdMode {
   private addGold(n: number) { if (this.mode === "duel" && this.duel) this.duel.playerGold += n; else this.soloGold += n; }
   private spendGold(n: number) { this.addGold(-n); }
 
+  /** Layer the daily modifier (if any) onto a creep about to spawn. */
+  private applyDailyMods(spec: TdSpawnSpec): TdSpawnSpec {
+    const d = this.opts.daily;
+    if (!d) return spec;
+    return {
+      ...spec,
+      hp: Math.max(1, Math.round(spec.hp * d.hpMul)),
+      speed: spec.speed * d.speedMul,
+      bounty: Math.max(1, Math.round(spec.bounty * d.bountyMul)),
+    };
+  }
+
   /** Camera-shake impulse accrued since last frame (main applies + decays it). */
   consumeShake(): number { const s = this._shakeImpulse; this._shakeImpulse = 0; return s; }
   /** Base health fraction (0..1) for the shield dome. */
@@ -128,17 +151,19 @@ export class TdMode {
     return Math.max(0, this.soloLives / TD_START_LIVES);
   }
 
-  enter(mode: TdGameMode = "solo") {
+  enter(mode: TdGameMode = "solo", opts: TdEnterOpts = {}) {
     if (this.active) return;
     this.active = true;
     this.mode = mode;
+    this.opts = opts;
     this.result = { over: false, win: false };
     this.map.setVisible(true);
-    this.soloGold = TD_START_GOLD;
+    this.soloGold = Math.round(TD_START_GOLD * (opts.daily?.goldStartMul ?? 1));
     this.soloLives = TD_START_LIVES;
     this.duel = mode === "duel" ? duelInit() : undefined;
     this.pendingBotSends = [];
     this.wave = 0;
+    this.wavesCleared = 0;
     this._ended = false;
     this.spawnQueue = [];
     this.spawnTimer = 0;
@@ -146,7 +171,11 @@ export class TdMode {
     this.nextWaveIn = NEXT_WAVE_DELAY;
     this.vfx = new TdFx(this.scene);
     this.buildHud();
-    this.ui?.banner(mode === "duel" ? "1v1 DUEL" : "TOWER DEFENSE");
+    this.ui?.banner(
+      opts.daily ? `DAILY — ${opts.daily.name}` :
+      mode === "duel" ? "1v1 DUEL" :
+      opts.endless ? "ENDLESS" : "TOWER DEFENSE",
+    );
   }
 
   leave() {
@@ -317,7 +346,7 @@ export class TdMode {
     } else {
       this.spawnTimer -= dt;
       if (this.spawnTimer <= 0 && this.spawnQueue.length) {
-        this.creeps.spawn(this.spawnQueue.shift()!);
+        this.creeps.spawn(this.applyDailyMods(this.spawnQueue.shift()!));
         this.spawnTimer = spawnInterval(this.wave);
       }
     }
@@ -355,6 +384,7 @@ export class TdMode {
     // wave cleared?
     if (!this.betweenWaves && this.spawnQueue.length === 0 && this.creeps.count === 0) {
       this.map.setBossMood(false); // clear the boss haze once the wave is down
+      this.wavesCleared++;
       if (this.mode === "duel" && this.duel) {
         this.pendingBotSends = duelEndWave(this.duel, this.duelDifficulty);
         if (this.duel.over) this.result = { over: true, win: this.duel.win };
@@ -363,7 +393,8 @@ export class TdMode {
         const bonus = waveClearBonus(this.wave);
         this.addGold(bonus);
         this.vfx.floatText(new THREE.Vector3(TD_GOAL.x, 3, TD_GOAL.z), `+${bonus}g`, 0xffd24a);
-        if (this.wave >= TD_TOTAL_WAVES) this.result = { over: true, win: true };
+        // endless (and daily) runs never "win" — the score is the wave you fall on
+        if (!this.opts.endless && this.wave >= TD_TOTAL_WAVES) this.result = { over: true, win: true };
         else { this.betweenWaves = true; this.nextWaveIn = NEXT_WAVE_DELAY; }
       }
     }
@@ -741,7 +772,8 @@ export class TdMode {
       };
     }
     return {
-      mode: "solo", gold: Math.floor(this.soloGold), wave: this.wave, totalWaves: TD_TOTAL_WAVES,
+      mode: "solo", gold: Math.floor(this.soloGold), wave: this.wave,
+      totalWaves: this.opts.endless ? undefined : TD_TOTAL_WAVES, // endless shows a bare wave count
       betweenWaves: this.betweenWaves, earlyCallBonus: this.earlyCallBonus(), lives: this.soloLives,
       over: this.result.over, win: this.result.win,
     };

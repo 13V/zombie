@@ -253,3 +253,19 @@ test("dailyRows reports clamped progress, done + claimed flags", () => {
   assert.equal(cull.done, false);
   assert.equal(cull.claimed, false);
 });
+
+// ──────────────────────────── daily board deal ────────────────────────────
+
+test("questsForDay deals a deterministic 3-quest board that rotates by day", async () => {
+  const { questsForDay } = await import("../src/idle.ts");
+  const day = 20_600;
+  const a = questsForDay(day).map((q) => q.id);
+  const b = questsForDay(day).map((q) => q.id);
+  assert.deepEqual(a, b, "same day → same board");
+  assert.equal(a.length, 3);
+  assert.equal(new Set(a).size, 3, "no duplicate quests on a board");
+  // boards differ across a week (rotation actually happens)
+  const week = new Set<string>();
+  for (let d = 0; d < 7; d++) week.add(questsForDay(day + d).map((q) => q.id).join(","));
+  assert.ok(week.size > 1, "boards rotate across days");
+});

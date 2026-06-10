@@ -34,16 +34,19 @@ import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageN
 import { EGGS, findEgg, rollEgg, eggOdds } from "./gacha";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData, recordScore } from "./save";
-import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows } from "./idle";
+import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows, questsForDay, type DailyMetrics } from "./idle";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
 import { SKINS, findSkin } from "./cosmetics";
 import { skinThumbnail } from "./skinthumb";
 import { skinTexture } from "./skintex";
 import { BedWarsMode } from "./bedwars/bwmode";
-import { TdMode } from "./td/tdmode";
+import { TdMode, type TdEnterOpts } from "./td/tdmode";
 import { TD_TOWER_IDS } from "./td/tdtowers";
 import { duelSendById } from "./td/tdduel";
+import { tdDailyDay, tdDailyMods, tdDailyAvailable } from "./td/tddaily";
+import { createWager, resolveWager, wagerPayout, WAGER_STAKES, type Wager } from "./wager";
+import { Music } from "./music";
 import { makeItem, rollRarity, rollRarityPity, resetPity, rarityColorHex, RARITIES, LootItem } from "./loot";
 import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, AffixCode, warmServer, getServerUrl, setServerUrl } from "./net";
@@ -151,6 +154,9 @@ class Game implements GameApi {
   private td?: TdMode;       // Tower-Defense mode controller (lazy)
   private _tdEndTimer = 0;   // countdown after a TD run ends, then return to hub
   private _tdFreeze = 0;     // TD hit-stop timer (briefly slows the sim on big hits)
+  private _tdWager: Wager | null = null; // live gold wager on the current duel
+  private _tdIsDaily = false; // current TD run is today's Daily Challenge
+  private music = new Music(); // generative lofi soundtrack (per-mode moods)
 
   // multiplayer (undefined = single-player)
   private net?: NetClient;
@@ -277,6 +283,7 @@ class Game implements GameApi {
     addEventListener("pointerdown", unlock, { once: true });
     addEventListener("keydown", unlock, { once: true });
     this.audio.setEnabled(!this.save.muted);
+    this.music.setEnabled(!this.save.muted);
 
     // Menu progression UI (best run + Essence shop) + equipped cosmetic skin.
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
@@ -994,6 +1001,7 @@ class Game implements GameApi {
     this.hud.hideGameOver();
     this._runGoldStart = this.save.goldEarned; // baseline for the daily "earn gold" quest
     this.camZoomTarget = 1; // reset hub zoom-out for the run
+    this.music.play("zombies"); // dark ambient under the arena
     this.state = "playing";
     // Co-op difficulty: scale by player count (host + guests). Refreshed each
     // frame in simulate() so a mid-run join ramps difficulty at the next round.
@@ -1494,6 +1502,7 @@ class Game implements GameApi {
     if (this.input.pressed("KeyM")) {
       this.audio.setEnabled(!this.audio.enabled);
       this.save.muted = !this.audio.enabled;
+      this.music.setEnabled(!this.save.muted); // music follows the master mute
       writeSave(this.save);
     }
 
@@ -1580,6 +1589,7 @@ class Game implements GameApi {
     this.activeSlot = 0;
     this.bullets.clear();
     this._bwEndTimer = 0;
+    this.music.play("td"); // the calm-focused mood suits Bed Wars too
     this.bw.enter();
     this.player.pos.copy(this.bw.spawn());
     this.player.group.position.copy(this.player.pos);
@@ -1597,9 +1607,42 @@ class Game implements GameApi {
   }
 
   /** Enter Tower-Defense: hide hub/arena, load the TD field; you're the engineer
-   *  who walks between pads raising towers while waves march your lane. */
-  private enterTd(mode: "solo" | "duel" = "solo") {
+   *  who walks between pads raising towers while waves march your lane.
+   *  Variants: solo (18 waves) · duel (vs AI) · endless · daily (seeded, one
+   *  attempt/day) · wager (a gold-staked duel — 90% of the pot to the winner). */
+  private enterTd(kind: "solo" | "duel" | "endless" | "daily" | "wager" = "solo") {
     if (!this.td) this.td = new TdMode(this.scene);
+    this._tdIsDaily = false;
+    this._tdWager = null;
+    let mode: "solo" | "duel" = "solo";
+    let opts: TdEnterOpts = {};
+    if (kind === "duel") mode = "duel";
+    else if (kind === "endless") opts = { endless: true };
+    else if (kind === "daily") {
+      const today = tdDailyDay();
+      if (!tdDailyAvailable(this.save.tdDailyDay, today)) {
+        this.hud.toast(`🗓 Daily done — wave ${this.save.tdDailyWave}. New challenge at midnight UTC!`);
+        return;
+      }
+      // the attempt is consumed on ENTRY (no retry-scumming via refresh)
+      this.save.tdDailyDay = today;
+      this.save.tdDailyWave = 0;
+      writeSave(this.save);
+      this._tdIsDaily = true;
+      opts = { endless: true, daily: tdDailyMods(today) };
+    } else if (kind === "wager") {
+      const stake = WAGER_STAKES[1]; // 250g table for v1
+      if (this.save.gold < stake) {
+        this.hud.toast(`Need ${stake} 🪙 to sit at the wager table`);
+        return;
+      }
+      // stake leaves your balance NOW and lives in the locked pot
+      this.save.gold -= stake;
+      writeSave(this.save);
+      this._tdWager = createWager(stake, "you", "treasury-bot");
+      mode = "duel";
+      this.hud.toast(`💰 ${stake}g staked — win the duel for ${wagerPayout(stake)}g`);
+    }
     this.disconnectIslandPresence();
     this.island.setVisible(false);
     this.arena.group.visible = false;
@@ -1613,19 +1656,57 @@ class Game implements GameApi {
     this.weapons = [];                // no personal weapon — your towers do the shooting
     this.bullets.clear();
     this._tdEndTimer = 0;
-    this.td.enter(mode);
+    this.td.enter(mode, opts);
     this.player.pos.copy(this.td.spawn());
     this.player.group.position.copy(this.player.pos);
     this.camZoomTarget = 2.2;         // pull back to read the whole lane
     this.applyPlayerSkin();
     this.spawnPets();
+    this.music.play("td");
     this.state = "td";
   }
 
   private leaveTd() {
+    this.settleTdSession();
     this.td?.leave();
     this.hud.hidePrompt();
     this.enterIsland();
+  }
+
+  /** Fold the finished TD session into persistence: best-wave record, the daily
+   *  score, cross-mode quest progress, and any unsettled wager (leaving a
+   *  wagered duel mid-match is a FORFEIT — anti rage-quit). */
+  private settleTdSession() {
+    const td = this.td;
+    if (!td) return;
+    // wager: settle if the duel ended; forfeit if the player bailed mid-match
+    if (this._tdWager) {
+      const won = td.result.over && td.result.win;
+      const r = resolveWager(this._tdWager, won ? "you" : "treasury-bot");
+      if (won) {
+        this.save.gold += r.payout;
+        this.save.goldEarned += r.payout;
+        this.hud.toast(`💰 Wager won  +${r.payout} 🪙 (treasury kept ${r.fee})`);
+      } else {
+        this.hud.toast(td.result.over ? `💸 Wager lost — ${this._tdWager.stake} 🪙 to the pot` : "💸 Left the table — stake forfeited");
+      }
+      this._tdWager = null;
+    }
+    // endless/daily score: the wave you fell on (or cleared up to)
+    const reached = Math.max(td.wavesCleared, td.result.over ? td.wave : Math.max(0, td.wave - 1));
+    if (reached > this.save.bestWave) {
+      this.save.bestWave = reached;
+      this.hud.toast(`🌊 New best — wave ${reached}!`);
+    }
+    if (this._tdIsDaily) {
+      this.save.tdDailyWave = Math.max(this.save.tdDailyWave, reached);
+      this._tdIsDaily = false;
+    }
+    // cross-mode daily quests: TD waves + duel wins
+    this.applyQuestProgress({
+      waves: td.wavesCleared,
+      duels: td.mode === "duel" && td.result.over && td.result.win ? 1 : 0,
+    });
   }
 
   /** Walk the engineer, build/upgrade/sell at pads, call waves, run the loop. */
@@ -1803,6 +1884,7 @@ class Game implements GameApi {
   /** Enter the island hub: hide the arena, show the island, drop the player in. */
   private enterIsland() {
     this.teardownNet();
+    this.music.play("hub"); // warm lofi for the lobby
     this.state = "island";
     this.hud.hideStart();
     this.hud.hideGameOver();
@@ -1996,8 +2078,15 @@ class Game implements GameApi {
     } else if (near?.kind === "td") {
       // Tower Defense portal offers two modes: E = Solo, 2 = 1v1 Duel.
       this.hud.hideEggPanel();
-      this.hud.showPrompt("Tower Defense —  E: Solo   ·   2: 1v1 Duel", true);
+      const dailyDone = !tdDailyAvailable(this.save.tdDailyDay, tdDailyDay());
+      this.hud.showPrompt(
+        `Tower Defense —  E: Solo · 2: Duel · 3: Endless (best ${this.save.bestWave}) · 4: Daily${dailyDone ? " ✓" : ""} · 5: Wager ${WAGER_STAKES[1]}g`,
+        true,
+      );
       if (this.input.pressed("Digit2")) { this.enterTd("duel"); return; }
+      if (this.input.pressed("Digit3")) { this.enterTd("endless"); return; }
+      if (this.input.pressed("Digit4")) { this.enterTd("daily"); return; }
+      if (this.input.pressed("Digit5")) { this.enterTd("wager"); return; }
     } else {
       this.hud.hideEggPanel();
       if (near) this.hud.showPrompt(near.label + "  [E]", true);
@@ -2074,6 +2163,7 @@ class Game implements GameApi {
     const rarity = (pet.rarity ?? "common") as Rarity;
     const rarityIdx = Math.max(0, RARITY_ORDER.indexOf(rarity));
     this.portalBurst(this.player.pos);
+    this.applyQuestProgress({ hatches: 1 }); // cross-mode daily-quest metric
     // In-world celebration everyone can see (+ broadcast it to the lobby).
     this.hatchCelebration(this.player.pos.x, this.player.pos.z, rarityIdx, shiny, pet.id, false);
     this.islandNet?.sendHatch(pet.id, rarityIdx, shiny);
@@ -2765,20 +2855,28 @@ class Game implements GameApi {
     this.hud.setStreak(this.save.streak.count, this.save.streak.freezes);
   }
 
+  /** The 3 quests dealt for the current board's day (seeded, cross-mode). */
+  private todaysQuests() {
+    return questsForDay(this.save.daily.dayUtc);
+  }
+
   private refreshDailyUi() {
-    this.hud.showDailies(dailyRows(this.save.daily));
+    this.hud.showDailies(dailyRows(this.save.daily, this.todaysQuests()));
   }
 
   /** Run-settle: fold this run's deltas (1 run, kills, gold) into the daily
    *  board, pay out any newly-finished quests, and refresh the board. */
   private settleDailies() {
     const runGold = Math.max(0, this.save.goldEarned - this._runGoldStart);
-    this.save.daily = applyDailyProgress(this.save.daily, {
-      runs: 1,
-      kills: this.runStats.kills,
-      gold: runGold,
-    });
-    const done = settleDaily(this.save.daily);
+    this.applyQuestProgress({ runs: 1, kills: this.runStats.kills, gold: runGold });
+  }
+
+  /** Fold cross-mode metric deltas (zombies runs, TD waves/duels, egg hatches)
+   *  into today's quest board and pay any newly-finished quests. */
+  private applyQuestProgress(metrics: DailyMetrics) {
+    const quests = this.todaysQuests();
+    this.save.daily = applyDailyProgress(this.save.daily, metrics, quests);
+    const done = settleDaily(this.save.daily, quests);
     this.save.daily = done.daily;
     if (done.gold > 0 || done.essence > 0) {
       this.save.gold += done.gold;
@@ -2787,6 +2885,7 @@ class Game implements GameApi {
       this.hud.toast(`Daily complete  +${done.gold} 🪙 +${done.essence} ✦`);
     }
     this.refreshDailyUi();
+    writeSave(this.save);
   }
 
   /** Roll any newly-earned gold (goldEarned delta) into lifetimeGold — the

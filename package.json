@@ -24,8 +24,10 @@
     "test:tdtowers": "node --test --experimental-strip-types test/tdtowers.test.ts",
     "test:tdwaves": "node --test --experimental-strip-types test/tdwaves.test.ts",
     "test:tdduel": "node --import ./test/resolve-hook.mjs --test --experimental-transform-types test/tdduel.test.ts",
+    "test:tddaily": "node --test --experimental-strip-types test/tddaily.test.ts",
+    "test:wager": "node --test --experimental-strip-types test/wager.test.ts",
     "test:hublayout": "node --test --experimental-strip-types test/hublayout.test.ts",
-    "test": "npm run test:rating && npm run test:save && npm run test:house && npm run test:rounds && npm run test:island && npm run test:idle && npm run test:build && npm run test:gacha && npm run test:bwshop && npm run test:bwresources && npm run test:bwteams && npm run test:bwupgrades && npm run test:tdpath && npm run test:tdtowers && npm run test:tdwaves && npm run test:tdduel && npm run test:hublayout",
+    "test": "npm run test:rating && npm run test:save && npm run test:house && npm run test:rounds && npm run test:island && npm run test:idle && npm run test:build && npm run test:gacha && npm run test:bwshop && npm run test:bwresources && npm run test:bwteams && npm run test:bwupgrades && npm run test:tdpath && npm run test:tdtowers && npm run test:tdwaves && npm run test:tdduel && npm run test:tddaily && npm run test:wager && npm run test:hublayout",
     "test:build": "node --import ./test/resolve-hook.mjs --test --experimental-transform-types test/build.test.ts"
   },
   "devDependencies": {

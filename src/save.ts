@@ -69,6 +69,9 @@ export interface SaveData {
   goldEarned: number; // lifetime gold earned (stats / future token bridge)
   bestRound: number;
   bestScore: number;
+  bestWave: number; // best Tower-Defense wave reached (endless leaderboard basis)
+  tdDailyDay: number; // UTC day-bucket of the last TD Daily Challenge attempt
+  tdDailyWave: number; // wave reached on that attempt (today's score)
   scores: ScoreEntry[]; // personal leaderboard: top runs (round desc, score desc)
   owned: string[]; // purchased meta-upgrade ids
   skins: string[]; // unlocked cosmetic skin ids
@@ -117,6 +120,9 @@ function blank(): SaveData {
     goldEarned: 0,
     bestRound: 0,
     bestScore: 0,
+    bestWave: 0,
+    tdDailyDay: 0,
+    tdDailyWave: 0,
     scores: [],
     owned: [],
     skins: ["classic"],
@@ -250,6 +256,9 @@ export function loadSave(): SaveData {
       goldEarned: num(data.goldEarned),
       bestRound: num(data.bestRound),
       bestScore: num(data.bestScore),
+      bestWave: num(data.bestWave),
+      tdDailyDay: num(data.tdDailyDay),
+      tdDailyWave: num(data.tdDailyWave),
       scores: sanitizeScores(data.scores),
       owned: strArray(data.owned),
       skins: skins.length ? skins : ["classic"],

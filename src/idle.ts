@@ -176,11 +176,28 @@ export interface DailyRow {
   claimed: boolean; // reward already paid
 }
 
+/** Today's quest board: a seeded 3-of-the-pool deal so the board rotates daily
+ *  and pulls the player across modes (zombies / TD / eggs). Deterministic per
+ *  UTC day, so every call (and every device) agrees on the same board. */
+export function questsForDay(today: number, pool: DailyQuestDef[] = DAILY_QUESTS): DailyQuestDef[] {
+  if (pool.length <= 3) return pool;
+  // tiny LCG seeded by the day bucket — same shuffle for the whole day
+  let seed = (today * 2654435761) >>> 0 || 1;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const deck = [...pool];
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck.slice(0, 3);
+}
+
 /** Add this run's deltas onto the daily board's progress (pure — returns a new
  *  progress map). `metrics` maps a quest metric -> amount earned this run. */
+export type DailyMetrics = Partial<Record<DailyQuestDef["metric"], number>>;
 export function applyDailyProgress(
   prev: DailyState,
-  metrics: { runs?: number; kills?: number; gold?: number },
+  metrics: DailyMetrics,
   quests: DailyQuestDef[] = DAILY_QUESTS,
 ): DailyState {
   const progress: Record<string, number> = { ...prev.progress };

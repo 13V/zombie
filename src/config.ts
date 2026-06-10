@@ -266,20 +266,28 @@ export const STREAK = {
 };
 
 /** A finishable daily quest. `metric` keys into the run/lifetime delta settled
- *  at run-end (see main.ts settleDaily). All rewards are soft gold/essence. */
+ *  at run-end (see main.ts settleDaily). All rewards are soft gold/essence.
+ *  Metrics span every mode so the board pulls players across the whole game:
+ *  runs/kills/gold = zombies, waves/duels = Tower Defense, hatches = eggs. */
 export interface DailyQuestDef {
   id: string;
   name: string;
-  metric: "runs" | "kills" | "gold";
+  metric: "runs" | "kills" | "gold" | "waves" | "hatches" | "duels";
   goal: number;
   gold: number;
   essence: number;
 }
 
+/** The full quest pool — `questsForDay` (idle.ts) deals 3 of these per UTC day
+ *  so the board rotates and touches different modes through the week. */
 export const DAILY_QUESTS: DailyQuestDef[] = [
-  { id: "play", name: "Do 1 run", metric: "runs", goal: 1, gold: 150, essence: 3 },
+  { id: "play", name: "Do 1 zombies run", metric: "runs", goal: 1, gold: 150, essence: 3 },
   { id: "cull", name: "Kill 200 zombies", metric: "kills", goal: 200, gold: 250, essence: 5 },
   { id: "earn", name: "Earn 500 gold", metric: "gold", goal: 500, gold: 200, essence: 4 },
+  { id: "waves", name: "Clear 12 TD waves", metric: "waves", goal: 12, gold: 250, essence: 5 },
+  { id: "defend", name: "Clear 25 TD waves", metric: "waves", goal: 25, gold: 450, essence: 8 },
+  { id: "duelist", name: "Win a 1v1 TD Duel", metric: "duels", goal: 1, gold: 350, essence: 6 },
+  { id: "hatch", name: "Hatch 2 eggs", metric: "hatches", goal: 2, gold: 200, essence: 4 },
 ];
 
 // ── SPECIAL ROUNDS & DIFFICULTY ──
