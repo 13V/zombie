@@ -103,8 +103,26 @@ export const VOX = {
   pebbleDark: 0x97978c,
 };
 
+// ── MATERIAL TIER ───────────────────────────────────────────────────────────
+// Mobile GPUs have been the FPS bottleneck since day one: every voxel in the
+// game ran a full PBR (MeshStandardMaterial + IBL env map) fragment shader.
+// On coarse-pointer/no-hover devices we swap the whole palette to Lambert —
+// on flat-shaded boxes the look is essentially identical (per-face normals
+// drive the same diffuse term) at a fraction of the per-pixel cost, and it
+// skips env-map sampling entirely (main.ts adds a warm AmbientLight to stand
+// in for the lost IBL fill). matchMedia-guarded so node (test) imports work.
+// Lambert shares the color/emissive/map/flatShading surface callers use, so
+// it's returned under the Standard type (duck-type compatible at runtime).
+const LOW_TIER =
+  typeof matchMedia === "function"
+    ? matchMedia("(pointer: coarse)").matches && matchMedia("(hover: none)").matches
+    : false;
+
 /** Matte, flat-shaded material for voxel blocks (crisp per-face shading). */
 export function voxelMaterial(color: number) {
+  if (LOW_TIER) {
+    return new THREE.MeshLambertMaterial({ color, flatShading: true }) as unknown as THREE.MeshStandardMaterial;
+  }
   return new THREE.MeshStandardMaterial({
     color,
     roughness: 0.92,
@@ -115,6 +133,13 @@ export function voxelMaterial(color: number) {
 
 /** Soft, slightly matte material — the toy-plastic look. */
 export function toyMaterial(color: number, opts: { emissive?: number; emissiveIntensity?: number } = {}) {
+  if (LOW_TIER) {
+    return new THREE.MeshLambertMaterial({
+      color,
+      emissive: opts.emissive ?? 0x000000,
+      emissiveIntensity: opts.emissiveIntensity ?? 1,
+    }) as unknown as THREE.MeshStandardMaterial;
+  }
   return new THREE.MeshStandardMaterial({
     color,
     roughness: 0.78,
@@ -127,6 +152,13 @@ export function toyMaterial(color: number, opts: { emissive?: number; emissiveIn
 
 /** Glowy accent material for interactables (picked up by bloom). */
 export function glowMaterial(color: number, intensity = 0.9) {
+  if (LOW_TIER) {
+    return new THREE.MeshLambertMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: intensity,
+    }) as unknown as THREE.MeshStandardMaterial;
+  }
   return new THREE.MeshStandardMaterial({
     color,
     roughness: 0.5,
@@ -139,6 +171,18 @@ export function glowMaterial(color: number, intensity = 0.9) {
 /** Translucent additive halo — for pet "aura" shells that must NOT hide the
  *  face/body they surround (a soft glow you can see straight through). */
 export function auraMaterial(color: number, intensity = 0.5) {
+  if (LOW_TIER) {
+    return new THREE.MeshLambertMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: intensity,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    }) as unknown as THREE.MeshStandardMaterial;
+  }
   return new THREE.MeshStandardMaterial({
     color,
     emissive: color,

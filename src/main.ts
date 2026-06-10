@@ -78,7 +78,7 @@ class Game implements GameApi {
   private _localAura?: THREE.Mesh; // my own lobby flex aura (attached to player.group)
   private _localPlate?: THREE.Sprite; // my own nameplate over my head in the hub
   private _lbAcc = 0; // throttle accumulator for the lobby leaderboard refresh
-  private composer: EffectComposer;
+  private composer?: EffectComposer; // post stack — absent on lowSpec (direct render)
   private clock = new THREE.Clock();
 
   private input: Input;
@@ -198,12 +198,21 @@ class Game implements GameApi {
     const canvas = document.getElementById("scene") as HTMLCanvasElement;
     const ui = document.getElementById("ui") as HTMLElement;
 
-    // antialias:false — SMAA in the composer handles edges; MSAA here would be
-    // redundant cost. Cap pixelRatio at 1.5: every post pass runs at this res,
-    // so fill-rate (not geometry) is the bottleneck on hi-dpi screens.
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
-    this.renderer.shadowMap.enabled = true;
+    // LOW-SPEC (mobile) is decided FIRST — it changes how the renderer itself
+    // is created. Mobile has struggled since day one because the full post
+    // pipeline (offscreen RenderPass + 3-pass SMAA + OutputPass blit) ran on
+    // phones too: ~5 full-screen passes/frame before drawing a single voxel.
+    // On lowSpec we now skip the composer entirely and render DIRECT with
+    // hardware MSAA (near-free on mobile tile GPUs), no shadow depth pass,
+    // and Lambert-tier materials (see palette.ts).
+    const lowSpec = isTouchDevice();
+    this._dprCap = lowSpec ? 1 : 1.5;
+
+    // Desktop: antialias:false — SMAA in the composer handles edges; MSAA here
+    // would be redundant cost. Mobile: MSAA is the AA (no SMAA).
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: lowSpec });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this._dprCap));
+    this.renderer.shadowMap.enabled = !lowSpec; // shadow pass is too hot for phones
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
@@ -217,41 +226,37 @@ class Game implements GameApi {
     this.camera.position.set(CAMERA.offset.x, CAMERA.offset.y, CAMERA.offset.z);
     this.camera.lookAt(0, 0, 0);
 
-    // LOW-SPEC (mobile): cap pixel ratio harder, drop the heavy post stack
-    // (bloom + tilt-shift are the fill-rate hogs), shrink the bullet cap — and
-    // DISABLE shadow maps entirely: the art passes added hundreds of casters,
-    // and re-rendering them into the shadow depth pass every frame is the
-    // single biggest mobile cost (the toy look holds up on ambient + hemi).
-    const lowSpec = isTouchDevice();
-    this._dprCap = lowSpec ? 1 : 1.5;
-    if (lowSpec) {
-      this.renderer.setPixelRatio(Math.min(devicePixelRatio, this._dprCap));
-      this.renderer.shadowMap.enabled = false;
-    }
-
     // Soft image-based ambient light — the key to the "soft 3D" cozy look.
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.5;
-
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
-    // Gentle bloom — only the brightest emissives glow. Half-res; skipped on mobile.
+    // Skipped on lowSpec: the Lambert-tier materials ignore the env map, so a
+    // plain warm ambient stands in for the lost IBL fill (much cheaper).
     if (!lowSpec) {
-      const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.16, 0.5, 0.92);
-      this.composer.addPass(bloom);
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      this.scene.environmentIntensity = 0.5;
+    } else {
+      this.scene.add(new THREE.AmbientLight(0xfff2e2, 0.45));
     }
-    // Tilt-shift: subtle miniature-diorama blur + grade. Two full-screen passes —
-    // skipped on mobile (biggest fill-rate win there).
+
+    // Desktop gets the full post stack; lowSpec renders DIRECT (no composer).
+    if (!lowSpec) {
+      this.composer = new EffectComposer(this.renderer);
+      this.composer.addPass(new RenderPass(this.scene, this.camera));
+    }
+    // Tilt-shift is built unconditionally (onResize touches it) but only ever
+    // added as passes on desktop.
     this.tilt = new TiltShift(innerWidth, innerHeight, {
       focus: 0.5, band: 0.42, strength: 1.8, vignette: 0.26, saturation: 1.08, warmth: 0.12,
     });
-    if (!lowSpec) {
+    if (this.composer) {
+      // Gentle bloom — only the brightest emissives glow. Half-res.
+      const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.16, 0.5, 0.92);
+      this.composer.addPass(bloom);
+      // Tilt-shift: subtle miniature-diorama blur + grade (two full-screen passes).
       this.composer.addPass(this.tilt.horizontal);
       this.composer.addPass(this.tilt.vertical);
+      this.composer.addPass(new SMAAPass(innerWidth, innerHeight));
+      this.composer.addPass(new OutputPass());
     }
-    this.composer.addPass(new SMAAPass(innerWidth, innerHeight));
-    this.composer.addPass(new OutputPass());
 
     this.input = new Input(canvas);
     if (isTouchDevice()) {
@@ -1501,8 +1506,8 @@ class Game implements GameApi {
   private applyPixelRatio() {
     const pr = Math.min(devicePixelRatio, this._dprCap) * this._dprScale;
     this.renderer.setPixelRatio(pr);
-    this.composer.setPixelRatio(pr);
-    this.composer.setSize(innerWidth, innerHeight);
+    this.composer?.setPixelRatio(pr);
+    this.composer?.setSize(innerWidth, innerHeight);
   }
 
   /** Frame-time governor: if frames run long for a sustained stretch, step the
@@ -1607,7 +1612,8 @@ class Game implements GameApi {
     this.floaters.update(dt);
     this.updateCamera(dt);
 
-    this.composer.render();
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera); // lowSpec: direct + MSAA
     this.input.endFrame();
   };
 
@@ -4046,7 +4052,7 @@ class Game implements GameApi {
   private onResize = () => {
     this.applyView();
     this.renderer.setSize(innerWidth, innerHeight);
-    this.composer.setSize(innerWidth, innerHeight);
+    this.composer?.setSize(innerWidth, innerHeight);
     this.tilt.setSize(innerWidth, innerHeight);
   };
 }
