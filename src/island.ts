@@ -2147,19 +2147,12 @@ export class Island {
   /** Warm lanterns lining the paths + the square, and braziers at the corners —
    *  the glow (with bloom) that gives the courtyard its cozy Hypixel mood. */
   private buildLighting() {
-    // lantern posts flanking each spoke path out to the gates
-    for (const g of GATES) {
-      const dir = g.pos.clone().normalize();
-      const perp = new THREE.Vector3(-dir.z, 0, dir.x);
-      for (let r = PLAZA_R - 1; r <= g.pos.length() - 2.2; r += 3.0) {
-        for (const side of [-1, 1]) {
-          const p = dir.clone().multiplyScalar(r).add(perp.clone().multiplyScalar(side * 2.0));
-          const lan = this.makeLantern();
-          lan.position.set(p.x, 0, p.z);
-          this.group.add(lan);
-        }
-      }
-    }
+    // NOTE: the old spoke-path lanterns were removed — the mode "gates" now live
+    // on the far ZOMBIES satellite (~58u out), so that loop was marching ~90
+    // lanterns across the whole lawn toward it (and the spoke paths it lit were
+    // replaced by bridges, which carry their own torches). The courtyard glow is
+    // the kerb ring + fountain braziers below.
+
     // a ring of lanterns just inside the kerb
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2 + 0.26;
