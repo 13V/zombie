@@ -166,6 +166,25 @@ export class Island {
   private chestGlow?: THREE.Mesh; // daily chest glow (pulses while claimable)
   private wardrobeMannequin?: THREE.Mesh; // rotating wardrobe dummy
   private smokes: Mote[] = []; // chimney smoke puffs (reuse the Mote drift record)
+  // ---- village & shore life (new dressing; every record updated allocation-free) ----
+  private koiGroup?: THREE.Group; // orange koi circling the fountain pool
+  private coinMat?: THREE.MeshStandardMaterial; // wishing-coins glint (shared)
+  private poolMat?: THREE.MeshStandardMaterial; // warm lamp-pool glow (shared)
+  private fireflyMat?: THREE.MeshStandardMaterial; // firefly flicker (shared)
+  private veils: { mesh: THREE.Mesh; phase: number }[] = []; // cascading water sheets
+  private gulls: { group: THREE.Group; wingL: THREE.Mesh; wingR: THREE.Mesh; phase: number; speed: number; r: number; h: number; cx: number; cz: number }[] = [];
+  private fishes: { root: THREE.Group; body: THREE.Mesh; splash: THREE.Mesh; phase: number; baseX: number; baseZ: number; dirX: number; dirZ: number }[] = [];
+  private boats: { group: THREE.Group; phase: number }[] = [];
+  private drifts: { mesh: THREE.Mesh; phase: number; baseX: number; baseZ: number }[] = [];
+  private buntings: { flags: THREE.Mesh[]; phase: number }[] = []; // bunting + washing lines
+  private butterflies: { group: THREE.Group; wingL: THREE.Mesh; wingR: THREE.Mesh; phase: number; baseX: number; baseY: number; baseZ: number }[] = [];
+  private eggHalos: { mesh: THREE.Mesh; phase: number }[] = []; // tilted shimmer rings
+  private sanctuarySparkles?: THREE.Group; // counter-orbiting sparkle ring
+  private fireflies?: THREE.InstancedMesh;
+  private fireflyBase: Float32Array = new Float32Array(0); // [x, y, z, phase] per firefly
+  private fallingLeaves?: THREE.InstancedMesh;
+  private leafBase: Float32Array = new Float32Array(0); // [x, z, phase, speed] per leaf
+  private readonly _dummy = new THREE.Object3D(); // scratch transform for instancing
   // warm golden-hour mood — applied to the shared scene only while the hub shows
   private scene: THREE.Scene;
   private savedFog: THREE.Scene["fog"] = null;
@@ -197,6 +216,14 @@ export class Island {
     this.buildGreeter();
     this.buildAtmosphere();
     this.buildSigns();
+    // ---- the polish pass: village life, shore life, shrine glow layering ----
+    this.buildPlazaRings();
+    this.buildFountainExtras();
+    this.buildShoreLife();
+    this.buildVillageDress();
+    this.buildSatelliteDress();
+    this.buildShrinePolish();
+    this.buildAmbientLife();
     this.buildMoodLights();
     this.applyShadows();
     scene.add(this.group);
@@ -338,6 +365,7 @@ export class Island {
     this.animateFlames();
     this.animateBanners();
     this.animateAtmosphere(dt);
+    this.animateLife(dt);
   }
 
   // ========================================================================
@@ -460,6 +488,104 @@ export class Island {
       const sc = 1 + f * 1.4;
       s.mesh.scale.setScalar(sc);
       (s.mesh.material as THREE.MeshStandardMaterial).opacity = 0.5 * (1 - Math.max(0, f));
+    }
+  }
+
+  /** All the NEW ambient life — koi, gulls, fish jumps, the rowboat, bunting,
+   *  butterflies, fireflies & falling leaves (instanced), and the shrine halos.
+   *  Pure math over prebuilt registries: zero allocation per frame. */
+  private animateLife(dt: number) {
+    const t = this.t;
+    if (this.koiGroup) this.koiGroup.rotation.y -= dt * 0.45; // koi lap the pool
+    if (this.coinMat) this.coinMat.emissiveIntensity = 0.7 + (Math.sin(t * 2.1) + 1) * 0.45;
+    if (this.poolMat) this.poolMat.opacity = 0.15 + (Math.sin(t * 1.6) + 1) * 0.035;
+    // cascading water sheets shimmer between the fountain tiers
+    for (const v of this.veils) {
+      (v.mesh.material as THREE.MeshStandardMaterial).opacity = 0.14 + (Math.sin(t * 2.6 + v.phase) + 1) * 0.07;
+      v.mesh.rotation.y += dt * 0.5;
+    }
+    // gulls wheel over the bay on big lazy circles, banking into the turn
+    for (const g of this.gulls) {
+      const a = t * g.speed + g.phase;
+      g.group.position.set(g.cx + Math.cos(a) * g.r, g.h + Math.sin(t * 0.9 + g.phase) * 0.8, g.cz + Math.sin(a) * g.r);
+      g.group.rotation.y = Math.atan2(-Math.sin(a) * g.speed, Math.cos(a) * g.speed); // face the tangent
+      const flap = Math.sin(t * 7 + g.phase) * 0.55;
+      g.wingL.rotation.z = flap;
+      g.wingR.rotation.z = -flap;
+    }
+    // an occasional fish arcs out of the bay with a splash ring
+    for (const f of this.fishes) {
+      const u = (t * 0.13 + f.phase) % 1; // ~7.7 s cycle, mostly underwater
+      const jumping = u < 0.16;
+      f.root.visible = jumping;
+      f.splash.visible = jumping;
+      if (jumping) {
+        const k = u / 0.16;
+        f.root.position.set(f.baseX + f.dirX * (k - 0.5) * 2.6, -0.55 + Math.sin(k * Math.PI) * 2.0, f.baseZ + f.dirZ * (k - 0.5) * 2.6);
+        f.body.rotation.x = (0.5 - k) * 1.7; // nose up on the way out, down diving in
+        const arc = Math.sin(k * Math.PI);
+        f.splash.scale.setScalar(0.5 + (1 - arc) * 1.3);
+        (f.splash.material as THREE.MeshStandardMaterial).opacity = (1 - arc) * 0.55;
+      }
+    }
+    // the moored rowboat rocks on the swell; driftwood wanders the shallows
+    for (const b of this.boats) {
+      b.group.position.y = -0.3 + Math.sin(t * 0.9 + b.phase) * 0.06;
+      b.group.rotation.z = Math.sin(t * 0.7 + b.phase) * 0.045;
+      b.group.rotation.x = Math.sin(t * 0.55 + b.phase * 1.7) * 0.03;
+    }
+    for (const d of this.drifts) {
+      d.mesh.position.set(d.baseX + Math.cos(t * 0.12 + d.phase) * 1.4, -0.34 + Math.sin(t * 0.8 + d.phase) * 0.05, d.baseZ + Math.sin(t * 0.1 + d.phase) * 1.4);
+      d.mesh.rotation.y += dt * 0.05;
+    }
+    // bunting flags + washing-line cloth swing on the same breeze as the banners
+    for (const bl of this.buntings) {
+      for (let i = 0; i < bl.flags.length; i++) {
+        bl.flags[i].rotation.x = Math.sin(t * 2.4 + bl.phase + i * 0.7) * 0.2;
+      }
+    }
+    // butterflies flutter over the flower beds
+    for (const bf of this.butterflies) {
+      const a = t * 0.6 + bf.phase;
+      bf.group.position.set(bf.baseX + Math.cos(a) * 1.1, bf.baseY + Math.sin(t * 1.7 + bf.phase) * 0.25, bf.baseZ + Math.sin(a * 1.3) * 1.1);
+      bf.group.rotation.y = -a;
+      const flap = 0.25 + Math.abs(Math.sin(t * 11 + bf.phase)) * 0.95;
+      bf.wingL.rotation.z = flap;
+      bf.wingR.rotation.z = -flap;
+    }
+    // shimmer halos around the gem-eggs; counter-orbiting sanctuary sparkles
+    for (const h of this.eggHalos) {
+      h.mesh.rotation.y += dt * 0.9;
+      (h.mesh.material as THREE.MeshStandardMaterial).opacity = 0.16 + (Math.sin(t * 2.2 + h.phase) + 1) * 0.08;
+    }
+    if (this.sanctuarySparkles) this.sanctuarySparkles.rotation.y -= dt * 2.1;
+    // fireflies (instanced): slow wander + a shared warm flicker
+    if (this.fireflies) {
+      const n = this.fireflyBase.length / 4;
+      for (let i = 0; i < n; i++) {
+        const bx = this.fireflyBase[i * 4], by = this.fireflyBase[i * 4 + 1], bz = this.fireflyBase[i * 4 + 2], ph = this.fireflyBase[i * 4 + 3];
+        this._dummy.position.set(bx + Math.cos(t * 0.7 + ph) * 0.9, by + Math.sin(t * 1.1 + ph * 1.3) * 0.5, bz + Math.sin(t * 0.8 + ph) * 0.9);
+        this._dummy.rotation.set(0, 0, 0);
+        this._dummy.scale.setScalar(0.7 + (Math.sin(t * 4 + ph) + 1) * 0.4);
+        this._dummy.updateMatrix();
+        this.fireflies.setMatrixAt(i, this._dummy.matrix);
+      }
+      this.fireflies.instanceMatrix.needsUpdate = true;
+      if (this.fireflyMat) this.fireflyMat.emissiveIntensity = 1.1 + (Math.sin(t * 3.1) + 1) * 0.4;
+    }
+    // falling autumn leaves (instanced): tumble down near the tree band, then loop
+    if (this.fallingLeaves) {
+      const n = this.leafBase.length / 4;
+      for (let i = 0; i < n; i++) {
+        const bx = this.leafBase[i * 4], bz = this.leafBase[i * 4 + 1], ph = this.leafBase[i * 4 + 2], sp = this.leafBase[i * 4 + 3];
+        const f = (t * sp + ph) % 1;
+        this._dummy.position.set(bx + Math.sin(t * 0.9 + ph * 7) * 0.9, 0.7 + (1 - f) * 5.5, bz + Math.cos(t * 0.7 + ph * 5) * 0.9);
+        this._dummy.rotation.set(f * 9 + ph, ph * 3 + t * 2, f * 7);
+        this._dummy.scale.setScalar(Math.max(0.001, Math.min(1, Math.sin(f * Math.PI) * 1.6)));
+        this._dummy.updateMatrix();
+        this.fallingLeaves.setMatrixAt(i, this._dummy.matrix);
+      }
+      this.fallingLeaves.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -2131,7 +2257,581 @@ export class Island {
       this.group.add(cloud);
     }
   }
+
+  // ========================================================================
+  //  POLISH PASS — village life, fountain centerpiece, shore, satellites
+  // ========================================================================
+
+  /** Patterned cobble rings inlaid around the fountain (instanced — one draw
+   *  call per ring) + warm light pools under the plaza's lantern ring. Stones
+   *  ride on top of the lawn (top ≈ 0.5) so nothing is coplanar. */
+  private buildPlazaRings() {
+    const stoneGeo = new THREE.BoxGeometry(0.62, 0.18, 0.42);
+    const ringDefs = [
+      { r: 5.3, a: VOX.cobble, b: VOX.cobbleDark },
+      { r: 9.4, a: VOX.stone, b: VOX.cobble },
+    ];
+    const col = new THREE.Color();
+    for (const rd of ringDefs) {
+      // precompute spots, skipping any that would clip a plaza attraction
+      const count = Math.floor((Math.PI * 2 * rd.r) / 0.78);
+      const spots: { x: number; z: number; yaw: number; i: number }[] = [];
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2;
+        const x = Math.cos(a) * rd.r;
+        const z = Math.sin(a) * rd.r;
+        if ((x + 2.5) ** 2 + (z - 9.8) ** 2 < 1.9 * 1.9) continue; // daily chest plot
+        spots.push({ x, z, yaw: -a - Math.PI / 2, i });
+      }
+      const im = new THREE.InstancedMesh(stoneGeo, voxelMaterial(0xffffff), spots.length);
+      spots.forEach((s, k) => {
+        this._dummy.position.set(s.x, 0.55, s.z);
+        this._dummy.rotation.set(0, s.yaw, 0);
+        this._dummy.scale.setScalar(1);
+        this._dummy.updateMatrix();
+        im.setMatrixAt(k, this._dummy.matrix);
+        // alternating two-tone stones with a rare mossy accent
+        col.setHex(s.i % 9 === 0 ? 0x9bae84 : s.i % 2 ? rd.a : rd.b);
+        im.setColorAt(k, col);
+      });
+      im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      im.userData.noCast = true;
+      this.group.add(im);
+    }
+    // warm pools of lamplight under the plaza's lantern ring (shared material)
+    this.poolMat = new THREE.MeshStandardMaterial({
+      color: VOX.lantern, emissive: VOX.lantern, emissiveIntensity: 0.9,
+      transparent: true, opacity: 0.18, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false,
+    });
+    const poolGeo = new THREE.CircleGeometry(1.25, 20);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 + 0.26; // matches the lantern ring in buildLighting
+      const pool = new THREE.Mesh(poolGeo, this.poolMat);
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(Math.cos(a) * (PLAZA_R - 1), 0.515, Math.sin(a) * (PLAZA_R - 1));
+      this.group.add(pool);
+    }
+  }
+
+  /** Fountain centerpiece upgrade: cascading water veils between the tiers,
+   *  koi circling the base pool, wishing-coins glinting on the basin floor,
+   *  and a few lily pads with blossoms riding the top of the water. */
+  private buildFountainExtras() {
+    // ---- koi: chunky orange glints lapping the pool (one group spins) ----
+    const koi = new THREE.Group();
+    const koiBodyGeo = new THREE.BoxGeometry(0.4, 0.1, 0.14);
+    const koiTailGeo = new THREE.BoxGeometry(0.16, 0.08, 0.1);
+    const koiA = glowMaterial(0xff7a36, 0.75);
+    const koiB = glowMaterial(0xffb061, 0.65);
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      const r = 2.85 + (i % 2) * 0.4;
+      const f = new THREE.Group();
+      const body = new THREE.Mesh(koiBodyGeo, i % 2 ? koiA : koiB);
+      const tail = new THREE.Mesh(koiTailGeo, i % 2 ? koiB : koiA);
+      tail.position.x = -0.27;
+      f.add(body, tail);
+      f.position.set(Math.cos(a) * r, 0.66, Math.sin(a) * r);
+      f.rotation.y = Math.PI / 2 - a; // nose along the swim direction
+      koi.add(f);
+    }
+    this.koiGroup = koi;
+    this.group.add(koi);
+    // ---- wishing coins on the basin floor (instanced, shared glint pulse) ----
+    this.coinMat = glowMaterial(0xffd24a, 0.9);
+    const coinGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.035, 6);
+    const coins = new THREE.InstancedMesh(coinGeo, this.coinMat, 16);
+    let seed = 4242;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let i = 0; i < 16; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 2.1 + rnd() * 1.2;
+      this._dummy.position.set(Math.cos(a) * r, 0.672, Math.sin(a) * r);
+      this._dummy.rotation.set(0, rnd() * Math.PI, 0);
+      this._dummy.scale.setScalar(0.8 + rnd() * 0.5);
+      this._dummy.updateMatrix();
+      coins.setMatrixAt(i, this._dummy.matrix);
+    }
+    coins.instanceMatrix.needsUpdate = true;
+    coins.userData.noCast = true;
+    this.group.add(coins);
+    // ---- lily pads + blossoms riding the pool surface ----
+    const padGeo = new THREE.CylinderGeometry(0.32, 0.28, 0.06, 7);
+    const padMat = voxelMaterial(0x4f9e4a);
+    const blossomGeo = new THREE.BoxGeometry(0.16, 0.12, 0.16);
+    for (let i = 0; i < 3; i++) {
+      const a = 0.9 + i * 2.1;
+      const r = 3.0 + (i % 2) * 0.35;
+      const pad = new THREE.Mesh(padGeo, padMat);
+      pad.position.set(Math.cos(a) * r, 0.77, Math.sin(a) * r);
+      this.group.add(pad);
+      const bloom = new THREE.Mesh(blossomGeo, glowMaterial(i === 1 ? VOX.flowerWhite : VOX.flowerPink, 0.5));
+      bloom.position.set(pad.position.x, 0.86, pad.position.z);
+      this.group.add(bloom);
+    }
+    // ---- cascading translucent water veils spilling tier to tier ----
+    const veilDefs = [
+      { r: 2.55, yTop: 1.5, yBot: 0.78 },
+      { r: 1.7, yTop: 2.25, yBot: 1.55 },
+      { r: 1.06, yTop: 2.9, yBot: 2.3 },
+    ];
+    veilDefs.forEach((vd, i) => {
+      const h = vd.yTop - vd.yBot;
+      const veil = new THREE.Mesh(
+        new THREE.CylinderGeometry(vd.r, vd.r + 0.1, h, 14, 1, true),
+        new THREE.MeshStandardMaterial({
+          color: VOX.water, emissive: 0x6fd0ff, emissiveIntensity: 0.7,
+          transparent: true, opacity: 0.2, depthWrite: false,
+          side: THREE.DoubleSide, toneMapped: false, flatShading: true,
+        }),
+      );
+      veil.position.y = vd.yBot + h / 2;
+      this.veils.push({ mesh: veil, phase: i * 1.7 });
+      this.group.add(veil);
+    });
+  }
+
+  /** Shore life: a plank dock with a moored rowboat, gulls wheeling over the
+   *  bay, driftwood wandering the shallows, and the occasional fish jump. */
+  private buildShoreLife() {
+    const az = 1.95; // south-southwest — clear of the three northern bridges
+    const dir = { x: Math.cos(az), z: Math.sin(az) };
+    const perp = { x: -dir.z, z: dir.x };
+    const yaw = Math.atan2(dir.x, dir.z);
+    const plankA = voxelMaterial(0x8a5a32);
+    const plankB = voxelMaterial(0x6f4626);
+    const post = voxelMaterial(0x5c3c24);
+    // ---- the dock: plank deck on piles, running off the sand into the bay ----
+    let row = 0;
+    for (let r = ISLAND.shore - 1; r <= 50; r += 0.95, row++) {
+      const plank = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.18, 0.8), row % 2 ? plankA : plankB);
+      plank.position.set(dir.x * r, 0.62, dir.z * r);
+      plank.rotation.y = yaw;
+      plank.userData.noCast = true;
+      this.group.add(plank);
+    }
+    for (const r of [42.5, 46.5, 50]) {
+      for (const side of [-1, 1]) {
+        const pile = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.3, 0.28), post);
+        pile.position.set(dir.x * r + perp.x * side * 1.05, -0.45, dir.z * r + perp.z * side * 1.05);
+        this.group.add(pile);
+      }
+    }
+    // a lantern + a crate at the dock head
+    const dockLan = this.makeLantern();
+    dockLan.position.set(dir.x * 49.6 + perp.x * 0.8, 0.62, dir.z * 49.6 + perp.z * 0.8);
+    dockLan.rotation.y = yaw + Math.PI;
+    this.group.add(dockLan);
+    const dockCrate = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), voxelMaterial(VOX.crate));
+    dockCrate.position.set(dir.x * 48.2 - perp.x * 0.75, 1.0, dir.z * 48.2 - perp.z * 0.75);
+    this.group.add(dockCrate);
+    // ---- the rowboat, moored alongside, rocking on the swell ----
+    const boat = new THREE.Group();
+    const hullBottom = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.22, 2.0), plankB);
+    hullBottom.position.y = 0.11;
+    boat.add(hullBottom);
+    for (const side of [-1, 1]) {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.36, 2.2), plankA);
+      wall.position.set(side * 0.48, 0.3, 0);
+      boat.add(wall);
+    }
+    for (const end of [-1, 1]) {
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.36, 0.18), plankA);
+      cap.position.set(0, 0.3, end * 1.05);
+      boat.add(cap);
+    }
+    const bench = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.08, 0.3), post);
+    bench.position.set(0, 0.4, 0.25);
+    boat.add(bench);
+    const oar = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.05, 0.09), post);
+    oar.position.set(0, 0.5, -0.3);
+    oar.rotation.y = 0.5;
+    boat.add(oar);
+    boat.position.set(dir.x * 48.6 + perp.x * 2.3, -0.3, dir.z * 48.6 + perp.z * 2.3);
+    boat.rotation.y = yaw + 0.25;
+    this.boats.push({ group: boat, phase: 1.3 });
+    this.group.add(boat);
+    // ---- driftwood wandering the shallows (south arc, clear of bridges) ----
+    const driftGeo = new THREE.CylinderGeometry(0.14, 0.18, 1.7, 6);
+    driftGeo.rotateZ(Math.PI / 2);
+    [0.55, 1.25, 2.6].forEach((a, i) => {
+      const log = new THREE.Mesh(driftGeo, voxelMaterial(VOX.barkDark));
+      const r = 46 + i * 2.4;
+      const d = { mesh: log, phase: i * 2.4, baseX: Math.cos(a) * r, baseZ: Math.sin(a) * r };
+      log.position.set(d.baseX, -0.34, d.baseZ);
+      this.drifts.push(d);
+      this.group.add(log);
+    });
+    // ---- gulls: chunky white v-birds circling the bay (wings flap in update) ----
+    const gullBodyGeo = new THREE.BoxGeometry(0.18, 0.14, 0.52);
+    const gullBeakGeo = new THREE.BoxGeometry(0.08, 0.06, 0.16);
+    const wingLGeo = new THREE.BoxGeometry(0.6, 0.05, 0.22);
+    wingLGeo.translate(0.32, 0, 0);
+    const wingRGeo = new THREE.BoxGeometry(0.6, 0.05, 0.22);
+    wingRGeo.translate(-0.32, 0, 0);
+    const gullMat = voxelMaterial(0xf4f7f8);
+    const beakMat = voxelMaterial(0xffb24a);
+    const gullDefs = [
+      { cx: dir.x * 47, cz: dir.z * 47, r: 7, h: 7.5, speed: 0.35, phase: 0 },
+      { cx: dir.x * 44, cz: dir.z * 44, r: 10, h: 9.5, speed: -0.28, phase: 2.4 },
+      { cx: dir.x * 30, cz: dir.z * 30, r: 15, h: 11, speed: 0.22, phase: 4.4 },
+    ];
+    for (const gd of gullDefs) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(gullBodyGeo, gullMat);
+      const beak = new THREE.Mesh(gullBeakGeo, beakMat);
+      beak.position.set(0, 0.02, 0.32);
+      const wl = new THREE.Mesh(wingLGeo, gullMat);
+      const wr = new THREE.Mesh(wingRGeo, gullMat);
+      for (const m of [body, beak, wl, wr]) m.userData.noCast = true;
+      g.add(body, beak, wl, wr);
+      g.position.set(gd.cx + gd.r, gd.h, gd.cz);
+      this.gulls.push({ group: g, wingL: wl, wingR: wr, phase: gd.phase, speed: gd.speed, r: gd.r, h: gd.h, cx: gd.cx, cz: gd.cz });
+      this.group.add(g);
+    }
+    // ---- leaping fish + splash rings, offshore in the south bay ----
+    const fishBodyGeo = new THREE.BoxGeometry(0.16, 0.16, 0.52);
+    const fishTailGeo = new THREE.BoxGeometry(0.06, 0.2, 0.16);
+    const splashGeo = new THREE.TorusGeometry(0.42, 0.06, 6, 14);
+    [{ a: 1.55, ph: 0.1 }, { a: 2.35, ph: 0.55 }].forEach((fd, i) => {
+      const bx = Math.cos(fd.a) * 46.5;
+      const bz = Math.sin(fd.a) * 46.5;
+      const dirX = -Math.sin(fd.a), dirZ = Math.cos(fd.a); // leap along the shore
+      const root = new THREE.Group();
+      const body = new THREE.Mesh(fishBodyGeo, glowMaterial(i ? 0x8fc7e8 : 0xff9a5a, 0.45));
+      const tail = new THREE.Mesh(fishTailGeo, glowMaterial(i ? 0x6aa9cf : 0xe07a40, 0.4));
+      tail.position.set(0, 0, -0.3);
+      body.add(tail);
+      root.add(body);
+      root.rotation.y = Math.atan2(dirX, dirZ);
+      root.visible = false;
+      const splash = new THREE.Mesh(splashGeo, new THREE.MeshStandardMaterial({
+        color: 0xeaf6ff, emissive: 0xbfe8ff, emissiveIntensity: 0.8,
+        transparent: true, opacity: 0.5, depthWrite: false, toneMapped: false,
+      }));
+      splash.rotation.x = -Math.PI / 2;
+      splash.position.set(bx, -0.26, bz);
+      splash.visible = false;
+      this.fishes.push({ root, body, splash, phase: fd.ph, baseX: bx, baseZ: bz, dirX, dirZ });
+      this.group.add(root, splash);
+    });
+  }
+
+  /** Village dressing: trimmed hedges + flower beds at every cottage porch,
+   *  festival bunting strung between the houses (and across the south entry),
+   *  and a washing line behind a pair of cottages. */
+  private buildVillageDress() {
+    // ---- hedges + flower beds, placed in world space in front of each house ----
+    const hedgeGeo = new THREE.BoxGeometry(1.4, 0.6, 0.5);
+    const soilGeo = new THREE.BoxGeometry(1.3, 0.18, 0.42);
+    const headGeo = new THREE.BoxGeometry(0.18, 0.16, 0.18);
+    const hedgeMat = voxelMaterial(0x4f8a3a);
+    const hedgeTop = voxelMaterial(0x6fae4a);
+    const soilMat = voxelMaterial(VOX.tilled);
+    const flowerMats = [VOX.flowerPink, VOX.flowerYellow, VOX.flowerRed, VOX.flowerWhite].map((c) => glowMaterial(c, 0.45));
+    HOUSES.forEach((hs, hi) => {
+      const yawH = Math.atan2(-hs.x, -hs.z); // houses face the plaza
+      const fwdX = Math.sin(yawH), fwdZ = Math.cos(yawH);
+      const sideX = Math.cos(yawH), sideZ = -Math.sin(yawH);
+      const w = hs.big ? 4.6 : 3.6;
+      const d = hs.big ? 5.4 : 4.4;
+      for (const s of [-1, 1]) {
+        const ox = hs.x + fwdX * (d / 2 + 1.0) + sideX * s * (w / 2 - 0.3);
+        const oz = hs.z + fwdZ * (d / 2 + 1.0) + sideZ * s * (w / 2 - 0.3);
+        // a clipped hedge block with a lit top course
+        const hedge = new THREE.Mesh(hedgeGeo, hedgeMat);
+        hedge.position.set(ox, 0.62, oz);
+        hedge.rotation.y = yawH;
+        const crown = new THREE.Mesh(soilGeo, hedgeTop);
+        crown.position.set(ox, 0.96, oz);
+        crown.rotation.y = yawH;
+        this.group.add(hedge, crown);
+        // flower bed strip in front of the hedge
+        const bx = ox + fwdX * 0.65, bz = oz + fwdZ * 0.65;
+        const soil = new THREE.Mesh(soilGeo, soilMat);
+        soil.position.set(bx, 0.56, bz);
+        soil.rotation.y = yawH;
+        this.group.add(soil);
+        for (let f = 0; f < 3; f++) {
+          const head = new THREE.Mesh(headGeo, flowerMats[(hi + f + (s > 0 ? 1 : 0)) % flowerMats.length]);
+          head.position.set(bx + sideX * (f - 1) * 0.38, 0.74, bz + sideZ * (f - 1) * 0.38);
+          this.group.add(head);
+        }
+      }
+    });
+    // ---- festival bunting between the houses + over the south entrance ----
+    const flagMats = [0xff6f7a, 0xffd45a, 0x6ad7ff, 0x7be08a, 0xff9ec7].map((c) => glowMaterial(c, 0.5));
+    this.makeBunting(new THREE.Vector3(-10, 3.5, 18.5), new THREE.Vector3(-15.5, 3.5, 11.5), 0.55, flagMats);
+    this.makeBunting(new THREE.Vector3(10, 3.5, 18.5), new THREE.Vector3(15.5, 3.5, 11.5), 0.55, flagMats);
+    this.makeBunting(new THREE.Vector3(-5.5, 2.7, 17), new THREE.Vector3(5.5, 2.7, 17), 0.45, flagMats);
+    this.makeBunting(new THREE.Vector3(-10, 4.4, 18.5), new THREE.Vector3(10, 4.4, 18.5), 1.1, flagMats);
+    // ---- a washing line behind two of the cottages ----
+    for (const hs of [HOUSES[4], HOUSES[5]]) {
+      const out = Math.hypot(hs.x, hs.z) || 1;
+      const dx = hs.x / out, dz = hs.z / out;
+      const px = -dz, pz = dx;
+      const cx = hs.x + dx * 4.4, cz = hs.z + dz * 4.4;
+      const lineG = new THREE.Group();
+      lineG.position.set(cx, 0, cz);
+      lineG.rotation.y = Math.atan2(px, pz);
+      const poleMat = voxelMaterial(VOX.bark);
+      const cloths: THREE.Mesh[] = [];
+      for (const s of [-1, 1]) {
+        const pole = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.0, 0.14), poleMat);
+        pole.position.set(0, 1.4, s * 1.6);
+        lineG.add(pole);
+      }
+      const rope = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 3.2), voxelMaterial(0xd8d2c0));
+      rope.position.y = 2.3;
+      lineG.add(rope);
+      const clothCols = [0xd6e8f0, 0xf0d6da, 0xe8f0d6];
+      for (let i = 0; i < 3; i++) {
+        const cloth = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.7, 0.6), voxelMaterial(clothCols[i]));
+        cloth.position.set(0, 1.93, -1.0 + i * 1.0);
+        lineG.add(cloth);
+        cloths.push(cloth);
+      }
+      this.buntings.push({ flags: cloths, phase: hs.x });
+      this.group.add(lineG);
+    }
+  }
+
+  /** String a sagging bunting line of glowing pennants between two points
+   *  (rope segments + flags that sway from the same breeze as the banners). */
+  private makeBunting(p1: THREE.Vector3, p2: THREE.Vector3, sag: number, flagMats: THREE.MeshStandardMaterial[]) {
+    const g = new THREE.Group();
+    const dx = p2.x - p1.x, dz = p2.z - p1.z;
+    const L = Math.hypot(dx, dz);
+    g.position.copy(p1);
+    g.rotation.y = Math.atan2(-dz, dx);
+    const ropeMat = voxelMaterial(0xd8d2c0);
+    const n = Math.max(6, Math.round(L / 0.85));
+    const flags: THREE.Mesh[] = [];
+    let px = 0, py = 0;
+    for (let i = 0; i <= n; i++) {
+      const u = i / n;
+      const x = u * L;
+      const y = (p2.y - p1.y) * u - Math.sin(u * Math.PI) * sag;
+      if (i > 0) {
+        const seg = new THREE.Mesh(BUNT_ROPE, ropeMat);
+        seg.position.set((px + x) / 2, (py + y) / 2, 0);
+        seg.scale.x = Math.hypot(x - px, y - py);
+        seg.rotation.z = Math.atan2(y - py, x - px);
+        g.add(seg);
+      }
+      if (i > 0 && i < n) {
+        const flag = new THREE.Mesh(BUNT_FLAG, flagMats[i % flagMats.length]);
+        flag.position.set(x, y, 0);
+        flags.push(flag);
+        g.add(flag);
+      }
+      px = x;
+      py = y;
+    }
+    this.buntings.push({ flags, phase: p1.x + p1.z });
+    this.group.add(g);
+  }
+
+  /** Dress each satellite to its theme: torch pairs at both bridge mouths,
+   *  theme-coloured banners greeting arrivals, and pines + boulders on the far
+   *  rim — without moving any gate / podium / monument anchor. */
+  private buildSatelliteDress() {
+    for (const s of SATELLITES) {
+      const d = Math.hypot(s.center.x, s.center.z) || 1;
+      const dir = { x: s.center.x / d, z: s.center.z / d };
+      const perp = { x: -dir.z, z: dir.x };
+      // torches flanking the gateway arch at each end of the bridge
+      for (const r of [ISLAND.half - 4, d - s.radius + 1]) {
+        for (const side of [-1, 1]) {
+          const { group, flame } = this.makeTorch(0xffa53a);
+          group.position.set(dir.x * r + perp.x * side * 3.0, 0.05, dir.z * r + perp.z * side * 3.0);
+          this.group.add(group);
+          this.flames.push(flame);
+        }
+      }
+      // theme banners on poles flanking where the bridge lands on the platform
+      const arriveA = Math.atan2(-dir.z, -dir.x); // azimuth (from the satellite) back toward the hub
+      for (const off of [-0.85, 0.85]) {
+        const a = arriveA + off;
+        const bx = s.center.x + Math.cos(a) * (s.radius - 2.4);
+        const bz = s.center.z + Math.sin(a) * (s.radius - 2.4);
+        const pole = new THREE.Mesh(new THREE.BoxGeometry(0.18, 4.0, 0.18), voxelMaterial(VOX.barkDark));
+        pole.position.set(bx, 2.3, bz);
+        const finial = new THREE.Mesh(new THREE.OctahedronGeometry(0.2, 0), glowMaterial(s.color, 1.1));
+        finial.position.set(bx, 4.45, bz);
+        this.group.add(pole, finial);
+        const banner = this.makeBanner(s.color, 4);
+        banner.group.position.set(bx, 4.1, bz);
+        banner.group.rotation.y = a + Math.PI / 2;
+        this.group.add(banner.group);
+        this.banners.push(banner.rec);
+      }
+      // pines + boulders dressing the far rim (opposite the bridge mouth)
+      const farA = Math.atan2(dir.z, dir.x);
+      for (const off of [-0.55, 0.1, 0.6]) {
+        const a = farA + off;
+        const px = s.center.x + Math.cos(a) * (s.radius - 3.6);
+        const pz = s.center.z + Math.sin(a) * (s.radius - 3.6);
+        if (off === 0.1) {
+          for (let k = 0; k < 2; k++) {
+            const sz = 0.7 + k * 0.45;
+            const rock = new THREE.Mesh(new THREE.BoxGeometry(sz, sz * 0.7, sz), voxelMaterial(k ? VOX.rock : VOX.rockDark));
+            rock.position.set(px + k * 0.7, 0.5 + sz * 0.3, pz - k * 0.4);
+            rock.rotation.y = a + k;
+            this.group.add(rock);
+          }
+        } else {
+          const pine = this.makePine(off < 0 ? 1.15 : 0.9);
+          pine.position.set(px, 0.35, pz);
+          pine.rotation.y = a * 2;
+          this.group.add(pine);
+        }
+      }
+    }
+  }
+
+  /** A compact stacked-tier pine used to dress the satellite platforms. */
+  private makePine(scale: number): THREE.Group {
+    const g = new THREE.Group();
+    const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.36 * scale, 1.1 * scale, 0.36 * scale), voxelMaterial(VOX.bark));
+    trunk.position.y = 0.55 * scale;
+    g.add(trunk);
+    for (let k = 0; k < 4; k++) {
+      const w = (2.0 - k * 0.45) * scale;
+      const tier = new THREE.Mesh(new THREE.BoxGeometry(w, 0.6 * scale, w), voxelMaterial(k === 3 ? 0x6fae4a : 0x4f8a3a));
+      tier.position.y = (1.3 + k * 0.55) * scale;
+      g.add(tier);
+    }
+    return g;
+  }
+
+  /** Extra glow layering on the egg shrines, the sanctuary, and the wheel:
+   *  tilted shimmer halos, a counter-orbiting sparkle ring, carnival bulbs. */
+  private buildShrinePolish() {
+    // a tilted, slowly-precessing halo ring around every gem-egg
+    for (const e of this.eggs) {
+      const halo = new THREE.Mesh(new THREE.TorusGeometry(1.08, 0.045, 5, 26), auraMaterial(e.color, 0.8));
+      halo.position.y = 2.05;
+      halo.rotation.x = 1.05;
+      e.group.add(halo);
+      this.eggHalos.push({ mesh: halo, phase: e.phase });
+    }
+    // sanctuary: a ring of white sparkles counter-orbiting the hearts
+    const sparkles = new THREE.Group();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const sp = new THREE.Mesh(new THREE.OctahedronGeometry(0.09, 0), glowMaterial(0xfff6e0, 1.3));
+      sp.position.set(Math.cos(a) * 1.35, (i % 2 ? 0.3 : -0.2), Math.sin(a) * 1.35);
+      sparkles.add(sp);
+    }
+    sparkles.position.set(SANCTUARY.x, 2.0, SANCTUARY.z);
+    this.sanctuarySparkles = sparkles;
+    this.group.add(sparkles);
+    // fortune wheel: a ring of warm carnival bulbs spinning with the wheel
+    if (this.wheelMesh) {
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + 0.26;
+        const bulb = new THREE.Mesh(new THREE.OctahedronGeometry(0.09, 0), glowMaterial(VOX.lantern, 1.2));
+        bulb.position.set(Math.cos(a) * 1.18, Math.sin(a) * 1.18, 0.12);
+        this.wheelMesh.add(bulb);
+        this.beacons.push(bulb);
+      }
+    }
+  }
+
+  /** Dusk ambience: instanced fireflies around the village outskirts, falling
+   *  autumn leaves under the tree band, and butterflies over the flowers. */
+  private buildAmbientLife() {
+    let seed = 8181;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    // ---- fireflies: one InstancedMesh, matrices driven in animateLife ----
+    const FF = 40;
+    this.fireflyMat = new THREE.MeshStandardMaterial({
+      color: 0xfff6c0, emissive: 0xd8ff7a, emissiveIntensity: 1.4,
+      transparent: true, opacity: 0.85, depthWrite: false, toneMapped: false,
+    });
+    const ff = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.055, 0), this.fireflyMat, FF);
+    this.fireflyBase = new Float32Array(FF * 4);
+    for (let i = 0; i < FF; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 14 + rnd() * 16;
+      this.fireflyBase[i * 4] = Math.cos(a) * r;
+      this.fireflyBase[i * 4 + 1] = 0.9 + rnd() * 1.3;
+      this.fireflyBase[i * 4 + 2] = Math.sin(a) * r;
+      this.fireflyBase[i * 4 + 3] = rnd() * 6.28;
+      this._dummy.position.set(this.fireflyBase[i * 4], this.fireflyBase[i * 4 + 1], this.fireflyBase[i * 4 + 2]);
+      this._dummy.rotation.set(0, 0, 0);
+      this._dummy.scale.setScalar(1);
+      this._dummy.updateMatrix();
+      ff.setMatrixAt(i, this._dummy.matrix);
+    }
+    ff.instanceMatrix.needsUpdate = true;
+    this.fireflies = ff;
+    this.group.add(ff);
+    // ---- falling leaves: instanced, tinted per-leaf via instance colors ----
+    const LF = 30;
+    const leafMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.18, 0.03, 0.24), voxelMaterial(0xffffff), LF);
+    const leafCols = [0xe8a23c, 0xd9762e, 0xc24a35, 0x8fd44f];
+    const col = new THREE.Color();
+    this.leafBase = new Float32Array(LF * 4);
+    for (let i = 0; i < LF; i++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 26 + rnd() * 12; // under the outer tree band
+      this.leafBase[i * 4] = Math.cos(a) * r;
+      this.leafBase[i * 4 + 1] = Math.sin(a) * r;
+      this.leafBase[i * 4 + 2] = rnd() * 6.28;
+      this.leafBase[i * 4 + 3] = 0.05 + rnd() * 0.05; // fall-cycle speed
+      this._dummy.position.set(this.leafBase[i * 4], 2 + rnd() * 4, this.leafBase[i * 4 + 1]);
+      this._dummy.rotation.set(0, 0, 0);
+      this._dummy.scale.setScalar(1);
+      this._dummy.updateMatrix();
+      leafMesh.setMatrixAt(i, this._dummy.matrix);
+      col.setHex(leafCols[i % leafCols.length]);
+      leafMesh.setColorAt(i, col);
+    }
+    leafMesh.instanceMatrix.needsUpdate = true;
+    if (leafMesh.instanceColor) leafMesh.instanceColor.needsUpdate = true;
+    leafMesh.userData.noCast = true;
+    this.fallingLeaves = leafMesh;
+    this.group.add(leafMesh);
+    // ---- butterflies: two flapping wing-quads over the flower belts ----
+    const wingLGeo = new THREE.BoxGeometry(0.34, 0.02, 0.26);
+    wingLGeo.translate(0.19, 0, 0);
+    const wingRGeo = new THREE.BoxGeometry(0.34, 0.02, 0.26);
+    wingRGeo.translate(-0.19, 0, 0);
+    const bodyGeo = new THREE.BoxGeometry(0.06, 0.06, 0.26);
+    const bodyMat = voxelMaterial(0x3a3030);
+    const bDefs = [
+      { x: -17.5, z: 6, c: 0xffd45a },
+      { x: 18, z: -3, c: 0xff9ec7 },
+      { x: -6, z: -16.5, c: 0x9fd4ff },
+    ];
+    for (let i = 0; i < bDefs.length; i++) {
+      const bd = bDefs[i];
+      const wingMat = glowMaterial(bd.c, 0.55);
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      const wl = new THREE.Mesh(wingLGeo, wingMat);
+      const wr = new THREE.Mesh(wingRGeo, wingMat);
+      for (const m of [body, wl, wr]) m.userData.noCast = true;
+      g.add(body, wl, wr);
+      g.position.set(bd.x, 1.1, bd.z);
+      this.butterflies.push({ group: g, wingL: wl, wingR: wr, phase: i * 2.2, baseX: bd.x, baseY: 1.1 + i * 0.15, baseZ: bd.z });
+      this.group.add(g);
+    }
+  }
 }
+
+// shared bunting geometry (one pennant + one unit rope segment, reused by all lines)
+const BUNT_FLAG = (() => {
+  const g = new THREE.ConeGeometry(0.15, 0.32, 4);
+  g.rotateZ(Math.PI); // apex down
+  g.translate(0, -0.17, 0); // hinge at the rope
+  return g;
+})();
+const BUNT_ROPE = new THREE.BoxGeometry(1, 0.035, 0.035);
 
 /** A floating pill-shaped nameplate sign (canvas sprite, fog-immune) used to
  *  label the hub's interactive structures so they're easy to find. */
