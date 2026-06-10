@@ -2,10 +2,27 @@ import * as THREE from "three";
 import { ELITE, ZOMBIE, ZOMBIE_TYPES, ZombieType } from "./config";
 import { AssetManager, CharacterRig } from "./assets";
 import { VoxelChar } from "./voxelChar";
+import { voxelMaterial, glowMaterial } from "./palette";
 import type { SpatialGrid } from "./grid";
 
 const _tmp = new THREE.Vector3();
 let _nextId = 1;
+
+/**
+ * Free every mesh in a decor group (geometry + material) and empty it. Decor
+ * kits are flat lists of boxes, so a shallow sweep is enough — mirrors the
+ * tdenemy disposeCreep pattern so pooled rebuilds never leak GPU resources.
+ */
+function disposeDecor(g: THREE.Group) {
+  for (const child of g.children) {
+    const m = child as THREE.Mesh;
+    m.geometry?.dispose?.();
+    const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(mat)) for (const x of mat) x.dispose();
+    else mat?.dispose?.();
+  }
+  g.clear();
+}
 
 /**
  * Elite affix: a behavior + colored visual tell layered onto a late-game
@@ -111,12 +128,45 @@ export class Zombie {
   burnTrailReady = false;
   private aura?: THREE.Mesh;
 
+  // ---- per-type silhouette decor (PURE VISUAL; tdenemy's "decor kit" pattern) ----
+  // Three independent groups bolted onto the rig so each layer can be rebuilt /
+  // disposed on its own across pooled reuse: the per-type kit, the elite-affix
+  // accent, and the boss regalia. All are children of char.root so they inherit
+  // the walk lean + death tilt for free.
+  private decor = new THREE.Group();
+  private affixDecor = new THREE.Group();
+  private bossDecor = new THREE.Group();
+  /** Type id the current `decor` kit was built for ("" = none yet). */
+  private decorKind = "";
+  /** Phase clock for all decor animation (randomized per spawn so the horde desyncs). */
+  private decorT = 0;
+  private pulseRate = 6;
+  private flapRate = 9;
+  /** Glow mats whose emissive pulses (bile sac / keg band / maw / seams…). */
+  private pulseMats: THREE.MeshStandardMaterial[] = [];
+  /** Affix-accent glow mats (flame nubs / spark tips) — fast flicker. */
+  private affixPulseMats: THREE.MeshStandardMaterial[] = [];
+  /** Translucent mats whose opacity flickers (dust streaks / wing blur). */
+  private fadeMats: { mat: THREE.MeshBasicMaterial; base: number }[] = [];
+  /** Wing-stub meshes flapped by rotation.z (sign of x picks the direction). */
+  private wings: THREE.Mesh[] = [];
+  /** Bomber fuse spark (scale jitter). */
+  private sparkMesh: THREE.Mesh | null = null;
+  /** Screamer sound-ring (expanding + fading torus) + its material. */
+  private ringMesh: THREE.Mesh | null = null;
+  private ringMat: THREE.MeshBasicMaterial | null = null;
+  /** Boss ground-menace ring material (slow opacity throb). */
+  private bossRingMat: THREE.MeshBasicMaterial | null = null;
+  /** The type/boss scale this life spawned with (for the death shrink-out). */
+  private baseScale = 1;
+
   private char: CharacterRig;
 
   constructor(assets: AssetManager) {
     this.char =
       assets.createCharacter("zombie") ??
       new VoxelChar({ body: 0x8fcf6f, head: 0x5f9d4a, eye: 0x141414, zombie: true });
+    this.char.root.add(this.decor, this.affixDecor, this.bossDecor);
     this.group.add(this.char.root);
     this.group.visible = false;
   }
@@ -164,9 +214,17 @@ export class Zombie {
     this.rangedTimer = 1 + Math.random() * 1.5;
     this.wobble = Math.random() * Math.PI * 2;
     this.group.scale.setScalar(type.scale);
+    this.baseScale = type.scale;
     if (this.char instanceof VoxelChar) {
       this.char.setColor(type.body, type.head, this.explodes ? type.body : 0x000000);
     }
+
+    // (re)build the per-type silhouette kit; strip any boss regalia from a
+    // previous life (pooled reuse may turn last round's boss into a shambler).
+    this.decorT = Math.random() * Math.PI * 2;
+    this.rebuildDecor(type);
+    this.clearBossDecor();
+    this.decor.visible = true;
 
     // clear any affix from a previous life (pooled reuse)
     this.clearAffix();
@@ -196,6 +254,8 @@ export class Zombie {
     }
     this.aura.material = _auraMat[affix];
     this.aura.visible = true;
+    // matching silhouette accent on the body (flame nubs / icicles / antennae)
+    this.buildAffixDecor(affix);
     if (affix === "overloading") {
       this.maxShield = this.maxHealth * ELITE.overloadShield;
       this.shield = this.maxShield;
@@ -217,6 +277,10 @@ export class Zombie {
     this.burnTimer = 0;
     this.burnTrailReady = false;
     if (this.aura) this.aura.visible = false;
+    if (this.affixDecor.children.length > 0) {
+      disposeDecor(this.affixDecor);
+      this.affixPulseMats.length = 0;
+    }
   }
 
   /**
@@ -242,6 +306,11 @@ export class Zombie {
     this.scoreMul *= 4;
     this.touchDamage *= 1.5;
     this.group.scale.setScalar(scale);
+    this.baseScale = scale;
+    // unmistakable boss regalia: spike crown, burning eyes, ground-menace ring.
+    // The plain type kit is hidden so the boss reads as its own creature.
+    this.decor.visible = false;
+    this.buildBossDecor();
   }
 
   /** Returns true if it just died from this hit. */
@@ -318,6 +387,8 @@ export class Zombie {
     }
     // spin the affix aura for a little life
     if (this.aura && this.aura.visible) this.aura.rotation.y += dt * 1.5;
+    // tick the per-type decor (pulses / flaps / streaks) — trig only, no allocs
+    this.animateDecor(dt);
 
     if (this.flash > 0) {
       this.flash -= dt;
@@ -453,7 +524,15 @@ export class Zombie {
       }
     }
     this.char.update(dt);
+    // keep the decor alive on the corpse (the bomber keg should pulse to the end)
+    this.animateDecor(dt);
     this.deathTimer -= dt;
+    // death juice: the corpse crumples — shrink away over its last beats so the
+    // recycle pop is a fade-out, not a blink. spawn() restores the scale.
+    if (this.deathTimer < 0.35) {
+      const k = Math.max(0, this.deathTimer) / 0.35;
+      this.group.scale.setScalar(this.baseScale * (0.25 + 0.75 * k));
+    }
     if (this.deathTimer <= 0) {
       this.dying = false;
       this.group.visible = false;
@@ -461,5 +540,339 @@ export class Zombie {
       this.group.rotation.z = 0;
       if (this.aura) this.aura.visible = false;
     }
+  }
+
+  // ──────────────────────── per-type decor kits ────────────────────────
+  // Each zombie type gets a small kit of flat-shaded voxel boxes bolted onto
+  // the rig so the horde reads at the game's zoomed-out camera: WHAT a thing
+  // is (and what it's about to do to you) is visible from silhouette + glow
+  // alone. Kits live in rig-local space, so they scale with `type.scale`.
+
+  /** Add one decor box to `parent`. Glow boxes use the bloom-caught material. */
+  private addBox(
+    parent: THREE.Group,
+    w: number, h: number, d: number,
+    x: number, y: number, z: number,
+    color: number, glow = false, glowIntensity = 1.1,
+  ): THREE.Mesh {
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(w, h, d),
+      glow ? glowMaterial(color, glowIntensity) : voxelMaterial(color),
+    );
+    m.position.set(x, y, z);
+    parent.add(m);
+    return m;
+  }
+
+  /** Push a glow box's material into the slow-pulse list (sac/keg/maw/seam). */
+  private pulse(m: THREE.Mesh) {
+    this.pulseMats.push(m.material as THREE.MeshStandardMaterial);
+  }
+
+  /**
+   * Rebuild the per-type kit if the pooled zombie changed type since its last
+   * life. Disposes the old kit's geometries/materials (no leaks across reuse)
+   * and resets every animation ref the old kit registered.
+   */
+  private rebuildDecor(type: ZombieType) {
+    if (!(this.char instanceof VoxelChar)) return; // GLB rigs keep their own look
+    if (type.id === this.decorKind) return; // same type → kit + refs still valid
+    disposeDecor(this.decor);
+    this.pulseMats.length = 0;
+    this.fadeMats.length = 0;
+    this.wings.length = 0;
+    this.sparkMesh = null;
+    this.ringMesh = null;
+    this.ringMat = null;
+    this.pulseRate = 6;
+    this.flapRate = 9;
+    this.decorKind = type.id;
+    this.buildKit(type);
+  }
+
+  /** The per-type looks. Unknown ids fall back to the shambler rags. */
+  private buildKit(type: ZombieType) {
+    const g = this.decor;
+    const cloth = 0x4a3a2c;
+    switch (type.id) {
+      case "walker": {
+        // heavier shambler: rag patches, an old wound, one field-dressing strap
+        this.addBox(g, 0.3, 0.24, 0.06, -0.18, 1.18, 0.27, cloth);
+        this.addBox(g, 0.24, 0.3, 0.06, 0.2, 0.9, 0.27, 0x3a3a3a);
+        this.addBox(g, 0.22, 0.16, 0.07, 0.08, 1.34, 0.265, 0x7a2f1f);
+        const strap = this.addBox(g, 0.16, 1.0, 0.06, 0, 1.05, 0.285, 0xd8cfae);
+        strap.rotation.z = 0.7;
+        this.addBox(g, 0.22, 0.22, 0.22, -0.26, 2.16, -0.12, 0x2f2f2f); // head notch
+        break;
+      }
+      case "runner": {
+        // lean speed fins + a dust streak trailing the sprint
+        this.addBox(g, 0.1, 0.3, 0.52, 0, 2.26, 0.06, 0xfff1d6); // head fin
+        this.addBox(g, 0.12, 0.26, 0.34, 0, 1.42, -0.36, type.head); // tail fin
+        const streakMat = new THREE.MeshBasicMaterial({ color: 0xffc97a, transparent: true, opacity: 0.25, depthWrite: false });
+        const streak = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.8, 1.1), streakMat);
+        streak.position.set(0, 1.1, -0.85);
+        g.add(streak);
+        this.fadeMats.push({ mat: streakMat, base: 0.28 });
+        break;
+      }
+      case "crawler": {
+        // hunched: a spine of spurs, a hump pad, and a low drag-dust wisp
+        this.addBox(g, 0.52, 0.2, 0.36, 0, 1.54, -0.16, type.body);
+        for (let i = 0; i < 3; i++) this.addBox(g, 0.13, 0.24 - i * 0.05, 0.13, 0, 1.7 - i * 0.16, -0.26 - i * 0.12, type.head);
+        const wispMat = new THREE.MeshBasicMaterial({ color: 0xcfc49a, transparent: true, opacity: 0.18, depthWrite: false });
+        const wisp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.28, 0.7), wispMat);
+        wisp.position.set(0, 0.3, -0.6);
+        g.add(wisp);
+        this.fadeMats.push({ mat: wispMat, base: 0.2 });
+        break;
+      }
+      case "brute": {
+        // hulking mass: shoulder slabs, a back hump, knuckle guards up front
+        for (const sx of [-1, 1]) this.addBox(g, 0.4, 0.36, 0.55, sx * 0.6, 1.56, 0, type.head);
+        this.addBox(g, 0.74, 0.55, 0.44, 0, 1.42, -0.4, type.head); // back hump
+        this.addBox(g, 0.86, 0.16, 0.56, 0, 0.64, 0, 0x5a2018); // waist band (heft)
+        // zombie arms reach forward, so fixed fists at hand height read right
+        for (const sx of [-1, 1]) this.addBox(g, 0.3, 0.26, 0.3, sx * 0.55, 1.0, 0.46, 0x5a2018);
+        break;
+      }
+      case "bomber": {
+        // strapped powder keg + sparking fuse — pulses so you keep your distance
+        this.pulseRate = 11;
+        this.addBox(g, 0.52, 0.62, 0.4, 0, 1.2, -0.5, 0x3a2f28); // keg
+        this.pulse(this.addBox(g, 0.54, 0.14, 0.42, 0, 1.2, -0.5, 0xffb13a, true)); // warning band
+        const strap = this.addBox(g, 0.14, 1.0, 0.06, 0, 1.05, 0.28, 0x2a2018);
+        strap.rotation.z = 0.6; // chest strap
+        this.addBox(g, 0.06, 0.2, 0.06, 0, 1.6, -0.5, 0x2a2018); // fuse stub
+        const spark = this.addBox(g, 0.14, 0.14, 0.14, 0, 1.74, -0.5, 0xffe14a, true, 1.4);
+        this.sparkMesh = spark;
+        this.pulse(spark);
+        break;
+      }
+      case "spitter": {
+        // bloated glowing bile sac + emissive drool off the chin
+        this.pulseRate = 5;
+        this.pulse(this.addBox(g, 0.5, 0.42, 0.26, 0, 0.92, 0.3, 0x9fef3a, true, 0.9));
+        this.addBox(g, 0.3, 0.1, 0.06, 0, 1.66, 0.405, 0x1f4a3a); // slack mouth
+        for (const dx of [-0.09, 0.08]) this.pulse(this.addBox(g, 0.07, 0.2, 0.07, dx, 1.5, 0.41, 0xb4ff4a, true));
+        break;
+      }
+      case "armored": {
+        // bolted steel: chest plate, pauldrons, helmet backplate (+ stud bolts)
+        const plate = (w: number, h: number, d: number, x: number, y: number, z: number) => {
+          const mat = new THREE.MeshStandardMaterial({ color: 0xc4ccd6, roughness: 0.35, metalness: 0.85, flatShading: true });
+          const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+          m.position.set(x, y, z);
+          g.add(m);
+        };
+        plate(0.86, 0.62, 0.12, 0, 1.1, 0.27); // chest plate
+        for (const sx of [-1, 1]) plate(0.4, 0.34, 0.52, sx * 0.56, 1.52, 0); // pauldrons
+        plate(0.78, 0.5, 0.1, 0, 1.85, -0.41); // helmet backplate
+        for (const sx of [-0.28, 0.28]) for (const sy of [0.94, 1.26]) this.addBox(g, 0.08, 0.08, 0.05, sx, sy, 0.345, 0x3a4048);
+        break;
+      }
+      case "banshee": {
+        // the screamer: gaping glowing maw, swept hair, an expanding scream ring
+        this.pulseRate = 7;
+        this.pulse(this.addBox(g, 0.3, 0.3, 0.08, 0, 1.7, 0.41, 0xff86c4, true, 1.3));
+        for (const sx of [-1, 1]) {
+          const hair = this.addBox(g, 0.16, 0.1, 0.6, sx * 0.2, 2.18, -0.35, 0x5a2342);
+          hair.rotation.x = -0.25;
+        }
+        this.ringMat = new THREE.MeshBasicMaterial({ color: 0xffb4dc, transparent: true, opacity: 0.5, depthWrite: false });
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.045, 6, 20), this.ringMat);
+        ring.position.set(0, 1.7, 0.45); // bursts forward from the maw
+        g.add(ring);
+        this.ringMesh = ring;
+        break;
+      }
+      case "abomination": {
+        // stitched colossus: suture crosses, glowing ruptures, a back ridge
+        this.pulseRate = 4;
+        this.addBox(g, 0.34, 0.07, 0.06, -0.1, 1.3, 0.27, 0xd8cfae);
+        this.addBox(g, 0.07, 0.3, 0.06, -0.1, 1.3, 0.27, 0xd8cfae);
+        this.addBox(g, 0.26, 0.06, 0.06, 0.12, 1.95, 0.39, 0xd8cfae); // head suture
+        this.pulse(this.addBox(g, 0.1, 0.34, 0.07, 0.22, 1.0, 0.27, 0xff5a2a, true));
+        this.pulse(this.addBox(g, 0.3, 0.1, 0.07, -0.16, 0.86, 0.27, 0xff5a2a, true));
+        for (let i = 0; i < 4; i++) this.addBox(g, 0.16, 0.42 - i * 0.07, 0.16, 0, 1.62, -0.3 - i * 0.2, 0x4a0f0f);
+        this.addBox(g, 0.26, 0.26, 0.26, 0.28, 2.18, -0.06, 0x2f1010); // head chunk gone
+        break;
+      }
+      case "vulture": {
+        // diver: tattered wing stubs that flap + grasping talons
+        this.flapRate = 8;
+        for (const sx of [-1, 1]) {
+          const w = this.addBox(g, 0.72, 0.3, 0.07, sx * 0.7, 1.62, -0.28, 0x4a3f55);
+          w.rotation.y = sx * 0.3;
+          this.wings.push(w);
+          this.addBox(g, 0.12, 0.12, 0.22, sx * 0.18, 0.06, 0.16, 0x2a2430); // talon
+        }
+        this.addBox(g, 0.4, 0.14, 0.3, 0, 1.78, 0.34, 0x3a3344); // beak brow
+        break;
+      }
+      case "gnat": {
+        // swarm midge: blurred translucent wings + feelers
+        this.flapRate = 18;
+        for (const sx of [-1, 1]) {
+          const wm = new THREE.MeshBasicMaterial({ color: 0xe8f4ff, transparent: true, opacity: 0.55, depthWrite: false });
+          const w = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.06), wm);
+          w.position.set(sx * 0.52, 1.8, -0.12);
+          g.add(w);
+          this.wings.push(w);
+          this.fadeMats.push({ mat: wm, base: 0.55 });
+          this.addBox(g, 0.05, 0.26, 0.05, sx * 0.15, 2.32, 0.1, 0x4a522a); // feeler
+          this.addBox(g, 0.1, 0.1, 0.1, sx * 0.15, 2.48, 0.1, 0xd6e89a); // feeler tip
+        }
+        break;
+      }
+      case "stinger": {
+        // hovering lobber: wasp wings + a glowing venom stinger out the back
+        this.flapRate = 14;
+        this.pulseRate = 9;
+        for (const sx of [-1, 1]) {
+          const wm = new THREE.MeshBasicMaterial({ color: 0xffe9b0, transparent: true, opacity: 0.5, depthWrite: false });
+          const w = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.2, 0.06), wm);
+          w.position.set(sx * 0.56, 1.78, -0.16);
+          g.add(w);
+          this.wings.push(w);
+          this.fadeMats.push({ mat: wm, base: 0.5 });
+        }
+        this.addBox(g, 0.36, 0.32, 0.4, 0, 1.0, -0.42, 0x6b4f12); // abdomen
+        const tail = this.addBox(g, 0.15, 0.15, 0.5, 0, 0.92, -0.68, 0xffd24a, true);
+        tail.rotation.x = 0.55; // angled down, ready to lob
+        this.pulse(tail);
+        break;
+      }
+      case "splitter": {
+        // glowing fission seam — telegraphs that it comes apart on death
+        this.pulseRate = 4;
+        this.pulse(this.addBox(g, 0.07, 0.92, 0.06, 0, 1.05, 0.285, 0x9fffc8, true, 0.9));
+        this.pulse(this.addBox(g, 0.07, 0.5, 0.05, 0, 1.95, 0.4, 0x9fffc8, true, 0.9));
+        for (const sx of [-1, 1]) this.addBox(g, 0.26, 0.26, 0.26, sx * 0.5, 1.6, -0.05, type.body); // budding clones
+        break;
+      }
+      case "splitling": {
+        // fresh half: one raw glowing seam down the middle
+        this.pulseRate = 5;
+        this.pulse(this.addBox(g, 0.06, 0.7, 0.05, 0, 1.2, 0.285, 0x9fffc8, true, 0.9));
+        break;
+      }
+      case "necro": {
+        // the summoner: dark cowl + mantle, slow-throbbing soul rune, horn nubs
+        this.pulseRate = 2.5;
+        this.addBox(g, 0.9, 0.55, 0.5, 0, 2.08, -0.18, 0x241433); // cowl
+        this.addBox(g, 1.0, 0.18, 0.6, 0, 1.55, 0, 0x32204a); // shoulder mantle
+        this.pulse(this.addBox(g, 0.26, 0.26, 0.07, 0, 1.12, 0.28, 0xb48cff, true, 0.9));
+        for (const sx of [-1, 1]) this.addBox(g, 0.12, 0.24, 0.12, sx * 0.3, 2.46, 0, 0x140a20);
+        break;
+      }
+      case "goblin": {
+        // the bounty: a bulging loot sack with coins glinting out the top
+        this.pulseRate = 8;
+        this.addBox(g, 0.56, 0.6, 0.42, 0, 1.3, -0.5, 0x8a5a32); // sack
+        this.addBox(g, 0.2, 0.16, 0.2, 0.08, 1.66, -0.5, 0x6e4626); // knot
+        this.pulse(this.addBox(g, 0.13, 0.13, 0.05, -0.14, 1.68, -0.42, 0xffd24a, true, 1.3));
+        this.pulse(this.addBox(g, 0.1, 0.1, 0.05, 0.16, 1.58, -0.74, 0xffd24a, true, 1.3));
+        break;
+      }
+      default: {
+        // shambler (and any new id): torn rags + a missing chunk of head
+        this.addBox(g, 0.3, 0.26, 0.06, -0.16, 1.12, 0.27, cloth);
+        this.addBox(g, 0.26, 0.2, 0.06, 0.2, 0.86, 0.27, 0x3a3a3a);
+        this.addBox(g, 0.06, 0.34, 0.3, 0.42, 0.95, 0, cloth); // side rag
+        this.addBox(g, 0.24, 0.24, 0.24, 0.3, 2.18, -0.08, 0x2f2f2f); // head notch
+        break;
+      }
+    }
+  }
+
+  /** Elite accent layered on top of the type kit (rebuilt per applyAffix). */
+  private buildAffixDecor(affix: Affix) {
+    if (!(this.char instanceof VoxelChar)) return;
+    disposeDecor(this.affixDecor);
+    this.affixPulseMats.length = 0;
+    const g = this.affixDecor;
+    const flick = (m: THREE.Mesh) => this.affixPulseMats.push(m.material as THREE.MeshStandardMaterial);
+    if (affix === "blazing") {
+      // flame nubs licking off the scalp + shoulders
+      flick(this.addBox(g, 0.16, 0.3, 0.16, 0, 2.36, 0, 0xff6a1f, true, 1.3));
+      flick(this.addBox(g, 0.12, 0.22, 0.12, 0.16, 2.46, -0.1, 0xffb13a, true, 1.3));
+      for (const sx of [-1, 1]) flick(this.addBox(g, 0.13, 0.26, 0.13, sx * 0.52, 1.62, 0, 0xff6a1f, true, 1.3));
+    } else if (affix === "glacial") {
+      // a frost cap + icicles hanging off brow and shoulders (steady cold glow)
+      this.addBox(g, 0.82, 0.12, 0.82, 0, 2.28, 0, 0xcfeffd);
+      for (const sx of [-1, 1]) {
+        this.addBox(g, 0.09, 0.34, 0.09, sx * 0.52, 1.28, 0.08, 0x9fe4ff, true, 0.5);
+        this.addBox(g, 0.07, 0.24, 0.07, sx * 0.2, 1.4, 0.34, 0x9fe4ff, true, 0.5);
+      }
+    } else {
+      // overloading: sparking antennae + an arcing chest node
+      for (const sx of [-1, 1]) {
+        this.addBox(g, 0.05, 0.42, 0.05, sx * 0.2, 2.4, 0, 0x2a2a33);
+        flick(this.addBox(g, 0.13, 0.13, 0.13, sx * 0.2, 2.64, 0, 0xc792ea, true, 1.3));
+      }
+      flick(this.addBox(g, 0.2, 0.2, 0.07, 0, 1.12, 0.285, 0xc792ea, true, 1.3));
+    }
+  }
+
+  /** Boss regalia: spike crown, oversized burning eyes, jaw, ridge, ground ring. */
+  private buildBossDecor() {
+    if (!(this.char instanceof VoxelChar)) return;
+    disposeDecor(this.bossDecor);
+    const g = this.bossDecor;
+    this.addBox(g, 0.9, 0.14, 0.9, 0, 2.3, 0, 0x3a2f28); // crown band
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      this.addBox(g, 0.14, 0.34, 0.14, Math.cos(a) * 0.34, 2.5, Math.sin(a) * 0.34, 0xffd24a, true, 1.4);
+    }
+    for (const sx of [-1, 1]) this.addBox(g, 0.2, 0.2, 0.05, sx * 0.16, 1.88, 0.44, 0xff3b1f, true, 1.6); // big eyes
+    this.addBox(g, 0.5, 0.14, 0.2, 0, 1.56, 0.38, 0x3a2f28); // heavy jaw
+    for (let i = 0; i < 4; i++) this.addBox(g, 0.16, 0.4 - i * 0.07, 0.16, 0, 1.66, -0.3 - i * 0.2, 0x4a1010); // back ridge
+    // ground-menace ring (throbs in animateDecor)
+    const rg = new THREE.RingGeometry(0.7, 1.0, 22);
+    rg.rotateX(-Math.PI / 2);
+    this.bossRingMat = new THREE.MeshBasicMaterial({ color: 0xff3b1f, transparent: true, opacity: 0.4, depthWrite: false });
+    const ring = new THREE.Mesh(rg, this.bossRingMat);
+    ring.position.y = 0.05;
+    g.add(ring);
+  }
+
+  /** Dispose boss regalia from a previous life (pooled respawn as a non-boss). */
+  private clearBossDecor() {
+    if (this.bossDecor.children.length === 0) return;
+    disposeDecor(this.bossDecor);
+    this.bossRingMat = null;
+  }
+
+  /**
+   * Per-frame decor animation — pure phase-based trig over refs captured at
+   * build time (tdenemy-style); zero allocations, cheap enough for 170 alive.
+   */
+  private animateDecor(dt: number) {
+    this.decorT += dt;
+    const t = this.decorT;
+    if (this.pulseMats.length > 0) {
+      const p = 0.55 + (Math.sin(t * this.pulseRate) * 0.5 + 0.5) * 1.0;
+      for (let i = 0; i < this.pulseMats.length; i++) this.pulseMats[i].emissiveIntensity = p;
+    }
+    for (let i = 0; i < this.affixPulseMats.length; i++) {
+      this.affixPulseMats[i].emissiveIntensity = 0.7 + Math.abs(Math.sin(t * 16 + i * 1.7)) * 0.8;
+    }
+    for (let i = 0; i < this.fadeMats.length; i++) {
+      const f = this.fadeMats[i];
+      f.mat.opacity = f.base * (0.55 + (Math.sin(t * 14 + i * 2.1) * 0.5 + 0.5) * 0.45);
+    }
+    for (let i = 0; i < this.wings.length; i++) {
+      const w = this.wings[i];
+      const s = w.position.x < 0 ? 1 : -1;
+      w.rotation.z = s * (0.5 + Math.sin(t * this.flapRate) * 0.4);
+    }
+    if (this.sparkMesh) this.sparkMesh.scale.setScalar(0.7 + Math.abs(Math.sin(t * 13)) * 0.7);
+    if (this.ringMesh && this.ringMat) {
+      const k = (t * 0.9) % 1; // expanding scream ring: grow + fade, then restart
+      this.ringMesh.scale.setScalar(0.4 + k * 1.8);
+      this.ringMat.opacity = 0.5 * (1 - k);
+    }
+    if (this.bossRingMat) this.bossRingMat.opacity = 0.3 + (Math.sin(t * 3) * 0.5 + 0.5) * 0.25;
   }
 }
