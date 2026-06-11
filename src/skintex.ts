@@ -42,23 +42,31 @@ class Painter {
     this.g.fillStyle = css(color, f, a);
     this.g.fillRect(x, y, w, h);
   }
-  /** fill a face with vertical light→shade + fabric noise + a soft dark AO border */
-  shade(r: Rect, color: number, seedBase: number, opts: { ao?: boolean; vGrad?: number } = {}) {
+  /** fill a face with a soft top-left lit gradient + fabric grain + a rounded AO border */
+  shade(r: Rect, color: number, seedBase: number, opts: { ao?: boolean; vGrad?: number; sheen?: boolean } = {}) {
     const [X, Y, W, H] = r;
     let seed = seedBase | 1;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     const vg = opts.vGrad ?? 0.26;
     for (let py = 0; py < H; py++) {
-      const grad = 1.1 - (py / Math.max(1, H - 1)) * vg;
+      // vertical light→shade plus a gentle horizontal form-shading (lit from the left)
+      const grad = 1.12 - (py / Math.max(1, H - 1)) * vg;
       for (let px = 0; px < W; px++) {
-        const n = 0.95 + rnd() * 0.1;
-        this.rect(X + px, Y + py, 1, 1, color, grad * n);
+        const hx = (px / Math.max(1, W - 1)) - 0.5;
+        const form = 1 - Math.abs(hx) * 0.14 + (hx < 0 ? 0.04 : 0); // round the surface, lit left
+        const n = 0.96 + rnd() * 0.08;
+        this.rect(X + px, Y + py, 1, 1, color, grad * form * n);
       }
     }
+    if (opts.sheen) { // a single bright specular dab near the top-left
+      this.rect(X + 1, Y + 1, Math.max(1, Math.floor(W * 0.3)), 1, lighter(color, 1.7), 0.55);
+      this.rect(X + 1, Y + 1, 1, Math.max(1, Math.floor(H * 0.25)), lighter(color, 1.7), 0.45);
+    }
     if (opts.ao !== false) {
-      // 1px ambient-occlusion border so parts read as separated volumes
-      for (let px = 0; px < W; px++) { this.rect(X + px, Y, 1, 1, color, 0.7); this.rect(X + px, Y + H - 1, 1, 1, color, 0.62); }
-      for (let py = 0; py < H; py++) { this.rect(X, Y + py, 1, 1, color, 0.78); this.rect(X + W - 1, Y + py, 1, 1, color, 0.78); }
+      // softened ambient-occlusion border + darkened corners so parts read as volumes
+      for (let px = 0; px < W; px++) { this.rect(X + px, Y, 1, 1, color, 0.74); this.rect(X + px, Y + H - 1, 1, 1, color, 0.6); }
+      for (let py = 0; py < H; py++) { this.rect(X, Y + py, 1, 1, color, 0.82); this.rect(X + W - 1, Y + py, 1, 1, color, 0.76); }
+      this.rect(X, Y + H - 1, 1, 1, color, 0.5); this.rect(X + W - 1, Y + H - 1, 1, 1, color, 0.5);
     }
   }
 }
@@ -71,31 +79,116 @@ function pattern(p: Painter, name: string, r: Rect, accent: number) {
   const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
   switch (name) {
     case "stars":
-      for (let i = 0; i < 14; i++) { const x = X + Math.floor(rnd() * W), y = Y + Math.floor(rnd() * H); p.rect(x, y, 1, 1, 0xffffff, 1); if (rnd() < 0.5) { p.rect(x - 1, y, 1, 1, accent, 1); p.rect(x + 1, y, 1, 1, accent, 1); p.rect(x, y - 1, 1, 1, accent, 1); p.rect(x, y + 1, 1, 1, accent, 1); } }
+      for (let i = 0; i < 16; i++) {
+        const x = X + 1 + Math.floor(rnd() * (W - 2)), y = Y + 1 + Math.floor(rnd() * (H - 2));
+        const big = rnd() < 0.45;
+        p.rect(x, y, 1, 1, 0xffffff, 1);
+        if (big) { p.rect(x - 1, y, 1, 1, accent, 0.95); p.rect(x + 1, y, 1, 1, accent, 0.95); p.rect(x, y - 1, 1, 1, accent, 0.95); p.rect(x, y + 1, 1, 1, accent, 0.95); }
+        else if (rnd() < 0.5) p.rect(x, y, 1, 1, lighter(accent, 1.4), 0.8);
+      }
       break;
     case "stripes":
-      for (let i = 0; i < W; i += 3) { g.globalAlpha = 0.35; p.rect(X + i, Y, 2, H, lighter(accent, 1.2), 1); g.globalAlpha = 1; }
+      for (let i = 0; i < W; i += 4) { g.globalAlpha = 0.4; p.rect(X + i, Y, 2, H, lighter(accent, 1.2), 1); g.globalAlpha = 0.18; p.rect(X + i + 2, Y, 1, H, darker(accent, 0.7), 1); g.globalAlpha = 1; }
       break;
-    case "scales":
-      for (let y = Y + 2; y < Y + H; y += 3) for (let x = X + 1 + ((y % 6 === 0) ? 0 : 2); x < X + W; x += 4) { p.rect(x, y, 3, 2, darker(accent, 0.8), 1); p.rect(x, y, 3, 1, lighter(accent, 1.2), 1); }
+    case "scales": // overlapping fish/dragon scales with a lit rim
+      for (let row = 0, y = Y + 1; y < Y + H; y += 3, row++) {
+        const off = row % 2 ? 2 : 0;
+        for (let x = X + 1 + off; x < X + W - 1; x += 4) {
+          p.rect(x, y, 3, 3, darker(accent, 0.7), 1);
+          p.rect(x, y, 3, 1, lighter(accent, 1.35), 1);
+          p.rect(x + 1, y + 1, 1, 1, lighter(accent, 1.15), 1);
+        }
+      }
       break;
-    case "bones": // ribcage
-      for (let y = Y + 6; y < Y + H - 6; y += 5) { p.rect(X + 3, y, W - 6, 2, 0xf4efe0, 1); }
-      p.rect(X + Math.floor(W / 2) - 1, Y + 4, 3, H - 12, 0xe8e0cc, 1); // sternum
+    case "bones": { // ribcage + sternum + collarbone
+      const cx = X + Math.floor(W / 2);
+      p.rect(cx - 3, Y + 2, 6, 2, 0xf4efe0, 1); // collarbone
+      for (let y = Y + 6; y < Y + H - 4; y += 4) {
+        p.rect(X + 3, y, W - 6, 2, 0xf4efe0, 1);
+        p.rect(X + 3, y + 1, W - 6, 1, darker(0xf4efe0, 0.7), 0.5);
+      }
+      p.rect(cx - 1, Y + 4, 3, H - 10, 0xe8e0cc, 1); // sternum
       break;
-    case "bandage":
-      for (let y = Y; y < Y + H; y += 4) { g.globalAlpha = 0.5; p.rect(X, y, W, 2, darker(accent, 0.8), 1); g.globalAlpha = 1; }
+    }
+    case "bandage": // wrapped linen, diagonal overlaps + frayed edge
+      for (let y = Y; y < Y + H; y += 4) {
+        const sk = ((y - Y) % 8 === 0) ? 1 : 0;
+        g.globalAlpha = 0.55; p.rect(X, y + sk, W, 2, darker(accent, 0.78), 1);
+        g.globalAlpha = 0.3; p.rect(X, y + sk + 2, W, 1, darker(accent, 0.55), 1);
+        g.globalAlpha = 1;
+      }
+      p.rect(X + Math.floor(W * 0.6), Y + Math.floor(H * 0.35), 3, 2, darker(accent, 0.5), 0.6); // frayed tuck
       break;
-    case "circuit":
-      for (let i = 0; i < 8; i++) { const x = X + 2 + Math.floor(rnd() * (W - 4)), y = Y + 2 + Math.floor(rnd() * (H - 4)); p.rect(x, y, Math.floor(rnd() * 6) + 2, 1, accent, 1); p.rect(x, y, 1, Math.floor(rnd() * 6) + 2, accent, 1); p.rect(x, y, 2, 2, lighter(accent, 1.4), 1); }
+    case "circuit": { // traces, vias and a chip block
+        for (let i = 0; i < 9; i++) {
+          const x = X + 2 + Math.floor(rnd() * (W - 4)), y = Y + 2 + Math.floor(rnd() * (H - 4));
+          p.rect(x, y, Math.floor(rnd() * 6) + 2, 1, accent, 0.95);
+          p.rect(x, y, 1, Math.floor(rnd() * 6) + 2, accent, 0.95);
+          p.rect(x, y, 2, 2, lighter(accent, 1.5), 1); // via node
+        }
+        const chx = X + Math.floor(W * 0.34), chy = Y + Math.floor(H * 0.42);
+        p.rect(chx, chy, 5, 4, darker(accent, 0.4), 1); // chip
+        for (let i = 0; i < 5; i++) { p.rect(chx + i, chy - 1, 1, 1, accent, 1); p.rect(chx + i, chy + 4, 1, 1, accent, 1); }
+        break;
+    }
+    case "runes": // glowing glyph column with a halo
+      for (let i = 0; i < 6; i++) {
+        const x = X + 3 + Math.floor(rnd() * (W - 6)), y = Y + 3 + Math.floor(rnd() * (H - 6));
+        p.rect(x - 1, y - 1, 4, 6, accent, 0.18); // glow halo
+        p.rect(x, y, 1, 4, accent, 1); p.rect(x - 1, y + 1, 3, 1, accent, 1); p.rect(x - 1, y + 3, 3, 1, accent, 1);
+        p.rect(x, y, 1, 1, lighter(accent, 1.6), 1);
+      }
       break;
-    case "runes":
-      for (let i = 0; i < 5; i++) { const x = X + 3 + Math.floor(rnd() * (W - 6)), y = Y + 3 + Math.floor(rnd() * (H - 6)); p.rect(x, y, 1, 4, accent, 1); p.rect(x - 1, y + 1, 3, 1, accent, 1); p.rect(x - 1, y + 3, 3, 1, accent, 1); }
-      break;
-    case "plate": // armour plates with rivets
+    case "plate": // armour plates with bevel + rivets
       p.rect(X + 2, Y + 3, W - 4, Math.floor(H * 0.5), lighter(accent, 1.18), 1);
-      p.rect(X + 2, Y + 3, W - 4, 1, lighter(accent, 1.5), 1);
-      for (const cx of [X + 4, X + W - 5]) for (const cy of [Y + 5, Y + Math.floor(H * 0.5)]) p.rect(cx, cy, 2, 2, 0xd8dde4, 1);
+      p.rect(X + 2, Y + 3, W - 4, 1, lighter(accent, 1.55), 1); // top bevel
+      p.rect(X + 2, Y + 3 + Math.floor(H * 0.5) - 1, W - 4, 1, darker(accent, 0.65), 1); // bottom shade
+      for (const cx of [X + 4, X + W - 5]) for (const cy of [Y + 5, Y + Math.floor(H * 0.5)]) { p.rect(cx, cy, 2, 2, 0xd8dde4, 1); p.rect(cx, cy, 1, 1, 0xffffff, 0.8); }
+      break;
+    case "weave": // fine cross-hatch cloth weave
+      for (let y = Y; y < Y + H; y += 2) p.rect(X, y, W, 1, darker(accent, 0.85), 0.22);
+      for (let x = X; x < X + W; x += 2) p.rect(x, Y, 1, H, lighter(accent, 1.12), 0.18);
+      break;
+    case "camo": { // blobby camouflage in three tones
+      const tones = [darker(accent, 0.7), accent, lighter(accent, 1.2)];
+      for (let i = 0; i < 18; i++) {
+        const x = X + Math.floor(rnd() * W), y = Y + Math.floor(rnd() * H);
+        const bw = 2 + Math.floor(rnd() * 3), bh = 2 + Math.floor(rnd() * 3);
+        p.rect(x, y, bw, bh, tones[i % 3], 0.7);
+      }
+      break;
+    }
+    case "feather": // layered plumage scallops
+      for (let row = 0, y = Y + 1; y < Y + H; y += 3, row++) {
+        const off = row % 2 ? 2 : 0;
+        for (let x = X + 1 + off; x < X + W - 1; x += 4) {
+          p.rect(x, y, 3, 2, lighter(accent, 1.3), 0.9);
+          p.rect(x + 1, y + 1, 1, 1, darker(accent, 0.7), 0.8);
+        }
+      }
+      break;
+    case "dots": // soft polka dots
+      for (let row = 0, y = Y + 2; y < Y + H - 1; y += 4, row++) {
+        const off = row % 2 ? 2 : 0;
+        for (let x = X + 2 + off; x < X + W - 1; x += 4) { p.rect(x, y, 2, 2, accent, 0.8); p.rect(x, y, 1, 1, lighter(accent, 1.4), 0.9); }
+      }
+      break;
+    case "gem": // faceted crystal lozenges
+      for (let i = 0; i < 6; i++) {
+        const x = X + 2 + Math.floor(rnd() * (W - 5)), y = Y + 2 + Math.floor(rnd() * (H - 5));
+        p.rect(x, y + 1, 3, 1, darker(accent, 0.7), 1); p.rect(x + 1, y, 1, 3, lighter(accent, 1.4), 1);
+        p.rect(x, y + 1, 1, 1, lighter(accent, 1.6), 1); p.rect(x + 2, y + 1, 1, 1, darker(accent, 0.6), 1);
+      }
+      break;
+    case "lightning": // jagged bolt
+      { let lx = X + Math.floor(W * 0.5), ly = Y + 2; for (let k = 0; k < H - 4 && ly < Y + H - 1; k += 2) { p.rect(lx, ly, 2, 2, lighter(accent, 1.5), 1); p.rect(lx, ly, 1, 1, 0xffffff, 0.9); lx += (rnd() < 0.5 ? -2 : 2); lx = Math.max(X + 1, Math.min(X + W - 2, lx)); ly += 2; } }
+      break;
+    case "floral": // scattered little blossoms
+      for (let i = 0; i < 5; i++) {
+        const x = X + 3 + Math.floor(rnd() * (W - 6)), y = Y + 3 + Math.floor(rnd() * (H - 6));
+        p.rect(x, y, 1, 1, 0xfff4c0, 1); // centre
+        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) p.rect(x + dx, y + dy, 1, 1, accent, 0.9);
+      }
       break;
     default: break;
   }
@@ -107,7 +200,7 @@ function paint(g: CanvasRenderingContext2D, skin: Skin) {
   const shirt = skin.body;
   const pants = skin.pants ?? darker(skin.body, 0.6);
   const shoes = skin.shoes ?? 0x241a12;
-  const hair = darker(skin.head, 0.45);
+  const hair = skin.hairColor ?? darker(skin.head, 0.45);
   const glove = skin.gloves ?? darker(shirt, 0.7);
 
   // ===== HEAD =====
@@ -120,26 +213,63 @@ function paint(g: CanvasRenderingContext2D, skin: Skin) {
     const fr = f === "front" ? 4 * RES : 3 * RES;
     for (let y = 0; y < fr; y++) for (let x = 0; x < W; x++) p.rect(X + x, Y + y, 1, 1, hair, 1 - (y / fr) * 0.25);
   }
-  // ---- face on the front ----
+  // ---- face on the front (per-skin expression flair) ----
   {
     const [X, Y, W, H] = p.px("head", "front");
     const ex = [X + Math.floor(W * 0.2), X + Math.floor(W * 0.62)];
     const ey = Y + Math.floor(H * 0.46);
     const ew = Math.floor(W * 0.18), eh = Math.floor(H * 0.2);
-    const iris = skin.glow ?? 0x3a6abf;
-    for (const eyeX of ex) {
-      p.rect(eyeX - 1, ey - 2, ew + 2, 1, 0x3a2a22, 1); // brow
-      p.rect(eyeX, ey, ew, eh, 0xf6f6f6, 1); // sclera
-      p.rect(eyeX + Math.floor(ew * 0.25), ey, Math.ceil(ew * 0.6), eh, iris, 1); // iris
-      p.rect(eyeX + Math.floor(ew * 0.4), ey + 1, 2, eh - 1, 0x181018, 1); // pupil
-      p.rect(eyeX + Math.floor(ew * 0.3), ey, 1, 1, 0xffffff, 1); // highlight
-    }
-    // nose + cheeks + mouth
-    p.rect(X + Math.floor(W * 0.46), ey + eh + 1, 2, 2, tone, 0.78);
-    p.rect(ex[0] - 1, ey + eh + 1, 2, 2, 0xff8a8a, 0.35); // blush
-    p.rect(ex[1] + ew - 1, ey + eh + 1, 2, 2, 0xff8a8a, 0.35);
+    const iris = skin.eyeColor ?? skin.glow ?? 0x3a6abf;
+    const face = skin.face ?? "default";
+    const cheek = skin.cheek;
     const mY = Y + Math.floor(H * 0.74);
-    p.rect(X + Math.floor(W * 0.34), mY, Math.floor(W * 0.32), 2, 0x7a3a30, 1);
+
+    if (face === "visor") {
+      // sleek glowing visor band across both eyes
+      const vy = ey - 1, vh = eh + 2;
+      p.rect(ex[0] - 2, vy, (ex[1] - ex[0]) + ew + 4, vh, 0x14141c, 1);
+      p.rect(ex[0] - 1, vy + 1, (ex[1] - ex[0]) + ew + 2, Math.max(1, vh - 2), iris, 0.95);
+      p.rect(ex[0] - 1, vy + 1, Math.floor((ex[1] - ex[0]) * 0.4), 1, lighter(iris, 1.6), 1); // glint
+      p.rect(X + Math.floor(W * 0.36), mY, Math.floor(W * 0.28), 1, darker(tone, 0.5), 0.7); // neutral mouth
+    } else if (face === "skull") {
+      // dark sockets with a glowing pinpoint
+      for (const eyeX of ex) {
+        p.rect(eyeX - 1, ey - 1, ew + 2, eh + 2, 0x101015, 1);
+        p.rect(eyeX + Math.floor(ew * 0.3), ey + Math.floor(eh * 0.3), 2, 2, iris, 1);
+        p.rect(eyeX + Math.floor(ew * 0.3), ey + Math.floor(eh * 0.3), 1, 1, lighter(iris, 1.6), 1);
+      }
+      p.rect(X + Math.floor(W * 0.46), ey + eh + 1, 2, 2, 0x101015, 1); // nasal
+      // stitched grin
+      const gx = X + Math.floor(W * 0.3), gw = Math.floor(W * 0.4);
+      p.rect(gx, mY, gw, 2, 0x101015, 1);
+      for (let i = 1; i < gw; i += 2) p.rect(gx + i, mY - 1, 1, 4, darker(tone, 0.6), 0.9);
+    } else {
+      // standard eyes (brow + sclera + iris + pupil + highlight)
+      for (let i = 0; i < ex.length; i++) {
+        const eyeX = ex[i];
+        const winking = face === "wink" && i === 1;
+        if (winking) { p.rect(eyeX, ey + Math.floor(eh * 0.5), ew, 1, 0x3a2a22, 1); continue; }
+        const browA = face === "stern" || face === "fanged" ? 1 : 0.85;
+        p.rect(eyeX - 1, ey - 2, ew + 2, 1, 0x3a2a22, browA); // brow
+        if (face === "stern") p.rect(eyeX - 1, ey - 1, ew + 2, 1, 0x3a2a22, 0.5); // furrow
+        p.rect(eyeX, ey, ew, eh, 0xf6f6f6, 1); // sclera
+        p.rect(eyeX + Math.floor(ew * 0.25), ey, Math.ceil(ew * 0.6), eh, iris, 1); // iris
+        if (face === "glow") p.rect(eyeX - 1, ey - 1, ew + 2, eh + 2, iris, 0.22); // glow aura
+        p.rect(eyeX + Math.floor(ew * 0.4), ey + 1, 2, eh - 1, 0x181018, 1); // pupil
+        p.rect(eyeX + Math.floor(ew * 0.3), ey, 1, 1, 0xffffff, 1); // highlight
+      }
+      // nose
+      p.rect(X + Math.floor(W * 0.46), ey + eh + 1, 2, 2, tone, 0.78);
+      // cheeks/blush (suppressed when cheek === 0)
+      if (cheek !== 0) {
+        const bl = cheek ?? 0xff8a8a;
+        p.rect(ex[0] - 1, ey + eh + 1, 2, 2, bl, 0.4);
+        p.rect(ex[1] + ew - 1, ey + eh + 1, 2, 2, bl, 0.4);
+      }
+      // mouth — fanged adds little tusks
+      p.rect(X + Math.floor(W * 0.34), mY, Math.floor(W * 0.32), 2, 0x7a3a30, 1);
+      if (face === "fanged") { p.rect(X + Math.floor(W * 0.36), mY + 1, 1, 2, 0xfff8ee, 1); p.rect(X + Math.floor(W * 0.6), mY + 1, 1, 2, 0xfff8ee, 1); }
+    }
   }
 
   // ===== OUTFIT (torso + arms + legs) — a designed garment, not a flat shirt =====
@@ -153,13 +283,15 @@ const SIDES: SideFace[] = ["front", "back", "left", "right"];
 function paintOutfit(p: Painter, skin: Skin, c: { tone: number; shirt: number; pants: number; shoes: number; glove: number }) {
   const { tone, shirt, pants, shoes, glove } = c;
   const trim = skin.trim ?? lighter(shirt, 1.45);
+  const accent = skin.accent ?? lighter(shirt, 1.3);
   const tmpl = skin.outfit ?? "tee";
   const dressLike = tmpl === "dress" || tmpl === "robe";
   const shorts = skin.legwear === "shorts" || tmpl === "tank";
 
+  const sheen = skin.glow !== undefined; // high-rarity skins get a specular dab
   const fillPart = (part: keyof typeof ATLAS, color: number, seed: number, vg = 0.26) => {
     let s = seed;
-    for (const f of FACES) p.shade(p.px(part, f), color, (s += 29), { vGrad: vg });
+    for (const f of FACES) p.shade(p.px(part, f), color, (s += 29), { vGrad: vg, sheen: sheen && (f === "front" || f === "back") });
   };
   const onSides = (part: keyof typeof ATLAS, fn: (r: Rect, f: SideFace) => void) => {
     for (const f of SIDES) fn(p.px(part, f), f);
@@ -168,10 +300,13 @@ function paintOutfit(p: Painter, skin: Skin, c: { tone: number; shirt: number; p
   // ---- TORSO ----
   fillPart("body", shirt, 200);
   onSides("body", ([X, Y, W, H], f) => {
-    // neck/collar hole (skin tone) at top centre
+    // neck/collar hole (skin tone) at top centre + an accent collar trim
+    p.rect(X + Math.floor(W * 0.3), Y, Math.ceil(W * 0.4), 1, accent, 0.9); // collar band
     p.rect(X + Math.floor(W * 0.32), Y, Math.ceil(W * 0.36), 2, tone, 0.9);
     p.rect(X, Y, W, 1, lighter(shirt, 1.3), 1); // shoulder seam highlight
+    p.rect(X, Y, 1, H, darker(shirt, 0.82), 0.5); p.rect(X + W - 1, Y, 1, H, darker(shirt, 0.82), 0.5); // side seams
     if (skin.pattern && f === "front") pattern(p, skin.pattern, [X, Y + 3, W, H - 7], skin.glow ?? skin.emblem ?? trim);
+    if (skin.pattern && f === "back" && (skin.pattern === "scales" || skin.pattern === "feather" || skin.pattern === "plate")) pattern(p, skin.pattern, [X, Y + 3, W, H - 7], skin.glow ?? skin.emblem ?? trim);
   });
   const [bX, bY, bW, bH] = p.px("body", "front");
   const [kX, kY, kW, kH] = p.px("body", "back");
@@ -250,17 +385,19 @@ function paintOutfit(p: Painter, skin: Skin, c: { tone: number; shirt: number; p
   fillPart("arm", shirt, 320);
   onSides("arm", ([X, Y, W, H]) => {
     p.rect(X, Y, W, 2, lighter(shirt, 1.25), 1); // shoulder cap
-    if (tmpl === "armor") { p.rect(X, Y, W, 4, lighter(shirt, 1.45), 1); p.rect(X, Y + 4, W, 1, 0xd8dde4, 1); } // pauldron
+    p.rect(X, Y + 2, W, 1, accent, 0.5); // accent shoulder stripe
+    if (tmpl === "armor") { p.rect(X, Y, W, 4, lighter(shirt, 1.45), 1); p.rect(X, Y + 4, W, 1, 0xd8dde4, 1); p.rect(X + Math.floor(W / 2) - 1, Y + 1, 2, 2, accent, 1); } // pauldron + stud
     if (tmpl === "suit") p.rect(X, Y + Math.floor(H * 0.45), W, 2, trim, 1); // elbow ring
     const cuffH = longSleeve ? Math.floor(H * 0.26) : Math.floor(H * 0.55); // short sleeve shows more bare arm
     if (!longSleeve) { // bare forearm (skin) for tee/tank
       for (let y = Y + (H - cuffH); y < Y + H; y++) for (let x = 0; x < W; x++) p.rect(X + x, y, 1, 1, tone, 0.96);
       p.rect(X, Y + (H - cuffH), W, 1, darker(shirt, 0.8), 1); // sleeve hem
     }
-    // glove/cuff at the wrist
+    // glove/cuff at the wrist + accent cuff line
     const gH = Math.floor(H * 0.22);
     for (let y = Y + H - gH; y < Y + H; y++) for (let x = 0; x < W; x++) p.rect(X + x, y, 1, 1, glove, 1);
-    p.rect(X, Y + H - gH, W, 1, lighter(glove, 1.3), 1);
+    p.rect(X, Y + H - gH, W, 1, accent, 0.9);
+    p.rect(X, Y + H - gH + 1, W, 1, lighter(glove, 1.3), 0.7);
   });
   p.shade(p.px("arm", "bottom"), tone, 355, { ao: false }); // palm
 
@@ -284,7 +421,9 @@ function paintOutfit(p: Painter, skin: Skin, c: { tone: number; shirt: number; p
     }
     const bootH = Math.floor(H * 0.3);
     for (let y = Y + H - bootH; y < Y + H; y++) for (let x = 0; x < W; x++) p.rect(X + x, y, 1, 1, shoes, 1 - (y - (Y + H - bootH)) * 0.03);
-    p.rect(X, Y + H - bootH, W, 1, lighter(shoes, 1.6), 1); // boot trim
+    p.rect(X, Y + H - bootH, W, 1, accent, 0.85); // accent boot cuff
+    p.rect(X, Y + H - bootH + 1, W, 1, lighter(shoes, 1.6), 0.7); // boot trim shine
+    p.rect(X, Y + H - 1, W, 1, lighter(shoes, 1.4), 0.5); // toe shine
   });
   p.shade(p.px("leg", "bottom"), darker(shoes, 0.7), 444, { ao: false }); // sole
 }
