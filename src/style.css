@@ -1111,6 +1111,9 @@ body.touch .controls { display: none; }
   background: radial-gradient(ellipse at 50% 38%, rgba(58, 44, 30, 0.42), rgba(34, 26, 18, 0.62));
   backdrop-filter: blur(3px);
   pointer-events: auto;
+  /* Above the touch layer (z-index 30) so the on-screen joystick can't steal
+     taps meant for the shop / level-up / game-over menus on mobile. */
+  z-index: 50;
   animation: overlay-in 0.4s ease both;
 }
 /* The start menu is the tall one (intro + shop + controls + buttons). Anchor it
