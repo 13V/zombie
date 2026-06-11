@@ -75,6 +75,8 @@ class Game implements GameApi {
   private _hatching = false; // an egg-hatch reveal is on screen (blocks re-hatch)
   private _gatherPortal = ""; // mode portal I'm currently standing in (co-op gather)
   private _portalStarting = false; // a portal match is being launched (host or guest)
+  private _dwellZone = ""; // join-the-game structure I'm charging into (auto-enter)
+  private _dwellTime = 0; // seconds stood inside it, fills the auto-enter charge
   private _localAura?: THREE.Mesh; // my own lobby flex aura (attached to player.group)
   private _localPlate?: THREE.Sprite; // my own nameplate over my head in the hub
   private _lbAcc = 0; // throttle accumulator for the lobby leaderboard refresh
@@ -1950,6 +1952,8 @@ class Game implements GameApi {
     this.drops.clearAll();
     this._portalStarting = false; // fresh gather state on (re)entering the hub
     this._gatherPortal = "";
+    this._dwellZone = ""; // no auto-enter charge until we actually stand in a portal
+    this._dwellTime = 0;
     this.island.setDailyReady(dayUtc(Date.now()) !== this.save.dailyChestDay); // chest glow
     this.spawnPets(); // bring the equipped squad into the hub so they follow + flex
     this.setLocalAura(this.auraTierFor()); // show my own earned aura in the hub
@@ -2112,6 +2116,24 @@ class Game implements GameApi {
     if (this._gatherPortal) { this._gatherPortal = ""; this.islandNet?.setPortal(null); }
 
     const egg = near?.kind === "egg" ? findEgg(near.eggId ?? "") : undefined;
+
+    // Auto-enter: walking into a "join the game" structure (zombie portals, the
+    // Tower Defense gateway, the Bed Wars portal) charges a short timer and then
+    // launches — no button press needed. Walk off to cancel. Vendors (shop, eggs,
+    // pets, wardrobe, daily chest, wheel) still want a deliberate [E] press.
+    const autoPortal = !!near && (near.kind === "mode" || near.kind === "td" || near.kind === "bedwars");
+    if (autoPortal && near) {
+      if (this._dwellZone !== near.id) { this._dwellZone = near.id; this._dwellTime = 0; }
+      this._dwellTime += dt;
+    } else {
+      this._dwellZone = "";
+      this._dwellTime = 0;
+    }
+    const DWELL = 0.75; // seconds of standing inside before the portal fires
+    const ready = this._dwellTime >= DWELL;
+    const filled = Math.round(Math.min(1, this._dwellTime / DWELL) * 8);
+    const bar = "▰".repeat(filled) + "▱".repeat(8 - filled);
+
     if (egg) {
       // egg pedestal: a drop-rate panel + an affordability-aware [E] prompt.
       const affordable = this.save.gold >= egg.cost;
@@ -2127,26 +2149,35 @@ class Game implements GameApi {
       );
       this.hud.showPrompt(`Hatch ${egg.name} — ${egg.cost.toLocaleString()}g  [E]`, affordable);
     } else if (near?.kind === "td") {
-      // Tower Defense portal offers two modes: E = Solo, 2 = 1v1 Duel.
+      // Tower Defense gateway auto-enters Solo; number keys pick a variant.
       this.hud.hideEggPanel();
       const dailyDone = !tdDailyAvailable(this.save.tdDailyDay, tdDailyDay());
       this.hud.showPrompt(
-        `Tower Defense —  E: Solo · 2: Duel · 3: Endless (best ${this.save.bestWave}) · 4: Daily${dailyDone ? " ✓" : ""} · 5: Wager ${WAGER_STAKES[1]}g`,
+        `Tower Defense ${bar} entering Solo · 2: Duel · 3: Endless (best ${this.save.bestWave}) · 4: Daily${dailyDone ? " ✓" : ""} · 5: Wager ${WAGER_STAKES[1]}g`,
         true,
       );
-      if (this.input.pressed("Digit2")) { this.enterTd("duel"); return; }
-      if (this.input.pressed("Digit3")) { this.enterTd("endless"); return; }
-      if (this.input.pressed("Digit4")) { this.enterTd("daily"); return; }
-      if (this.input.pressed("Digit5")) { this.enterTd("wager"); return; }
+      if (this.input.pressed("Digit2")) { this._dwellTime = 0; this.enterTd("duel"); return; }
+      if (this.input.pressed("Digit3")) { this._dwellTime = 0; this.enterTd("endless"); return; }
+      if (this.input.pressed("Digit4")) { this._dwellTime = 0; this.enterTd("daily"); return; }
+      if (this.input.pressed("Digit5")) { this._dwellTime = 0; this.enterTd("wager"); return; }
+      if (ready) { this._dwellTime = 0; this.enterTd("solo"); return; }
+    } else if (autoPortal && near) {
+      // zombie mode portals + the Bed Wars portal: charge, then launch.
+      this.hud.hideEggPanel();
+      this.hud.showPrompt(`${near.label} ${bar}  (walk off to cancel)`, true);
+      if (ready) { this._dwellTime = 0; this._dwellZone = ""; this.activateIslandZone(near); return; }
     } else {
       this.hud.hideEggPanel();
       if (near) this.hud.showPrompt(near.label + "  [E]", true);
       else this.hud.hidePrompt();
     }
 
-    // E (or tap-confirm) activates whatever you're standing on (blocked while a
-    // hatch reveal is playing so you can't spam eggs).
+    // E (or tap-confirm) still activates whatever you're standing on instantly
+    // (handy on desktop / to skip the dwell). Blocked during a hatch reveal so you
+    // can't spam eggs.
     if (!this._hatching && near && (this.input.pressed("KeyE") || this.input.pressed("Space"))) {
+      this._dwellTime = 0;
+      this._dwellZone = "";
       this.activateIslandZone(near);
     }
   }

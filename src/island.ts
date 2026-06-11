@@ -136,6 +136,15 @@ interface Mote {
   speed: number;
   span: number; // vertical travel before looping
 }
+/** An animated swirling portal surface set inside a gateway / arch. */
+interface Portal {
+  surf: THREE.Mesh; // bright spinning spiral disc
+  haze: THREE.Mesh; // larger, fainter counter-spinning halo behind it
+  ring: THREE.Mesh; // glowing rim torus
+  motes: THREE.Group; // sparks drifting up across the surface
+  color: number;
+  phase: number;
+}
 
 export class Island {
   readonly group = new THREE.Group();
@@ -150,6 +159,7 @@ export class Island {
   // animation registries
   private eggs: EggShrine[] = [];
   private rooms: CoopRoom[] = [];
+  private portals: Portal[] = []; // swirling gateway surfaces (zombie / TD / bedwars)
   private flames: Flame[] = [];
   private banners: Banner[] = [];
   private motes: Mote[] = [];
@@ -356,6 +366,7 @@ export class Island {
     this.animateFountain(dt);
     this.animateEggs(dt);
     this.animateRooms(dt);
+    this.animatePortals(dt);
     if (this.wheelMesh) this.wheelMesh.rotation.z -= dt * 0.5; // idle wheel spin
     if (this.chestGlow) {
       this.chestGlow.rotation.y += dt * 1.5;
@@ -435,6 +446,28 @@ export class Island {
       // figures bob in a little wave
       g.figures.forEach((f, i) => {
         f.position.y = 0.5 + Math.abs(Math.sin(t * 3 + i * 0.9)) * 0.18 + g.lit * 0.1;
+      });
+    }
+  }
+
+  private animatePortals(dt: number) {
+    const t = this.t;
+    for (const p of this.portals) {
+      // the vortex spins, the halo drifts back the other way
+      p.surf.rotation.z -= dt * 0.7;
+      p.haze.rotation.z += dt * 0.35;
+      (p.surf.material as THREE.MeshBasicMaterial).opacity = 0.82 + Math.sin(t * 2.4 + p.phase) * 0.12;
+      (p.haze.material as THREE.MeshBasicMaterial).opacity = 0.28 + Math.sin(t * 1.7 + p.phase) * 0.08;
+      const s = 1 + Math.sin(t * 2.2 + p.phase) * 0.04;
+      p.surf.scale.set(s, s, 1);
+      (p.ring.material as THREE.MeshStandardMaterial).emissiveIntensity =
+        1.0 + (Math.sin(t * 2.6 + p.phase) + 1) * 0.4;
+      // sparks rise across the surface, looping back to the bottom
+      p.motes.children.forEach((m) => {
+        m.position.y += dt * 0.6;
+        const span = m.userData.span as number;
+        const base = m.userData.baseY as number;
+        if (m.position.y > base + span * 0.5) m.position.y = base - span * 0.5;
       });
     }
   }
@@ -1337,6 +1370,12 @@ export class Island {
         g.add(fig);
       }
 
+      // ---- swirling portal surface set into the doorway — walk through to enter ----
+      const portalH = h - 0.5;
+      const portal = this.makePortalSurface(m.color, doorGap - 0.15, portalH);
+      portal.position.set(0, portalH / 2 + 0.25, half + wt / 2 + 0.05);
+      g.add(portal);
+
       g.position.copy(m.pos);
       g.rotation.y = Math.atan2(-m.pos.x, -m.pos.z); // doorway (+z) faces the plaza
       this.group.add(g);
@@ -1357,6 +1396,84 @@ export class Island {
     (flameMesh.geometry as THREE.BufferGeometry).scale(1, 1.5, 1);
     group.add(post, bowl, flameMesh);
     return { group, flame: { mesh: flameMesh, phase: Math.random() * 6.28, base: 1 } };
+  }
+
+  /** Procedural spiral-disc texture for portal surfaces: a bright core fading to
+   *  transparent at the rim, with a few swirling arms so the disc reads as a
+   *  spinning vortex when the plane rotates. Alpha-faded edges hide the square. */
+  private swirlTexture(color: number): THREE.CanvasTexture {
+    const c = document.createElement("canvas");
+    c.width = c.height = 128;
+    const x = c.getContext("2d")!;
+    const cx = 64, cy = 64;
+    const hex = "#" + color.toString(16).padStart(6, "0");
+    const grad = x.createRadialGradient(cx, cy, 3, cx, cy, 64);
+    grad.addColorStop(0, "rgba(255,255,255,0.98)");
+    grad.addColorStop(0.3, hex);
+    grad.addColorStop(0.75, hex);
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    x.globalCompositeOperation = "source-over";
+    x.fillStyle = grad;
+    x.beginPath();
+    x.arc(cx, cy, 64, 0, Math.PI * 2);
+    x.fill();
+    // bright swirl arms spiralling out from the core
+    x.strokeStyle = "rgba(255,255,255,0.55)";
+    x.lineCap = "round";
+    for (let a = 0; a < 3; a++) {
+      x.lineWidth = 3;
+      x.beginPath();
+      for (let r = 5; r < 60; r += 1.5) {
+        const ang = a * (Math.PI * 2 / 3) + r * 0.13;
+        const px = cx + Math.cos(ang) * r;
+        const py = cy + Math.sin(ang) * r;
+        if (r === 5) x.moveTo(px, py); else x.lineTo(px, py);
+      }
+      x.stroke();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.anisotropy = 2;
+    return t;
+  }
+
+  /** A self-contained swirling portal surface (spiral disc + halo + rim + rising
+   *  sparks), sized to fit a gateway of width `w` × height `h`. Faces +z. The
+   *  caller positions/rotates the returned group into the structure. */
+  private makePortalSurface(color: number, w: number, h: number): THREE.Group {
+    const g = new THREE.Group();
+    const tex = this.swirlTexture(color);
+    const surfMat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, opacity: 0.92, depthWrite: false,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+    const surf = new THREE.Mesh(new THREE.PlaneGeometry(w, h), surfMat);
+    // a larger, fainter halo behind it for depth + glow spill
+    const hazeMat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, opacity: 0.32, depthWrite: false,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+    const haze = new THREE.Mesh(new THREE.PlaneGeometry(w * 1.35, h * 1.35), hazeMat);
+    haze.position.z = -0.06;
+    // glowing rim torus framing the vortex (oval to match the gateway)
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(Math.min(w, h) * 0.52, 0.1, 8, 32),
+      glowMaterial(color, 1.2),
+    );
+    ring.scale.set(w / Math.min(w, h), h / Math.min(w, h), 1);
+    // rising sparks drifting up across the surface
+    const motes = new THREE.Group();
+    const sparkMat = glowMaterial(0xffffff, 1.6);
+    for (let i = 0; i < 7; i++) {
+      const s = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.07), sparkMat);
+      s.position.set((Math.random() - 0.5) * w * 0.8, (Math.random() - 0.5) * h * 0.8, 0.05);
+      s.userData.phase = Math.random() * 6.28;
+      s.userData.span = h * 0.9;
+      s.userData.baseY = s.position.y;
+      motes.add(s);
+    }
+    g.add(haze, surf, ring, motes);
+    this.portals.push({ surf, haze, ring, motes, color, phase: Math.random() * 6.28 });
+    return g;
   }
 
   /** A hanging cloth banner that ripples; returns the group + animation record. */
@@ -1777,17 +1894,25 @@ export class Island {
       const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.6), voxelMaterial(0xfff4e0));
       pillow.position.set(-0.35, 0.82, 0);
       g.add(frame, mat, pillow);
-      // two posts + a red arch beam behind
+      // two posts + a red arch beam behind, each with a base block + glowing cap
       for (const px of [-1.7, 1.7]) {
         const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, 3.4, 0.4), stone);
         post.position.set(px, 1.7, -0.6);
-        g.add(post);
+        const base = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.7), voxelMaterial(VOX.stoneDark));
+        base.position.set(px, 0.25, -0.6);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.3, 0.56), glowMaterial(0xff5a4a, 1.0));
+        cap.position.set(px, 3.45, -0.6);
+        g.add(post, base, cap);
       }
       const beam = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.5, 0.5), glowMaterial(0xff5a4a, 0.8));
       beam.position.set(0, 3.4, -0.6);
       const swords = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), glowMaterial(0xffd24a, 1.2));
       swords.position.set(0, 3.4, -0.4);
       g.add(beam, swords);
+      // swirling red portal surface filling the arch
+      const bwPortal = this.makePortalSurface(0xff5a4a, 2.9, 2.7);
+      bwPortal.position.set(0, 1.85, -0.5);
+      g.add(bwPortal);
       const pos = new THREE.Vector3(13, 0, 10);
       g.position.copy(pos);
       g.rotation.y = Math.atan2(-pos.x, -pos.z);
@@ -1811,17 +1936,25 @@ export class Island {
       const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.9), glowMaterial(0x7fd4ff, 0.8));
       barrel.position.set(0, 1.1, 0.6);
       g.add(tbase, tbody, barrel);
-      // two posts + a blue arch beam behind
+      // two posts + a blue arch beam behind, each with a base block + glowing cap
       for (const px of [-1.7, 1.7]) {
         const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, 3.4, 0.4), stone);
         post.position.set(px, 1.7, -0.6);
-        g.add(post);
+        const base = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.7), voxelMaterial(VOX.stoneDark));
+        base.position.set(px, 0.25, -0.6);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.3, 0.56), glowMaterial(0x7fd4ff, 1.0));
+        cap.position.set(px, 3.45, -0.6);
+        g.add(post, base, cap);
       }
       const beam = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.5, 0.5), glowMaterial(0x7fd4ff, 0.8));
       beam.position.set(0, 3.4, -0.6);
       const crystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.42, 0), glowMaterial(0x9fe0a0, 1.2));
       crystal.position.set(0, 3.4, -0.4);
       g.add(beam, crystal);
+      // swirling blue portal surface filling the arch
+      const tdPortal = this.makePortalSurface(0x7fd4ff, 2.9, 2.7);
+      tdPortal.position.set(0, 1.85, -0.5);
+      g.add(tdPortal);
       const tdSat = SATELLITES.find((s) => s.id === "sat_td")!.center;
       const pos = new THREE.Vector3(tdSat.x, 0, tdSat.z); // on the Tower Defense island
       g.position.copy(pos);
