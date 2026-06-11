@@ -19,6 +19,16 @@ import { TD_PATH, TD_PADS, TD_GOAL, TD_SPAWN, pathLength, pointAt, headingAt, ty
  * lets gameplay flash the core when the base takes damage.
  */
 
+// ---- mobile tier flag -----------------------------------------------------
+// Mirror palette.ts's LOW_TIER detection (it isn't exported, and we may only
+// edit this file). On coarse-pointer / no-hover devices (phones) we cut the
+// most expensive ambient effects — fewer particles, fewer point lights, less
+// scenery, no extra dust layer — to protect the hard-won mobile FPS budget.
+const LOW_TIER =
+  typeof matchMedia === "function"
+    ? matchMedia("(pointer: coarse)").matches && matchMedia("(hover: none)").matches
+    : false;
+
 // ---- layout constants -----------------------------------------------------
 const ARENA_HALF = 35; // half-extent of the square battlefield footprint (~70×70)
 const GROUND_TOP = 0; // top surface of the ground — the gameplay plane (y = 0)
@@ -78,6 +88,11 @@ export class TdMap {
   private bannerFlags: { mesh: THREE.Mesh; phase: number; baseRot: number }[] = [];
   private water?: THREE.Mesh; // the surrounding sheet (shimmer in update)
   private laneLanterns: PulseGlow[] = []; // (also pushed into pulses; kept for clarity)
+  private padSpinners: { group: THREE.Group; speed: number }[] = []; // pad rune rings
+  private coreShards?: THREE.Group; // crystal shards orbiting the base core
+  private baseGlyph?: THREE.Mesh; // rotating ground glyph under the base
+  private dust?: THREE.Points; // drifting atmospheric motes (skipped on mobile)
+  private dustData: { x: number; z: number; y: number; phase: number; speed: number; rad: number }[] = [];
 
   // ---- calm dusk "lofi" mood (TD-only; snapshots + restores the scene) ----
   private scene: THREE.Scene;
@@ -299,6 +314,58 @@ export class TdMap {
     buildField(light, TD_GRASS);
     buildField(dark, TD_GRASS_DARK);
     buildField(lit, TD_GRASS_LIGHT);
+
+    // ---- RAISED EDGE BERM — a tiered grassy rampart hugging the diorama rim,
+    // giving the battlefield real height variation + a strong "framed table"
+    // silhouette. Two stacked instanced rings of grass-capped blocks placed
+    // only in the outer margin (well beyond every pad/lane/base), with the rim
+    // corners notched away so the field still reads open at an iso angle.
+    this.buildEdgeBerm();
+  }
+
+  /** A two-tier grass berm around the outer rim (purely scenic relief). The
+   *  blocks live beyond radius ~30 so they never touch lane/pads/base/spawn. */
+  private buildEdgeBerm() {
+    const inner = ARENA_HALF - 4.5; // first row sits just inside the rim
+    const capGeo = new THREE.BoxGeometry(TILE * 0.98, 1.1, TILE * 0.98);
+    const stoneGeo = new THREE.BoxGeometry(TILE * 0.98, 1.6, TILE * 0.98);
+    const tier1Cap: THREE.Vector3[] = [];
+    const tier1Stone: THREE.Vector3[] = [];
+    const tier2Cap: THREE.Vector3[] = [];
+    const tier2Stone: THREE.Vector3[] = [];
+    const n = Math.floor(ARENA_HALF / TILE);
+    for (let ix = -n; ix <= n; ix++) {
+      for (let iz = -n; iz <= n; iz++) {
+        const x = ix * TILE, z = iz * TILE;
+        const edge = Math.max(Math.abs(x), Math.abs(z));
+        if (edge < inner || edge > ARENA_HALF - 0.5) continue;
+        // leave a gap where the spawn lane breaches the west rim
+        if (this.nearLane(x, z, LANE_W + 2.5)) continue;
+        // notch the four corners so the silhouette stays soft, not boxy
+        if (Math.abs(x) > ARENA_HALF - 4 && Math.abs(z) > ARENA_HALF - 4) continue;
+        const outer = edge > ARENA_HALF - 2.5; // outermost row = taller second tier
+        if (outer) {
+          tier2Cap.push(new THREE.Vector3(x, GROUND_TOP + 1.55, z));
+          tier2Stone.push(new THREE.Vector3(x, GROUND_TOP + 0.6, z));
+        } else {
+          tier1Cap.push(new THREE.Vector3(x, GROUND_TOP + 0.85, z));
+          tier1Stone.push(new THREE.Vector3(x, GROUND_TOP + 0.1, z));
+        }
+      }
+    }
+    const m = new THREE.Matrix4();
+    const lay = (geo: THREE.BufferGeometry, ps: THREE.Vector3[], color: number, noCast = false) => {
+      if (!ps.length) return;
+      const inst = new THREE.InstancedMesh(geo, voxelMaterial(color), ps.length);
+      ps.forEach((p, i) => { m.makeTranslation(p.x, p.y, p.z); inst.setMatrixAt(i, m); });
+      inst.instanceMatrix.needsUpdate = true;
+      if (noCast) inst.userData.noCast = true;
+      this.group.add(inst);
+    };
+    lay(stoneGeo, tier1Stone, VOX.stoneDark, true);
+    lay(capGeo, tier1Cap, TD_GRASS_DARK);
+    lay(stoneGeo, tier2Stone, VOX.stone, true);
+    lay(capGeo, tier2Cap, TD_GRASS);
   }
 
   /**
@@ -414,8 +481,9 @@ export class TdMap {
       const pg: PulseGlow = { mesh: lamp, base: 1.1, amp: 0.4, phase: i * 1.3 };
       this.pulses.push(pg);
       this.laneLanterns.push(pg);
-      // a soft warm point light, sparing on count
-      if (i % 2 === 1) {
+      // a soft warm point light, sparing on count (skipped on mobile — the
+      // lantern bloom carries the glow without the extra dynamic light cost)
+      if (!LOW_TIER && i % 2 === 1) {
         const pl = new THREE.PointLight(0xffc06a, 1.8, 9, 2);
         pl.position.set(lx, 2.2, lz);
         this.group.add(pl);
@@ -554,11 +622,13 @@ export class TdMap {
       return false;
     };
 
-    // ---- trees + rocks (taller dressing) ----
+    // ---- trees + rocks (taller dressing) ---- (thinned on mobile)
+    const treeTarget = LOW_TIER ? 42 : 78;
     let placed = 0, tries = 0;
-    while (placed < 78 && tries++ < 900) {
-      const x = (rnd() * 2 - 1) * (ARENA_HALF - 3);
-      const z = (rnd() * 2 - 1) * (ARENA_HALF - 3);
+    const decorReach = ARENA_HALF - 6; // stay inside the raised edge berm
+    while (placed < treeTarget && tries++ < 900) {
+      const x = (rnd() * 2 - 1) * decorReach;
+      const z = (rnd() * 2 - 1) * decorReach;
       if (blocked(x, z, 1.5)) continue;
       placed++;
       const g = new THREE.Group();
@@ -607,10 +677,11 @@ export class TdMap {
     // ---- low ground cover: grass tufts + wildflowers (carpet, breaks the checker) ----
     const tuftMat = voxelMaterial(TD_GRASS_LIGHT);
     const flowerCols = [0xff6f91, 0xffd24a, 0xfff4e0, 0xff5a4a, 0x9b6fff];
+    const tuftTarget = LOW_TIER ? 70 : 150;
     let f = 0, ftries = 0;
-    while (f < 150 && ftries++ < 1400) {
-      const x = (rnd() * 2 - 1) * (ARENA_HALF - 2);
-      const z = (rnd() * 2 - 1) * (ARENA_HALF - 2);
+    while (f < tuftTarget && ftries++ < 1400) {
+      const x = (rnd() * 2 - 1) * decorReach;
+      const z = (rnd() * 2 - 1) * decorReach;
       if (blocked(x, z, -0.5)) continue;
       f++;
       if (rnd() < 0.55) {
@@ -637,7 +708,8 @@ export class TdMap {
 
     // soft voxel clouds drifting across, high above the field
     const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2e0, emissiveIntensity: 0.25, roughness: 1, transparent: true, opacity: 0.92 });
-    for (let i = 0; i < 7; i++) {
+    const cloudCount = LOW_TIER ? 4 : 7;
+    for (let i = 0; i < cloudCount; i++) {
       const cloud = new THREE.Group();
       const puffs = 3 + Math.floor(rnd() * 4);
       for (let k = 0; k < puffs; k++) {
@@ -667,9 +739,13 @@ export class TdMap {
       ember.userData.noCast = true;
       this.group.add(post, bowl, ember);
       this.pulses.push({ mesh: ember, base: 1.1, amp: 0.7, phase: s.x * 0.3 });
-      const light = new THREE.PointLight(0xff8a3a, 3.2, 11, 2);
-      light.position.set(s.x, 2.4, s.z);
-      this.group.add(light);
+      // dynamic point lights are pricey on mobile — keep only the two base
+      // braziers lit there (the embers still glow via bloom regardless).
+      if (!LOW_TIER || s.z === TD_GOAL.z) {
+        const light = new THREE.PointLight(0xff8a3a, 3.2, 11, 2);
+        light.position.set(s.x, 2.4, s.z);
+        this.group.add(light);
+      }
     }
   }
 
@@ -684,8 +760,8 @@ export class TdMap {
     let seed = 24601;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
 
-    // ---- fireflies ----
-    const FN = 60;
+    // ---- fireflies ---- (halved on mobile to protect the FPS budget)
+    const FN = LOW_TIER ? 26 : 60;
     const fpos = new Float32Array(FN * 3);
     for (let i = 0; i < FN; i++) {
       const x = (rnd() * 2 - 1) * (ARENA_HALF - 4);
@@ -707,8 +783,8 @@ export class TdMap {
     this.group.add(fire);
     this.fireflies = fire;
 
-    // ---- falling petals ----
-    const PN = 50;
+    // ---- falling petals ---- (halved on mobile)
+    const PN = LOW_TIER ? 22 : 50;
     const ppos = new Float32Array(PN * 3);
     for (let i = 0; i < PN; i++) {
       const x = (rnd() * 2 - 1) * ARENA_HALF;
@@ -728,28 +804,99 @@ export class TdMap {
     pet.userData.noCast = true;
     this.group.add(pet);
     this.petals = pet;
+
+    // ---- drifting DUST MOTES ---- a fine low-lying haze of slow-circling specks
+    // catching the golden-hour light for atmospheric depth. The most expensive
+    // of the three layers, so it is SKIPPED ENTIRELY on mobile (LOW_TIER).
+    if (!LOW_TIER) {
+      const DN = 70;
+      const dpos = new Float32Array(DN * 3);
+      for (let i = 0; i < DN; i++) {
+        const x = (rnd() * 2 - 1) * (ARENA_HALF - 2);
+        const z = (rnd() * 2 - 1) * (ARENA_HALF - 2);
+        const y = 0.6 + rnd() * 6.0;
+        this.dustData.push({ x, z, y, phase: rnd() * Math.PI * 2, speed: 0.08 + rnd() * 0.16, rad: 0.4 + rnd() * 1.0 });
+        dpos[i * 3] = x; dpos[i * 3 + 1] = y; dpos[i * 3 + 2] = z;
+      }
+      const dgeo = new THREE.BufferGeometry();
+      dgeo.setAttribute("position", new THREE.BufferAttribute(dpos, 3));
+      const dmat = new THREE.PointsMaterial({
+        color: 0xffe9c8, size: 0.16, sizeAttenuation: true,
+        transparent: true, opacity: 0.5, depthWrite: false,
+        blending: THREE.AdditiveBlending, toneMapped: false,
+      });
+      const dust = new THREE.Points(dgeo, dmat);
+      dust.frustumCulled = false;
+      dust.userData.noCast = true;
+      this.group.add(dust);
+      this.dust = dust;
+    }
   }
 
-  /** A raised stone build-pad plinth with a glowing rim at every TD_PADS spot. */
+  /** A raised stone build-pad plinth with a glowing rim at every TD_PADS spot —
+   *  a tiered hex plinth, four corner studs, a softly-lit recessed "build here"
+   *  inlay, a breathing rim ring and a slowly counter-rotating rune ring of
+   *  glyph studs so each pad reads as an inviting, ready-to-build socket. */
   private buildPads() {
+    // shared geometries so 12 pads stay cheap (each pad reuses these)
+    const baseGeo = new THREE.CylinderGeometry(1.6, 1.8, 0.5, 6);
+    const topGeo = new THREE.CylinderGeometry(1.3, 1.4, 0.35, 6);
+    const inlayGeo = new THREE.CylinderGeometry(1.05, 1.05, 0.12, 6);
+    const studGeo = new THREE.BoxGeometry(0.34, 0.5, 0.34);
+    const rimGeo = new THREE.TorusGeometry(1.5, 0.12, 6, 18);
+    const glyphGeo = new THREE.BoxGeometry(0.14, 0.06, 0.34);
+
     TD_PADS.forEach((p, i) => {
       const pad = new THREE.Group();
 
       // low stone plinth (~2 units across), two stacked tiers
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.8, 0.5, 6), voxelMaterial(VOX.cobble));
+      const base = new THREE.Mesh(baseGeo, voxelMaterial(VOX.cobble));
       base.position.y = GROUND_TOP + 0.25;
       pad.add(base);
-      const top = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.4, 0.35, 6), voxelMaterial(VOX.cobbleDark));
+      const top = new THREE.Mesh(topGeo, voxelMaterial(VOX.cobbleDark));
       top.position.y = GROUND_TOP + 0.62;
       pad.add(top);
 
+      // four chunky corner studs framing the socket (the "anchor bolts")
+      for (let k = 0; k < 4; k++) {
+        const ang = (k / 4) * Math.PI * 2 + Math.PI / 4;
+        const stud = new THREE.Mesh(studGeo, voxelMaterial(VOX.stone));
+        stud.position.set(Math.cos(ang) * 1.18, GROUND_TOP + 0.62, Math.sin(ang) * 1.18);
+        stud.rotation.y = ang;
+        pad.add(stud);
+      }
+
+      // recessed, softly-lit inlay disc — the warm "build here" surface
+      const inlay = new THREE.Mesh(inlayGeo, glowMaterial(0xffd98a, 0.45));
+      inlay.position.y = GROUND_TOP + 0.74;
+      inlay.userData.noCast = true;
+      pad.add(inlay);
+      this.pulses.push({ mesh: inlay, base: 0.3, amp: 0.35, phase: i * 0.9 + 0.4 });
+
       // gentle glowing rim ring (breathes) so the buildable spot reads clearly
-      const rim = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.12, 6, 18), glowMaterial(VOX.emberHot, 0.7));
+      const rim = new THREE.Mesh(rimGeo, glowMaterial(VOX.emberHot, 0.7));
       rim.rotation.x = Math.PI / 2;
       rim.position.y = GROUND_TOP + 0.5;
       rim.userData.noCast = true;
       pad.add(rim);
       this.pulses.push({ mesh: rim, base: 0.5, amp: 0.5, phase: i * 0.7 });
+
+      // a slowly counter-rotating ring of small glyph studs hovering over the
+      // inlay — gives every pad a little "summoning circle" liveliness
+      const glyphs = new THREE.Group();
+      glyphs.position.y = GROUND_TOP + 0.84;
+      const glyphN = LOW_TIER ? 3 : 6;
+      for (let k = 0; k < glyphN; k++) {
+        const ang = (k / glyphN) * Math.PI * 2;
+        const g = new THREE.Mesh(glyphGeo, glowMaterial(VOX.emberHot, 0.8));
+        g.position.set(Math.cos(ang) * 0.82, 0, Math.sin(ang) * 0.82);
+        g.rotation.y = ang;
+        g.userData.noCast = true;
+        glyphs.add(g);
+        this.pulses.push({ mesh: g, base: 0.4, amp: 0.5, phase: i * 0.5 + k * 0.6 });
+      }
+      pad.add(glyphs);
+      this.padSpinners.push({ group: glyphs, speed: 0.35 + (i % 3) * 0.08 });
 
       pad.position.set(p.x, 0, p.z);
       this.group.add(pad);
@@ -802,6 +949,17 @@ export class TdMap {
     keystone.userData.noCast = true;
     portal.add(keystone);
     this.pulses.push({ mesh: keystone, base: 0.9, amp: 0.6, phase: 0.5 });
+
+    // a deep dark "mouth" behind the pane so the gateway reads as an opening
+    // into somewhere else (creeps emerge out of the void), not a flat panel
+    const mouth = new THREE.Mesh(
+      new THREE.PlaneGeometry(half * 2 + 0.4, 5.0),
+      new THREE.MeshBasicMaterial({ color: 0x140a26, side: THREE.DoubleSide, fog: false, toneMapped: false }),
+    );
+    mouth.rotation.y = Math.PI / 2;
+    mouth.position.set(0.25, GROUND_TOP + 2.6, 0);
+    mouth.userData.noCast = true;
+    portal.add(mouth);
 
     // shimmering portal pane (glow, caught by bloom) inside the arch
     const pane = new THREE.Mesh(
@@ -912,6 +1070,24 @@ export class TdMap {
     halo.position.y = GROUND_TOP + 5.9;
     halo.userData.noCast = true;
     this.base.add(halo);
+
+    // a cluster of small crystal SHARDS orbiting the core (counter-rotates in
+    // update) — gives the keep's heart a living, magical "powered" feel
+    const shards = new THREE.Group();
+    shards.position.y = GROUND_TOP + 5.7;
+    const shardN = LOW_TIER ? 3 : 5;
+    const shardGeo = new THREE.OctahedronGeometry(0.32, 0);
+    for (let k = 0; k < shardN; k++) {
+      const ang = (k / shardN) * Math.PI * 2;
+      const shard = new THREE.Mesh(shardGeo, glowMaterial(0x9be3ff, 1.0));
+      shard.position.set(Math.cos(ang) * 2.0, Math.sin(ang * 1.4) * 0.5, Math.sin(ang) * 2.0);
+      shard.scale.set(0.8, 1.5, 0.8);
+      shard.userData.noCast = true;
+      shards.add(shard);
+      this.pulses.push({ mesh: shard, base: 0.7, amp: 0.6, phase: k * 0.9 });
+    }
+    this.base.add(shards);
+    this.coreShards = shards;
     // a cool point light at the core so the keep glows from within
     const coreLight = new THREE.PointLight(0x6ad7ff, 2.4, 14, 2);
     coreLight.position.set(0, GROUND_TOP + 5.9, 0);
@@ -924,6 +1100,31 @@ export class TdMap {
     ring.userData.noCast = true;
     this.base.add(ring);
     this.pulses.push({ mesh: ring, base: 0.6, amp: 0.5, phase: 0.3 });
+
+    // a slowly-rotating arcane GLYPH ring inlaid on the dais — radial rune ticks
+    // around a thin circle, all merged into one mesh so it stays a single draw
+    // call, that drifts under the keep for a "magical wellspring" feel.
+    {
+      const glyph = new THREE.Group();
+      const tickGeo = new THREE.BoxGeometry(0.22, 0.05, 0.7);
+      const tickN = LOW_TIER ? 8 : 14;
+      for (let k = 0; k < tickN; k++) {
+        const ang = (k / tickN) * Math.PI * 2;
+        const tick = new THREE.Mesh(tickGeo, glowMaterial(0x6ad7ff, 0.7));
+        tick.position.set(Math.cos(ang) * 3.0, 0, Math.sin(ang) * 3.0);
+        tick.rotation.y = -ang;
+        tick.userData.noCast = true;
+        glyph.add(tick);
+      }
+      const innerRing = new THREE.Mesh(new THREE.TorusGeometry(2.3, 0.07, 5, 28), glowMaterial(0x6ad7ff, 0.6));
+      innerRing.rotation.x = Math.PI / 2;
+      innerRing.userData.noCast = true;
+      glyph.add(innerRing);
+      glyph.position.y = GROUND_TOP + 0.12;
+      this.base.add(glyph);
+      // reuse coreShards' field slot? no — store separately as a single mesh-ish
+      this.baseGlyph = glyph as unknown as THREE.Mesh;
+    }
 
     // a translucent SHIELD DOME over the keep that drains + reddens as base HP
     // falls and flares white on a hit (driven by setBaseHealth + flashBase)
@@ -1082,6 +1283,13 @@ export class TdMap {
     // windmill sails turn lazily
     if (this.windmillSails) this.windmillSails.rotation.z += dt * 0.45;
 
+    // build-pad rune rings drift (counter to one another via per-pad speed)
+    for (const s of this.padSpinners) s.group.rotation.y += dt * s.speed;
+
+    // base crystal shards orbit + the dais glyph rotates slowly underneath
+    if (this.coreShards) this.coreShards.rotation.y -= dt * 0.5;
+    if (this.baseGlyph) this.baseGlyph.rotation.y += dt * 0.18;
+
     // base banners ripple gently (tilt + slight twist)
     for (const b of this.bannerFlags) {
       b.mesh.rotation.z = Math.sin(t * 1.6 + b.phase) * 0.12;
@@ -1120,6 +1328,20 @@ export class TdMap {
         arr[i * 3] = p.x + Math.sin(t * p.sway + p.phase) * 0.8;
         arr[i * 3 + 1] = p.y;
         arr[i * 3 + 2] = p.z + Math.cos(t * p.sway * 0.7 + p.phase) * 0.8;
+      }
+      attr.needsUpdate = true;
+    }
+
+    // dust motes: slow lazy circles + a faint vertical bob (cheap; desktop only)
+    if (this.dust) {
+      const attr = this.dust.geometry.attributes.position as THREE.BufferAttribute;
+      const arr = attr.array as Float32Array;
+      for (let i = 0; i < this.dustData.length; i++) {
+        const d = this.dustData[i];
+        const a = t * d.speed + d.phase;
+        arr[i * 3] = d.x + Math.cos(a) * d.rad;
+        arr[i * 3 + 1] = d.y + Math.sin(a * 1.3) * 0.4;
+        arr[i * 3 + 2] = d.z + Math.sin(a * 0.6) * d.rad;
       }
       attr.needsUpdate = true;
     }

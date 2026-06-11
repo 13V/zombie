@@ -1751,6 +1751,11 @@ class Game implements GameApi {
       this.save.bestWave = reached;
       this.hud.toast(`🌊 New best — wave ${reached}!`);
     }
+    // run score (combo-fed) — the replay chase. Record the personal best.
+    if (td.score > this.save.tdBestScore) {
+      this.save.tdBestScore = td.score;
+      this.hud.toast(`🏅 New TD high score — ${td.score.toLocaleString()}! (best combo ×${td.bestCombo})`);
+    }
     if (this._tdIsDaily) {
       this.save.tdDailyWave = Math.max(this.save.tdDailyWave, reached);
       this._tdIsDaily = false;

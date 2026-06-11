@@ -22,22 +22,31 @@ import { glowMaterial, voxelMaterial, VOX } from "../palette";
  * Everything is pooled and hard-capped; update() recycles finished effects.
  */
 
+// ---- mobile tier ----------------------------------------------------------
+// palette.ts keeps LOW_TIER private, so mirror the exact same coarse-pointer /
+// no-hover probe here (matchMedia-guarded so node/test imports stay safe). On
+// low tier we cut spark counts and skip the priciest extras to protect FPS.
+const LOW_TIER =
+  typeof matchMedia === "function"
+    ? matchMedia("(pointer: coarse)").matches && matchMedia("(hover: none)").matches
+    : false;
+
 // ---- tuning ---------------------------------------------------------------
 // Bump these down for weaker hardware; they only cap *live* counts, the pools
 // reuse meshes so steady-state allocation is zero.
-const MAX_SPARKS = 200; // voxel chips for muzzle flashes + impacts
-const MAX_FLASHES = 48; // soft point-flash quads (muzzle + impact cores)
-const MAX_TRACERS = 64; // travelling bolts / fading beams / lobbed shells
-const MAX_RINGS = 24; // expanding shockwave rings
+const MAX_SPARKS = LOW_TIER ? 130 : 260; // voxel chips for muzzle flashes + impacts
+const MAX_FLASHES = LOW_TIER ? 40 : 72; // soft point-flash quads (muzzle + impact cores)
+const MAX_TRACERS = 80; // travelling bolts / fading beams / lobbed shells
+const MAX_RINGS = LOW_TIER ? 22 : 36; // expanding shockwave rings
 const MAX_TEXTS = 48; // floating damage / +money labels
 const MAX_TEXT_CACHE = 64; // distinct canvas textures kept before eviction
 
 const SPARK_LIFE = 0.42; // base lifetime of a flung voxel chip (s)
-const FLASH_LIFE = 0.12; // muzzle/impact core flash lifetime (s)
-const BEAM_LIFE = 0.14; // instant tracer line fade (s)
+const FLASH_LIFE = 0.13; // muzzle/impact core flash lifetime (s)
+const BEAM_LIFE = 0.18; // instant tracer line fade (s)
 const RING_LIFE = 0.5; // shockwave ring expand+fade (s)
-const TEXT_LIFE = 0.85; // floating label lifetime (s)
-const BOLT_SPEED = 64; // travel speed of a "bolt" tracer (world units/s)
+const TEXT_LIFE = 0.95; // floating label lifetime (s)
+const BOLT_SPEED = 70; // travel speed of a "bolt" tracer (world units/s)
 const SHELL_SPEED = 34; // travel speed of an arcing "shell" tracer
 const SHELL_ARC = 3.4; // peak lob height of a "shell" (world units)
 const GRAVITY = 26; // fall rate applied to spark chips (units/s^2)
@@ -47,7 +56,10 @@ const _v0 = new THREE.Vector3();
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _dir = new THREE.Vector3();
+const _perp = new THREE.Vector3(); // scratch for beam-jitter perpendicular
 const _q = new THREE.Quaternion();
+const _white = new THREE.Color(0xffffff); // scratch for color-lightening blends
+const WHITE = new THREE.Color(0xffffff); // constant pure-white target for lerps
 
 type TracerKind = "bolt" | "beam" | "shell";
 
@@ -58,6 +70,8 @@ interface Spark {
   maxLife: number;
   spin: THREE.Vector3; // per-axis tumble rate
   base: number; // resting half-size
+  drag: number; // per-second velocity damping (1 = none)
+  gravity: number; // gravity scale (0 = floaty embers, 1 = chunky chips)
 }
 
 interface Flash {
@@ -65,6 +79,7 @@ interface Flash {
   life: number;
   maxLife: number;
   base: number;
+  spin: number; // slow billboard roll for a livelier bloom
 }
 
 interface Tracer {
@@ -77,6 +92,9 @@ interface Tracer {
   life: number; // for beams (instant fade)
   maxLife: number;
   color: number;
+  dist: number; // cached from->to distance (beam length / trail spacing)
+  trailAcc: number; // accumulator that meters out trail puff sparks
+  flicker: number; // running phase for the beam's electric flicker
   onArrive: ((p: THREE.Vector3, c: number) => void) | null;
 }
 
@@ -85,6 +103,7 @@ interface Ring {
   life: number;
   maxLife: number;
   radius: number;
+  thickness: number; // emphasis on the leading edge (visual only)
 }
 
 interface FloatLabel {
@@ -111,13 +130,14 @@ export class TdFx {
   private textPool: FloatLabel[] = [];
   private textLive: FloatLabel[] = [];
   private texCache = new Map<string, THREE.Texture>();
+  private cam: THREE.Camera | null = null; // cached so update() doesn't traverse
 
   // shared geometry (disposed in clear())
   private chipGeo = new THREE.BoxGeometry(0.16, 0.16, 0.16); // chunky voxel chip
   private flashGeo = new THREE.PlaneGeometry(1, 1); // billboarded soft flash
   private dartGeo = new THREE.BoxGeometry(0.18, 0.18, 0.6); // bolt/shell projectile
   private beamGeo = new THREE.BoxGeometry(0.12, 0.12, 1); // unit-length beam bar (z-scaled)
-  private ringGeo = new THREE.RingGeometry(0.78, 1.0, 40); // thin shockwave ring
+  private ringGeo = new THREE.RingGeometry(0.72, 1.0, 40); // thin shockwave ring
 
   constructor(private scene: THREE.Scene) {
     this.group.name = "TdFx";
@@ -125,44 +145,54 @@ export class TdFx {
   }
 
   // =========================================================================
-  // muzzle flash — quick bright core + a few voxel sparks spat along `dir`.
+  // muzzle flash — quick bright bloom + a punchy directional spark spray.
   // =========================================================================
   muzzleFlash(pos: THREE.Vector3, dir: THREE.Vector3, color: number): void {
     _dir.copy(dir);
     if (_dir.lengthSq() < 1e-6) _dir.set(0, 0, 1);
     else _dir.normalize();
 
-    // bright core flash just ahead of the muzzle
-    _v0.copy(pos).addScaledVector(_dir, 0.25);
-    this.spawnFlash(_v0, color, 1.1, 0.95);
+    // Three stacked flashes give the bloom a hot near-white core inside a
+    // saturated color halo, with a wide soft outer puff — far punchier than a
+    // single quad for nearly free (all share the pooled additive plane).
+    _v0.copy(pos).addScaledVector(_dir, 0.22);
+    if (!LOW_TIER) this.spawnFlash(_v0, color, 2.1, 0.55); // wide soft outer puff
+    this.spawnFlash(_v0, color, 1.45, 1.0); // colored halo
+    _white.copy(WHITE).lerp(_tmpColor(color), 0.25); // hot, washed-out core
+    this.spawnFlash(_v0, _white.getHex(), 0.78, 1.0); // bright near-white core
 
-    // a handful of fast chips fanned around the firing direction
-    for (let i = 0; i < 5; i++) {
+    // a directional spark spray fanned tightly around the firing direction
+    const n = LOW_TIER ? 5 : 9;
+    for (let i = 0; i < n; i++) {
       const s = this.acquireSpark();
       if (!s) break;
-      this.tintGlow(s.mesh, color, 1.4);
-      s.mesh.position.copy(pos);
-      // velocity = forward + small random cone
+      this.tintGlow(s.mesh, color, 1.8);
+      // start a touch ahead of the muzzle so they read as ejected, not spawned
+      s.mesh.position.copy(pos).addScaledVector(_dir, 0.18);
+      // velocity = forward + small random cone, biased forward for a "spit"
       const spread = 0.55;
       _v1.set(
         _dir.x + (Math.random() - 0.5) * spread,
-        _dir.y + (Math.random() - 0.5) * spread + 0.2,
+        _dir.y + (Math.random() - 0.5) * spread + 0.16,
         _dir.z + (Math.random() - 0.5) * spread,
       ).normalize();
-      const sp = 9 + Math.random() * 7;
+      const sp = 13 + Math.random() * 11;
       s.vel.copy(_v1).multiplyScalar(sp);
-      s.spin.set(rand(8), rand(8), rand(8));
-      s.base = 0.5 + Math.random() * 0.5;
-      s.life = s.maxLife = SPARK_LIFE * (0.5 + Math.random() * 0.4);
+      s.spin.set(rand(12), rand(12), rand(12));
+      s.base = 0.4 + Math.random() * 0.5;
+      s.drag = 0.86; // air-brake so the spray snaps to a halt near the muzzle
+      s.gravity = 0.5; // light gravity — they're hot gas, not heavy chips
+      // short-lived so the spray stays tight to the muzzle, not littering
+      s.life = s.maxLife = SPARK_LIFE * (0.38 + Math.random() * 0.32);
     }
   }
 
   // =========================================================================
   // tracer — projectile from turret to target. Travels over several frames.
   //   "bolt"  = fast small glowing dart that flies from→to (default)
-  //   "beam"  = instant glowing line that fades out
-  //   "shell" = arcing lobbed projectile (parabolic), slower
-  // `onArrive` is optional internal use (impact at the landing point).
+  //   "beam"  = instant glowing line that fades out (tesla/sniper/pylon)
+  //   "shell" = arcing lobbed projectile (parabolic), slower (cannon)
+  // `onArrive` fires at the destination (tdmode triggers impact + audio there).
   // =========================================================================
   tracer(
     from: THREE.Vector3,
@@ -172,7 +202,12 @@ export class TdFx {
     onArrive?: (p: THREE.Vector3, c: number) => void,
   ): void {
     const t = this.acquireTracer();
-    if (!t) return;
+    if (!t) {
+      // pool exhausted — still honour the impact contract so gameplay (damage +
+      // audio) never silently drops when the screen is saturated with tracers.
+      if (onArrive) onArrive(to, color);
+      return;
+    }
     t.kind = kind;
     t.from.copy(from);
     t.to.copy(to);
@@ -180,26 +215,54 @@ export class TdFx {
     t.color = color;
     t.onArrive = onArrive ?? null;
     const dist = _v0.copy(to).sub(from).length() || 0.001;
+    t.dist = dist;
+    t.trailAcc = 0;
+    t.flicker = Math.random() * 6.28;
 
     if (kind === "beam") {
-      // instant stretched bar from→to, fades fast
+      // instant glowing lance from→to that fades fast. A bright core flash at
+      // each end "anchors" the bolt and reads great for tesla chain arcs.
       t.mesh.geometry = this.beamGeo;
-      this.tintGlow(t.mesh, color, 1.6);
+      this.tintGlow(t.mesh, color, 2.4);
       this.orientBeam(t.mesh, from, to, dist);
       t.life = t.maxLife = BEAM_LIFE;
       t.speed = 0;
+      _white.copy(WHITE).lerp(_tmpColor(color), 0.35);
+      this.spawnFlash(from, _white.getHex(), 0.85, 1.0);
+      this.spawnFlash(to, _white.getHex(), 1.05, 1.0);
+      // a couple of electric sparks crackling off the strike point
+      if (!LOW_TIER) {
+        const n = 3;
+        for (let i = 0; i < n; i++) {
+          const s = this.acquireSpark();
+          if (!s) break;
+          this.tintGlow(s.mesh, _white.getHex(), 2.0);
+          s.mesh.position.copy(to);
+          s.vel.set(rand(7), 3 + Math.random() * 5, rand(7));
+          s.spin.set(rand(14), rand(14), rand(14));
+          s.base = 0.35 + Math.random() * 0.4;
+          s.drag = 0.9;
+          s.gravity = 0.3;
+          s.life = s.maxLife = SPARK_LIFE * 0.45;
+        }
+      }
     } else {
       // bolt / shell: a small dart that actually travels
       t.mesh.geometry = this.dartGeo;
-      this.tintGlow(t.mesh, color, kind === "shell" ? 1.1 : 1.5);
+      this.tintGlow(t.mesh, color, kind === "shell" ? 1.3 : 1.9);
       const speed = kind === "shell" ? SHELL_SPEED : BOLT_SPEED;
       t.speed = speed / dist; // progress per second
       t.mesh.position.copy(from);
       t.life = t.maxLife = 0; // unused for travellers
       // initial orient toward target
       this.orientToward(t.mesh, from, to);
-      // slightly stretch the dart for a hot streak look
-      t.mesh.scale.set(1, 1, kind === "shell" ? 1.4 : 2.2);
+      // stretch the dart into a hot streak (shells are chunkier, less stretched)
+      t.mesh.scale.set(1, 1, kind === "shell" ? 1.5 : 2.6);
+      // a tiny muzzle spark at the launch point so the bolt feels "thrown"
+      if (kind === "bolt" && !LOW_TIER) {
+        _white.copy(WHITE).lerp(_tmpColor(color), 0.4);
+        this.spawnFlash(from, _white.getHex(), 0.6, 0.85);
+      }
     }
     t.mesh.visible = true;
   }
@@ -207,31 +270,40 @@ export class TdFx {
   // =========================================================================
   // impact — voxel-chip burst at the hit point: a fan of small shards that fly
   // out + fall + fade, plus a bright core flash and a quick flash ring.
-  // `big` (boss/splash) scales count, size, speed and ring.
+  // `big` (boss/splash/crit) scales count, size, speed and ring noticeably.
   // =========================================================================
   impact(pos: THREE.Vector3, color: number, big = false): void {
-    const n = big ? 14 : 7;
-    const speed = big ? 11 : 7;
+    let n = big ? 20 : 9;
+    if (LOW_TIER) n = big ? 12 : 6;
+    const speed = big ? 13.5 : 8;
     for (let i = 0; i < n; i++) {
       const s = this.acquireSpark();
       if (!s) break;
-      this.tintGlow(s.mesh, color, big ? 1.3 : 1.0);
+      this.tintGlow(s.mesh, color, big ? 1.7 : 1.25);
       s.mesh.position.copy(pos);
+      // burst out radially with a healthy upward kick so chips arc + tumble
       const a = Math.random() * Math.PI * 2;
-      const sp = speed * (0.5 + Math.random() * 0.8);
-      const up = 2 + Math.random() * (big ? 6 : 3.5);
+      const sp = speed * (0.45 + Math.random() * 0.95);
+      const up = 2.5 + Math.random() * (big ? 8 : 4.5);
       s.vel.set(Math.cos(a) * sp, up, Math.sin(a) * sp);
-      s.spin.set(rand(10), rand(10), rand(10));
-      s.base = (big ? 0.9 : 0.6) + Math.random() * 0.6;
+      s.spin.set(rand(12), rand(12), rand(12));
+      s.base = (big ? 1.05 : 0.62) + Math.random() * 0.7;
+      s.drag = 1; // full ballistic chips (chunky voxel debris)
+      s.gravity = 1;
       s.life = s.maxLife = SPARK_LIFE * (0.7 + Math.random() * 0.6);
     }
-    // core flash + ground flash ring
-    this.spawnFlash(pos, color, big ? 1.8 : 1.1, 1);
-    this.spawnRing(pos, color, big ? 2.6 : 1.3, big ? 0.6 : 0.34);
+    // hot white core punch nested inside a colored bloom for a crisp "pop"
+    _white.copy(WHITE).lerp(_tmpColor(color), big ? 0.3 : 0.45);
+    this.spawnFlash(pos, color, big ? 2.4 : 1.4, 1); // colored bloom
+    this.spawnFlash(pos, _white.getHex(), big ? 1.3 : 0.72, 1); // bright core
+    // expanding shockwave ring kicked off at the hit
+    this.spawnRing(pos, color, big ? 3.0 : 1.5, big ? 0.6 : 0.34, big ? 0.55 : 0.4);
+    // big hits (crit / splash) get a second, faster inner ring for extra heft
+    if (big && !LOW_TIER) this.spawnRing(pos, _white.getHex(), 1.6, 0.42, 0.6);
   }
 
   // =========================================================================
-  // floatText — rising, fading canvas-sprite label (damage / +money).
+  // floatText — rising, fading canvas-sprite label (damage / +money / "CRIT").
   // Textures are cached by text+color; cache is capped, sprites are pooled.
   // =========================================================================
   floatText(pos: THREE.Vector3, text: string, color: number): void {
@@ -257,15 +329,20 @@ export class TdFx {
       };
     }
     const mat = ft.sprite.material as THREE.SpriteMaterial;
-    mat.map = this.labelTexture(text, color);
+    const tex = this.labelTexture(text, color);
+    mat.map = tex;
     mat.opacity = 1;
-    ft.baseX = 1.5;
-    ft.baseY = 0.75;
+    // size the sprite to the texture's aspect so long words ("COMBO ×2.4")
+    // stay legible and un-squashed; height is constant, width tracks the canvas.
+    const img = tex.image as HTMLCanvasElement;
+    const aspect = img && img.width ? img.width / img.height : 2;
+    ft.baseY = 0.82;
+    ft.baseX = ft.baseY * aspect;
     // start punched-out a touch; update() eases back to resting size
-    ft.sprite.scale.set(ft.baseX * 1.4, ft.baseY * 1.4, 1);
+    ft.sprite.scale.set(ft.baseX * 1.55, ft.baseY * 1.55, 1);
     ft.sprite.position.copy(pos);
     ft.sprite.position.y += 1.4;
-    ft.vel.set((Math.random() - 0.5) * 1.2, 3.0 + Math.random(), (Math.random() - 0.5) * 1.2);
+    ft.vel.set((Math.random() - 0.5) * 1.0, 3.4 + Math.random(), (Math.random() - 0.5) * 1.0);
     ft.life = ft.maxLife = TEXT_LIFE;
     ft.sprite.visible = true;
     this.group.add(ft.sprite);
@@ -273,16 +350,23 @@ export class TdFx {
   }
 
   // =========================================================================
-  // ring — expanding flat shockwave ring (big impacts / wave starts).
+  // ring — expanding flat shockwave ring. Used for target-acquire telegraphs
+  // AND repeated small poison/burn puffs, so it must read at small radius too.
   // =========================================================================
   ring(pos: THREE.Vector3, color: number, radius: number): void {
-    this.spawnRing(pos, color, radius, RING_LIFE);
+    // smaller rings get a slightly tighter/longer-lived puff so DoT pulses read
+    const life = radius < 0.9 ? RING_LIFE * 0.7 : RING_LIFE;
+    this.spawnRing(pos, color, radius, life, radius < 0.9 ? 0.55 : 0.4);
   }
 
   // =========================================================================
   // update — advance + fade everything; recycle finished effects.
   // =========================================================================
   update(dt: number): void {
+    // refresh the cached camera once per frame (cheap; avoids per-flash traverse)
+    if (!this.cam || (this.cam as THREE.Object3D).parent == null) {
+      this.cam = this.findCamera();
+    }
     this.updateSparks(dt);
     this.updateFlashes(dt);
     this.updateTracers(dt);
@@ -328,6 +412,7 @@ export class TdFx {
     this.tracerLive.length = this.tracerPool.length = 0;
     this.ringLive.length = this.ringPool.length = 0;
     this.textLive.length = this.textPool.length = 0;
+    this.cam = null;
 
     this.scene.remove(this.group);
     this.group.clear();
@@ -342,8 +427,19 @@ export class TdFx {
     let s = this.sparkPool.pop();
     if (!s) {
       const mesh = new THREE.Mesh(this.chipGeo, glowMaterial(0xffffff, 1.0));
-      s = { mesh, vel: new THREE.Vector3(), life: 0, maxLife: 0, spin: new THREE.Vector3(), base: 1 };
+      s = {
+        mesh,
+        vel: new THREE.Vector3(),
+        life: 0,
+        maxLife: 0,
+        spin: new THREE.Vector3(),
+        base: 1,
+        drag: 1,
+        gravity: 1,
+      };
     }
+    s.drag = 1;
+    s.gravity = 1;
     s.mesh.visible = true;
     s.mesh.rotation.set(Math.random() * 6.28, Math.random() * 6.28, 0);
     s.mesh.scale.setScalar(s.base);
@@ -356,7 +452,13 @@ export class TdFx {
     for (let i = this.sparkLive.length - 1; i >= 0; i--) {
       const s = this.sparkLive[i];
       s.life -= dt;
-      s.vel.y -= GRAVITY * dt;
+      s.vel.y -= GRAVITY * s.gravity * dt;
+      if (s.drag < 1) {
+        // frame-rate-independent exponential damping
+        const f = Math.pow(s.drag, dt * 60);
+        s.vel.x *= f;
+        s.vel.z *= f;
+      }
       s.mesh.position.addScaledVector(s.vel, dt);
       if (s.mesh.position.y < 0.06) {
         s.mesh.position.y = 0.06;
@@ -368,9 +470,11 @@ export class TdFx {
       s.mesh.rotation.y += s.spin.y * dt;
       s.mesh.rotation.z += s.spin.z * dt;
       const k = Math.max(0, s.life) / s.maxLife;
-      s.mesh.scale.setScalar(s.base * (0.25 + k * 0.75));
+      // a little pop on spawn (overshoot) then taper toward a glowing nub
+      const pop = k > 0.85 ? 1 + (k - 0.85) * 2.0 : 1;
+      s.mesh.scale.setScalar(s.base * (0.22 + k * 0.78) * pop);
       const mat = s.mesh.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 0.4 + k * 1.0;
+      mat.emissiveIntensity = 0.4 + k * 1.2;
       if (s.life <= 0) {
         this.retireSpark(s);
         this.sparkLive.splice(i, 1);
@@ -401,14 +505,16 @@ export class TdFx {
         blending: THREE.AdditiveBlending,
         toneMapped: false,
       });
-      f = { mesh: new THREE.Mesh(this.flashGeo, mat), life: 0, maxLife: 0, base };
+      f = { mesh: new THREE.Mesh(this.flashGeo, mat), life: 0, maxLife: 0, base, spin: 0 };
     }
     const mat = f.mesh.material as THREE.MeshBasicMaterial;
     mat.color.set(color);
     mat.opacity = intensity;
     f.base = base;
+    f.spin = rand(3); // gentle roll so stacked flashes don't look static
     f.mesh.position.copy(pos);
-    f.mesh.scale.setScalar(base * 0.6);
+    f.mesh.rotation.z = Math.random() * 6.28;
+    f.mesh.scale.setScalar(base * 0.55);
     f.mesh.visible = true;
     f.life = f.maxLife = FLASH_LIFE;
     this.group.add(f.mesh);
@@ -416,16 +522,18 @@ export class TdFx {
   }
 
   private updateFlashes(dt: number): void {
-    // billboard flashes toward the active camera each frame
-    const cam = this.findCamera();
+    const cam = this.cam;
     for (let i = this.flashLive.length - 1; i >= 0; i--) {
       const f = this.flashLive[i];
       f.life -= dt;
       const k = Math.max(0, f.life) / f.maxLife;
-      // pop out then fade
-      f.mesh.scale.setScalar(f.base * (0.6 + (1 - k) * 1.6));
-      (f.mesh.material as THREE.MeshBasicMaterial).opacity = k;
+      // pop out fast then fade — snappy bloom
+      f.mesh.scale.setScalar(f.base * (0.55 + (1 - k) * 1.7));
+      // ease-out fade (sharper falloff reads punchier than linear)
+      (f.mesh.material as THREE.MeshBasicMaterial).opacity = k * k;
+      // billboard toward the camera, keeping a slow roll for life
       if (cam) f.mesh.quaternion.copy(cam.quaternion);
+      f.mesh.rotateZ(f.spin * dt);
       if (f.life <= 0) {
         this.retireFlash(f);
         this.flashLive.splice(i, 1);
@@ -442,8 +550,9 @@ export class TdFx {
   // ===================== internals: tracer ================================
   private acquireTracer(): Tracer | null {
     if (this.tracerLive.length >= MAX_TRACERS) {
-      const old = this.tracerLive.shift();
-      if (old) this.retireTracer(old);
+      // don't steal an in-flight tracer (that would drop its onArrive impact);
+      // signal exhaustion so the caller can fire onArrive immediately instead.
+      return null;
     }
     let t = this.tracerPool.pop();
     if (!t) {
@@ -458,6 +567,9 @@ export class TdFx {
         life: 0,
         maxLife: 0,
         color: 0xffffff,
+        dist: 1,
+        trailAcc: 0,
+        flicker: 0,
         onArrive: null,
       };
     }
@@ -473,11 +585,28 @@ export class TdFx {
       let done = false;
       if (t.kind === "beam") {
         t.life -= dt;
+        t.flicker += dt * 60;
         const k = Math.max(0, t.life) / t.maxLife;
         const mat = t.mesh.material as THREE.MeshStandardMaterial;
-        mat.emissiveIntensity = 0.4 + k * 1.6;
+        mat.emissiveIntensity = 0.5 + k * 2.0;
         mat.opacity = k;
         mat.transparent = true;
+        // cheap "electric" feel: jitter thickness + nudge the lance laterally so
+        // it shimmers like a live arc (no extra geometry, just scale/position).
+        const jig = 0.7 + Math.abs(Math.sin(t.flicker)) * 0.6;
+        t.mesh.scale.x = jig;
+        t.mesh.scale.y = jig;
+        if (!LOW_TIER) {
+          // sideways shiver along the beam's perpendicular
+          _dir.copy(t.to).sub(t.from);
+          if (_dir.lengthSq() > 1e-6) {
+            _dir.normalize();
+            _perp.set(-_dir.z, 0, _dir.x); // horizontal perpendicular
+            _v2.copy(t.from).add(t.to).multiplyScalar(0.5);
+            _v2.addScaledVector(_perp, Math.sin(t.flicker * 1.7) * 0.12);
+            t.mesh.position.copy(_v2);
+          }
+        }
         if (t.life <= 0) done = true;
       } else {
         t.prog += t.speed * dt;
@@ -493,6 +622,24 @@ export class TdFx {
         if (t.kind === "shell") _v1.y += SHELL_ARC * 4 * pNext * (1 - pNext);
         t.mesh.position.copy(_v0);
         if (_v1.distanceToSquared(_v0) > 1e-6) this.orientToward(t.mesh, _v0, _v1);
+        // bolts shed a faint trail puff so the dart leaves a hot streak behind
+        if (!LOW_TIER && t.kind === "bolt") {
+          t.trailAcc += dt;
+          if (t.trailAcc >= 0.018) {
+            t.trailAcc = 0;
+            const s = this.acquireSpark();
+            if (s) {
+              this.tintGlow(s.mesh, t.color, 1.6);
+              s.mesh.position.copy(_v0);
+              s.vel.set(rand(1.2), rand(1.2), rand(1.2));
+              s.spin.set(rand(6), rand(6), rand(6));
+              s.base = 0.3 + Math.random() * 0.25;
+              s.drag = 0.8;
+              s.gravity = 0.15; // hangs in the air briefly as a glowing wisp
+              s.life = s.maxLife = SPARK_LIFE * 0.3;
+            }
+          }
+        }
         if (t.prog >= 1) {
           done = true;
           if (t.onArrive) t.onArrive(t.to, t.color);
@@ -511,12 +658,19 @@ export class TdFx {
     const mat = t.mesh.material as THREE.MeshStandardMaterial;
     mat.opacity = 1;
     mat.transparent = false;
+    t.mesh.scale.set(1, 1, 1); // reset beam jitter so reuse starts clean
     this.group.remove(t.mesh);
     this.tracerPool.push(t);
   }
 
   // ===================== internals: ring ==================================
-  private spawnRing(pos: THREE.Vector3, color: number, radius: number, life: number): void {
+  private spawnRing(
+    pos: THREE.Vector3,
+    color: number,
+    radius: number,
+    life: number,
+    startScale = 0.4,
+  ): void {
     if (this.ringLive.length >= MAX_RINGS) {
       const old = this.ringLive.shift();
       if (old) this.retireRing(old);
@@ -534,14 +688,17 @@ export class TdFx {
       });
       const mesh = new THREE.Mesh(this.ringGeo, mat);
       mesh.rotation.x = -Math.PI / 2; // lay flat on the ground plane
-      r = { mesh, life: 0, maxLife: 0, radius };
+      r = { mesh, life: 0, maxLife: 0, radius, thickness: 0.4 };
     }
     (r.mesh.material as THREE.MeshBasicMaterial).color.set(color);
     (r.mesh.material as THREE.MeshBasicMaterial).opacity = 1;
     r.mesh.position.copy(pos);
     r.mesh.position.y += 0.06; // hover just above ground to avoid z-fight
     r.radius = radius;
-    r.mesh.scale.setScalar(0.2);
+    r.thickness = startScale;
+    // a tiny random spin so repeated poison/acquire rings don't look identical
+    r.mesh.rotation.z = Math.random() * 6.28;
+    r.mesh.scale.setScalar(Math.max(0.18, radius * startScale * 0.4));
     r.mesh.visible = true;
     r.life = r.maxLife = life;
     this.group.add(r.mesh);
@@ -553,8 +710,9 @@ export class TdFx {
       const r = this.ringLive[i];
       r.life -= dt;
       const k = Math.max(0, r.life) / r.maxLife; // 1..0
-      const grow = 1 - k; // 0..1
-      r.mesh.scale.setScalar(0.2 + grow * r.radius);
+      // ease-out growth: fast snap outward then settle (punchy shockwave)
+      const grow = 1 - k * k;
+      r.mesh.scale.setScalar(0.18 + grow * r.radius);
       (r.mesh.material as THREE.MeshBasicMaterial).opacity = k * k; // fade quicker late
       if (r.life <= 0) {
         this.retireRing(r);
@@ -577,11 +735,12 @@ export class TdFx {
       ft.vel.y -= 3.5 * dt; // gentle gravity so it arcs as it rises
       ft.sprite.position.addScaledVector(ft.vel, dt);
       const k = ft.life / ft.maxLife;
-      (ft.sprite.material as THREE.SpriteMaterial).opacity = Math.max(0, Math.min(1, k * 1.6));
-      // punch-out ease back to resting size over the first ~0.12s
+      (ft.sprite.material as THREE.SpriteMaterial).opacity = Math.max(0, Math.min(1, k * 1.8));
+      // punch-out ease back to resting size over the first ~0.14s (overshoot)
       const age = ft.maxLife - ft.life;
-      if (age < 0.12) {
-        const p = 1 + 0.4 * (1 - age / 0.12);
+      if (age < 0.14) {
+        const t = age / 0.14; // 0..1
+        const p = 1 + 0.55 * (1 - t) * (1 - t); // springy overshoot decay
         ft.sprite.scale.set(ft.baseX * p, ft.baseY * p, 1);
       } else if (ft.sprite.scale.x !== ft.baseX) {
         ft.sprite.scale.set(ft.baseX, ft.baseY, 1);
@@ -613,18 +772,44 @@ export class TdFx {
         this.texCache.delete(firstKey);
       }
     }
+    const FONT = "900 46px system-ui, sans-serif";
+    const PAD = 30; // room for the outline + glow on both sides
+    const H = 76;
     const c = document.createElement("canvas");
-    c.width = 128;
-    c.height = 64;
     const g = c.getContext("2d")!;
-    g.font = "bold 40px system-ui, sans-serif";
+    // measure first so the canvas (and thus sprite aspect) fits the whole string
+    g.font = FONT;
+    const w = Math.ceil(g.measureText(text).width);
+    c.width = Math.max(72, w + PAD * 2);
+    c.height = H;
+    // context resets on resize — re-apply all draw state
+    g.font = FONT;
     g.textAlign = "center";
     g.textBaseline = "middle";
-    g.lineWidth = 6;
-    g.strokeStyle = "rgba(0,0,0,0.85)";
-    g.strokeText(text, 64, 32);
-    g.fillStyle = css;
-    g.fillText(text, 64, 32);
+    const cx = c.width / 2;
+    const cy = H / 2;
+    // colored glow halo (drawn via shadow on the outline pass) for "pop"
+    g.shadowColor = css;
+    g.shadowBlur = 14;
+    g.shadowOffsetX = 0;
+    g.shadowOffsetY = 0;
+    g.lineJoin = "round";
+    g.lineWidth = 10;
+    g.strokeStyle = "rgba(0,0,0,0.92)"; // chunky dark outline for legibility
+    g.strokeText(text, cx, cy);
+    // second glow pass with the colored shadow to intensify the halo
+    g.shadowBlur = 8;
+    g.strokeText(text, cx, cy);
+    g.shadowBlur = 0;
+    // soft inner drop so the fill sits above the outline with depth
+    g.shadowColor = "rgba(0,0,0,0.5)";
+    g.shadowBlur = 2;
+    g.shadowOffsetY = 1.5;
+    // crisp bright fill, brightened a touch so it reads as hot
+    _white.set(color).lerp(WHITE, 0.22);
+    g.fillStyle = "#" + (_white.getHex() & 0xffffff).toString(16).padStart(6, "0");
+    g.fillText(text, cx, cy);
+    g.shadowOffsetY = 0;
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.generateMipmaps = false; // avoid per-spawn GPU upload stalls
@@ -671,6 +856,13 @@ export class TdFx {
 
 // box geometries are built along +Z; this is the axis we rotate to face travel
 const FWD = new THREE.Vector3(0, 0, 1);
+
+// a second scratch Color so blend helpers can read `color` without clobbering
+// the `_white` accumulator mid-expression.
+const _scratchColor = new THREE.Color();
+function _tmpColor(hex: number): THREE.Color {
+  return _scratchColor.set(hex);
+}
 
 // small symmetric random in [-m, m]
 function rand(m: number): number {

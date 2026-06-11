@@ -1907,3 +1907,35 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
   background: rgba(0,0,0,0.25); border-radius: 999px; padding: 6px 14px;
 }
 .splash > #btn-server:hover { opacity: 0.9; }
+
+/* ============================================================
+   TOWER-DEFENSE HUD (#tdh) — appended block
+   ------------------------------------------------------------
+   The TD HUD (src/td/tdhud.ts) injects its own scoped styles at
+   runtime via a <style id="tdh-style"> tag; these rules are an
+   append-only safety/reinforcement layer so the overlay plays
+   nicely with the WebGL canvas + on-screen joystick:
+     - canvas:            below
+     - #tdh (this HUD):   z-index 25   (above canvas)
+     - touch joystick:    z-index 30
+     - full-screen menus: z-index 50   (always on top)
+   The HUD container is pointer-events:none so taps fall through
+   to the joystick EXCEPT on its actual interactive controls,
+   which opt back in to pointer-events:auto.
+   ============================================================ */
+#tdh { z-index: 25; pointer-events: none; }
+/* containers must never trap touches meant for the joystick */
+#tdh .tdh-top,
+#tdh .tdh-bottom,
+#tdh .tdh-banner,
+#tdh .tdh-wavebar { pointer-events: none; }
+/* …but every tappable control stays hittable, with comfy targets */
+#tdh .tdh-tower,
+#tdh .tdh-act,
+#tdh .tdh-pill.tdh-call,
+#tdh .tdh-chip,
+#tdh .tdh-over { pointer-events: auto; }
+#tdh .tdh-tower,
+#tdh .tdh-act { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* never let the full-screen win/lose overlay or menus sit under the HUD */
+#tdh .tdh-over { z-index: 1; }

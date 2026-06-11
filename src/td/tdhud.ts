@@ -92,7 +92,7 @@ export interface TdHudOpts {
 const STYLE_ID = "tdh-style";
 const STYLE_CSS = `
 #tdh {
-  position: absolute; inset: 0; z-index: 40; pointer-events: none;
+  position: absolute; inset: 0; z-index: 25; pointer-events: none;
   font-family: inherit; color: #f1ece1;
   font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
 }
@@ -140,6 +140,39 @@ const STYLE_CSS = `
 }
 #tdh .tdh-wave .tdh-val { color: #7fd4ff; }
 #tdh .tdh-income .tdh-val { color: #7be08a; }
+#tdh .tdh-score .tdh-val { color: #f1ece1; }
+
+/* combo + score live to the side; combo hides itself when there's no streak */
+#tdh .tdh-combo { display: none; position: relative; overflow: hidden;
+  border-color: rgba(255,150,60,0.45);
+  background: linear-gradient(135deg, rgba(54,30,18,0.9), rgba(28,20,16,0.88));
+}
+#tdh .tdh-combo.tdh-on { display: flex; }
+#tdh .tdh-combo .tdh-lbl { color: #ffb27a; }
+#tdh .tdh-combo .tdh-val { color: #ff8a3a; gap: 8px; }
+#tdh .tdh-combo .tdh-cstreak { font-size: 14px; font-weight: 800; color: #ffd9b0; }
+#tdh .tdh-combo .tdh-cmult {
+  font-size: 20px; font-weight: 900; letter-spacing: 0.3px;
+  background: linear-gradient(180deg,#ffd24a,#ff8a3a); -webkit-background-clip: text;
+  background-clip: text; -webkit-text-fill-color: transparent;
+  transform-origin: left center; will-change: transform;
+}
+#tdh .tdh-combo.tdh-cpop .tdh-cmult { animation: tdh-cpop 0.4s cubic-bezier(0.2,0.8,0.3,1); }
+@keyframes tdh-cpop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.4); filter: drop-shadow(0 0 8px rgba(255,160,60,0.7)); }
+  100% { transform: scale(1); }
+}
+/* a heat bar that fills as the streak climbs */
+#tdh .tdh-combo .tdh-cbar {
+  position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; transform-origin: left;
+  background: linear-gradient(90deg,#ffd24a,#ff5a3a); transition: transform 0.25s ease;
+}
+#tdh .tdh-combo.tdh-cpop { animation: tdh-cflash 0.4s ease; }
+@keyframes tdh-cflash {
+  0%,100% { box-shadow: 0 6px 18px rgba(0,0,0,0.34), 0 0 0 0 rgba(255,140,50,0); }
+  40%     { box-shadow: 0 6px 22px rgba(0,0,0,0.4), 0 0 0 4px rgba(255,140,50,0.3); }
+}
 
 /* HP bars (duel) */
 #tdh .tdh-hp { min-width: 168px; }
@@ -250,15 +283,21 @@ const STYLE_CSS = `
   position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
   pointer-events: auto; max-width: 96vw;
 }
-#tdh .tdh-palette { display: flex; gap: 8px; }
+/* 7-tower palette: a wrapping grid (auto-fit cards) that scrolls if very narrow */
+#tdh .tdh-palette {
+  display: grid; gap: 8px; justify-content: center;
+  grid-template-columns: repeat(7, minmax(0, 92px));
+  max-width: 96vw;
+}
 #tdh .tdh-tower {
-  position: relative; width: 88px; min-height: 86px;
+  position: relative; min-height: 90px;
   background: rgba(22,28,34,0.88); border: 1.5px solid rgba(255,255,255,0.12);
   border-radius: 14px; padding: 8px 6px 7px; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   color: inherit; font: inherit; text-align: center;
   box-shadow: 0 6px 18px rgba(0,0,0,0.34); backdrop-filter: blur(4px);
   transition: transform 0.1s, border-color 0.12s, background 0.12s, opacity 0.12s;
+  -webkit-tap-highlight-color: transparent;
 }
 #tdh .tdh-tower:hover:not(.tdh-dim) { transform: translateY(-3px); }
 #tdh .tdh-tower:active:not(.tdh-dim) { transform: translateY(-1px) scale(0.96); }
@@ -277,11 +316,16 @@ const STYLE_CSS = `
   font-size: 11px; font-weight: 800; color: #cfd9e0;
   display: inline-flex; align-items: center; justify-content: center;
 }
-#tdh .tdh-tower .tdh-ico { font-size: 26px; line-height: 1; margin-top: 6px; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4)); }
+#tdh .tdh-tower .tdh-ico { font-size: 26px; line-height: 1; margin-top: 4px; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4)); }
 #tdh .tdh-tower .tdh-tname { font-size: 12px; font-weight: 800; }
+#tdh .tdh-tower .tdh-tability {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+  color: #9fb0bc; line-height: 1.1; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 #tdh .tdh-tower .tdh-tcost {
   font-size: 12px; font-weight: 800; color: #ffd24a;
-  display: flex; align-items: center; gap: 3px;
+  display: flex; align-items: center; gap: 3px; margin-top: 1px;
 }
 #tdh .tdh-tower.tdh-dim .tdh-tcost { color: #ff8a7a; }
 
@@ -292,9 +336,35 @@ const STYLE_CSS = `
   border-radius: 16px; padding: 8px 12px; box-shadow: 0 8px 22px rgba(0,0,0,0.4);
   backdrop-filter: blur(4px);
 }
-#tdh .tdh-towerpanel .tdh-tphead { display: flex; flex-direction: column; gap: 1px; padding-right: 6px; margin-right: 2px; border-right: 1px solid rgba(255,255,255,0.12); }
+#tdh .tdh-towerpanel .tdh-tphead { display: flex; flex-direction: column; gap: 2px; padding-right: 8px; margin-right: 2px; border-right: 1px solid rgba(255,255,255,0.12); }
 #tdh .tdh-towerpanel .tdh-tpname { font-size: 14px; font-weight: 800; }
 #tdh .tdh-towerpanel .tdh-tptier { font-size: 11px; font-weight: 700; color: #9fb0bc; }
+/* tier ladder pips (filled = current tier, out of maxTier) */
+#tdh .tdh-towerpanel .tdh-pips { display: flex; gap: 4px; align-items: center; margin-top: 1px; }
+#tdh .tdh-towerpanel .tdh-pip {
+  width: 9px; height: 9px; border-radius: 3px;
+  background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.18);
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+#tdh .tdh-towerpanel .tdh-pip.tdh-pon { background: linear-gradient(180deg,#7be08a,#5fe08a); border-color: rgba(123,224,138,0.6); }
+#tdh .tdh-towerpanel .tdh-pip.tdh-pmax { background: linear-gradient(180deg,#ffd24a,#ff8a3a); border-color: rgba(255,210,74,0.7); box-shadow: 0 0 6px rgba(255,180,60,0.6); }
+/* signature ability chip in the owned panel */
+#tdh .tdh-towerpanel .tdh-tpability {
+  display: flex; flex-direction: column; gap: 1px; padding: 4px 9px; margin-right: 2px;
+  border-radius: 10px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+}
+#tdh .tdh-towerpanel .tdh-tpability .tdh-ablbl { font-size: 9px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: #8a96a0; }
+#tdh .tdh-towerpanel .tdh-tpability .tdh-abname { font-size: 13px; font-weight: 800; color: #cfd9e0; }
+#tdh .tdh-towerpanel .tdh-tpability.tdh-ablocked .tdh-abname { color: #8a96a0; }
+#tdh .tdh-towerpanel .tdh-tpability.tdh-abon {
+  border-color: rgba(255,210,74,0.6);
+  background: linear-gradient(135deg, rgba(58,44,18,0.85), rgba(40,34,22,0.85));
+  box-shadow: 0 0 0 1px rgba(255,210,74,0.25), 0 0 12px rgba(255,180,60,0.25);
+}
+#tdh .tdh-towerpanel .tdh-tpability.tdh-abon .tdh-abname {
+  color: #ffe9a8; text-shadow: 0 0 8px rgba(255,200,80,0.5);
+}
+#tdh .tdh-towerpanel .tdh-tpability.tdh-abon .tdh-ablbl { color: #ffd24a; }
 #tdh .tdh-act {
   pointer-events: auto; cursor: pointer; color: inherit; font: inherit;
   display: flex; align-items: center; gap: 7px;
@@ -375,11 +445,35 @@ const STYLE_CSS = `
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ── mobile / phone ─────────────────────────────────────────────────────── */
 @media (max-width: 560px) {
-  #tdh .tdh-tower { width: 64px; min-height: 76px; }
-  #tdh .tdh-tower .tdh-ico { font-size: 22px; }
+  /* 7 towers wrap to a tidy 4-up grid that always fits the screen width */
+  #tdh .tdh-bottom { bottom: 12px; width: 100%; padding: 0 6px; }
+  #tdh .tdh-palette {
+    grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; max-width: 100%;
+  }
+  #tdh .tdh-tower { min-height: 70px; padding: 6px 3px 5px; border-radius: 12px; }
+  #tdh .tdh-tower .tdh-ico { font-size: 22px; margin-top: 8px; }
+  #tdh .tdh-tower .tdh-tname { font-size: 11px; }
+  #tdh .tdh-tower .tdh-tability { display: none; } /* keep cards compact on phones */
+  #tdh .tdh-tower .tdh-key { top: 3px; left: 3px; min-width: 15px; height: 15px; font-size: 9px; }
+  /* owned panel: let the controls wrap rather than overflow off-screen */
+  #tdh .tdh-towerpanel { flex-wrap: wrap; justify-content: center; max-width: 100%; }
+  #tdh .tdh-act { padding: 9px 12px; } /* keep tap targets comfy */
+  /* top status: allow chips to wrap so combo/score don't push off-screen */
+  #tdh .tdh-top { flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 98vw; }
+  #tdh .tdh-chip { padding: 5px 10px; }
+  #tdh .tdh-chip .tdh-val { font-size: 16px; }
   #tdh .tdh-over .tdh-otitle { font-size: 40px; }
   #tdh .tdh-banner { font-size: 22px; padding: 10px 20px; }
+}
+/* very narrow phones: fall back to a single horizontal scroll row */
+@media (max-width: 360px) {
+  #tdh .tdh-palette {
+    display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 6px;
+    padding-bottom: 4px; -webkit-overflow-scrolling: touch;
+  }
+  #tdh .tdh-tower { flex: 0 0 64px; }
 }
 `;
 
@@ -390,11 +484,21 @@ const ICONS: Record<string, string> = {
   Pylon: "⚡", // ⚡
   Cannon: "\u{1F4A3}", // 💣
   Sniper: "\u{1F3AF}", // 🎯
+  Tesla: "\u{1F329}\u{FE0F}", // 🌩️
+  Venom: "\u{2620}\u{FE0F}", // ☠️
 };
+/** Generic turret fallback for any tower name not in ICONS. */
+const ICON_FALLBACK = "\u{1F5FC}"; // 🗼
 const GOLD = "\u{1FA99}"; // 🪙
 
 function hex(color: number): string {
   return "#" + (color & 0xffffff).toString(16).padStart(6, "0");
+}
+
+/** Escape text destined for innerHTML (tower names/abilities are caller-supplied). */
+function esc(s: string): string {
+  return s.replace(/[&<>"]/g, (c) =>
+    c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;");
 }
 
 /** Element refs for one HP bar (fill, % label, bar wrapper, floating damage tag). */
@@ -417,6 +521,11 @@ export class TdHud {
   private livesEl!: HTMLElement;
   private waveEl!: HTMLElement;
   private incomeEl!: HTMLElement;
+  private scoreEl!: HTMLElement;
+  private comboEl!: HTMLElement;
+  private comboStreakEl!: HTMLElement;
+  private comboMultEl!: HTMLElement;
+  private comboBarEl!: HTMLElement;
   private youHp!: HpRef;
   private botHp!: HpRef;
 
@@ -431,6 +540,9 @@ export class TdHud {
   private targetBtn!: HTMLButtonElement;
   private tpName!: HTMLElement;
   private tpTier!: HTMLElement;
+  private tpPips!: HTMLElement;
+  private tpAbility!: HTMLElement;
+  private tpAbilityName!: HTMLElement;
 
   // banner + overlay
   private bannerEl!: HTMLElement;
@@ -458,6 +570,8 @@ export class TdHud {
   private prevAfford: boolean[] = [];
   // early-call bonus (to highlight when it appears / grows)
   private prevBonus = -1;
+  // combo multiplier (to pop the meter when the streak climbs)
+  private prevCombo = 0;
 
   constructor(parent: HTMLElement, opts: TdHudOpts = {}) {
     this.root = parent;
@@ -480,6 +594,12 @@ export class TdHud {
         <div class="tdh-chip tdh-lives" data-show="solo"><span class="tdh-lbl">Lives</span><span class="tdh-val">0</span></div>
         <div class="tdh-chip tdh-income" data-show="duel"><span class="tdh-lbl">Income</span><span class="tdh-val">0</span></div>
         <div class="tdh-chip tdh-wave"><span class="tdh-lbl">Wave</span><span class="tdh-val">0</span></div>
+        <div class="tdh-chip tdh-score" data-show="solo"><span class="tdh-lbl">Score</span><span class="tdh-val">0</span></div>
+        <div class="tdh-chip tdh-combo" data-show="solo">
+          <span class="tdh-lbl">Combo</span>
+          <span class="tdh-val"><span class="tdh-cstreak">0</span><span class="tdh-cmult">×1.0</span></span>
+          <span class="tdh-cbar"></span>
+        </div>
       </div>
 
       <div class="tdh-wavebar">
@@ -489,7 +609,15 @@ export class TdHud {
       <div class="tdh-bottom">
         <div class="tdh-palette"></div>
         <div class="tdh-towerpanel">
-          <div class="tdh-tphead"><span class="tdh-tpname">Tower</span><span class="tdh-tptier">Tier 1</span></div>
+          <div class="tdh-tphead">
+            <span class="tdh-tpname">Tower</span>
+            <span class="tdh-tptier">Tier 1</span>
+            <span class="tdh-pips"></span>
+          </div>
+          <div class="tdh-tpability">
+            <span class="tdh-ablbl">Ability</span>
+            <span class="tdh-abname">—</span>
+          </div>
           <button class="tdh-act tdh-up"><span class="tdh-akey">E</span><span>upgrade</span><span class="tdh-cost"></span></button>
           <button class="tdh-act tdh-sell"><span class="tdh-akey">X</span><span>sell</span><span class="tdh-cost"></span></button>
           <button class="tdh-act tdh-target"><span class="tdh-akey">T</span><span>target</span><span class="tdh-cost"></span></button>
@@ -508,6 +636,11 @@ export class TdHud {
     this.livesEl = this.q(".tdh-lives .tdh-val");
     this.waveEl = this.q(".tdh-wave .tdh-val");
     this.incomeEl = this.q(".tdh-income .tdh-val");
+    this.scoreEl = this.q(".tdh-score .tdh-val");
+    this.comboEl = this.q(".tdh-combo");
+    this.comboStreakEl = this.q(".tdh-cstreak");
+    this.comboMultEl = this.q(".tdh-cmult");
+    this.comboBarEl = this.q(".tdh-cbar");
     this.youHp = this.hpRefs(".tdh-you");
     this.botHp = this.hpRefs(".tdh-bot");
 
@@ -520,6 +653,9 @@ export class TdHud {
     this.targetBtn = this.q(".tdh-act.tdh-target") as HTMLButtonElement;
     this.tpName = this.q(".tdh-tpname");
     this.tpTier = this.q(".tdh-tptier");
+    this.tpPips = this.q(".tdh-pips");
+    this.tpAbility = this.q(".tdh-tpability");
+    this.tpAbilityName = this.q(".tdh-tpability .tdh-abname");
 
     this.bannerEl = this.q(".tdh-banner");
     this.overEl = this.q(".tdh-over");
@@ -541,11 +677,15 @@ export class TdHud {
       const btn = document.createElement("button");
       btn.className = "tdh-tower";
       btn.style.borderColor = `${hex(t.color)}55`;
-      const ico = ICONS[t.name] ?? "\u{1F5FC}"; // 🗼
+      const ico = ICONS[t.name] ?? ICON_FALLBACK;
+      const ability = t.ability
+        ? `<span class="tdh-tability" style="color:${hex(t.color)}cc">${esc(t.ability)}</span>`
+        : `<span class="tdh-tability"></span>`;
       btn.innerHTML = `
-        <span class="tdh-key">${t.key}</span>
+        <span class="tdh-key">${esc(t.key)}</span>
         <span class="tdh-ico" style="color:${hex(t.color)}">${ico}</span>
-        <span class="tdh-tname">${t.name}</span>
+        <span class="tdh-tname">${esc(t.name)}</span>
+        ${ability}
         <span class="tdh-tcost">${GOLD}${t.cost}</span>`;
       btn.addEventListener("click", () => {
         if (!btn.classList.contains("tdh-dim")) this.opts.onBuild?.(t, i);
@@ -565,7 +705,20 @@ export class TdHud {
     }
     this.el.classList.add("tdh-owned");
     this.tpName.textContent = info.name;
-    this.tpTier.textContent = `Tier ${info.tier}`;
+    const maxTier = info.maxTier ?? 4;
+    this.tpTier.textContent = `Tier ${info.tier}/${maxTier}`;
+    this.renderPips(info.tier, maxTier);
+
+    // signature ability: highlighted once unlocked
+    if (info.ability) {
+      this.tpAbility.style.display = "";
+      this.tpAbilityName.textContent = info.ability;
+      this.tpAbility.classList.toggle("tdh-abon", !!info.abilityUnlocked);
+      this.tpAbility.classList.toggle("tdh-ablocked", !info.abilityUnlocked);
+    } else {
+      this.tpAbility.style.display = "none";
+    }
+
     const upCost = this.upBtn.querySelector(".tdh-cost") as HTMLElement;
     if (info.upgradeCost == null) {
       this.upBtn.disabled = true;
@@ -597,6 +750,8 @@ export class TdHud {
 
     if (s.mode === "solo") {
       this.renderLives(s.lives ?? 0);
+      this.setText(this.scoreEl, "score", `${s.score ?? 0}`);
+      this.renderCombo(s.combo ?? 0, s.comboMult ?? 1);
     } else {
       this.setText(this.incomeEl, "income", `+${s.income ?? 0}/wave`);
       this.setHp(this.youHp, "youhp", s.playerHp);
@@ -680,6 +835,44 @@ export class TdHud {
       else if (lives > prevRaw) this.retrigger(this.livesEl, "tdh-livesup", 500);
     }
     this.prevHp["lives"] = lives;
+  }
+
+  /** Kill-streak combo meter: shows the streak count + a pulsing multiplier,
+   *  hides itself entirely when there's no active streak. Cheap/diff-based. */
+  private renderCombo(combo: number, mult: number): void {
+    const on = combo > 0;
+    const key = `${on ? 1 : 0}|${combo}|${mult.toFixed(2)}`;
+    if (this.prev["__combo"] === key) return;
+    this.prev["__combo"] = key;
+
+    this.comboEl.classList.toggle("tdh-on", on);
+    if (on) {
+      this.comboStreakEl.textContent = `${combo}×`;
+      this.comboMultEl.textContent = `×${mult.toFixed(1)}`;
+      // heat bar fills toward a cap of ×5 (purely cosmetic ceiling)
+      const frac = Math.max(0, Math.min(1, (mult - 1) / 4));
+      this.comboBarEl.style.transform = `scaleX(${frac})`;
+      // pop the meter whenever the streak grows
+      if (combo > this.prevCombo) this.retrigger(this.comboEl, "tdh-cpop", 400);
+    }
+    this.prevCombo = combo;
+  }
+
+  /** Render the upgrade-ladder pips (filled = reached tier; top tier glows gold). */
+  private renderPips(tier: number, maxTier: number): void {
+    const key = `${tier}/${maxTier}`;
+    if (this.prev["__pips"] === key) {
+      // still rebuild if the node was emptied elsewhere; otherwise skip
+      if (this.tpPips.childElementCount === maxTier) return;
+    }
+    this.prev["__pips"] = key;
+    let html = "";
+    for (let i = 1; i <= maxTier; i++) {
+      const on = i <= tier;
+      const max = on && i === maxTier;
+      html += `<span class="tdh-pip${on ? " tdh-pon" : ""}${max ? " tdh-pmax" : ""}"></span>`;
+    }
+    this.tpPips.innerHTML = html;
   }
 
   private renderWave(s: TdHudState): void {

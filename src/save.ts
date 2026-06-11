@@ -70,6 +70,7 @@ export interface SaveData {
   bestRound: number;
   bestScore: number;
   bestWave: number; // best Tower-Defense wave reached (endless leaderboard basis)
+  tdBestScore: number; // best Tower-Defense run score (combo-fed; replay chase)
   tdDailyDay: number; // UTC day-bucket of the last TD Daily Challenge attempt
   tdDailyWave: number; // wave reached on that attempt (today's score)
   scores: ScoreEntry[]; // personal leaderboard: top runs (round desc, score desc)
@@ -121,6 +122,7 @@ function blank(): SaveData {
     bestRound: 0,
     bestScore: 0,
     bestWave: 0,
+    tdBestScore: 0,
     tdDailyDay: 0,
     tdDailyWave: 0,
     scores: [],
@@ -257,6 +259,7 @@ export function loadSave(): SaveData {
       bestRound: num(data.bestRound),
       bestScore: num(data.bestScore),
       bestWave: num(data.bestWave),
+      tdBestScore: num(data.tdBestScore),
       tdDailyDay: num(data.tdDailyDay),
       tdDailyWave: num(data.tdDailyWave),
       scores: sanitizeScores(data.scores),
