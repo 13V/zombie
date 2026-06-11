@@ -371,6 +371,10 @@ export class Weapon {
    * number of "+"s (off baseName, so it never stacks "+ +"). We clone the def so
    * the shared WEAPONS template is never mutated. Refills on upgrade.
    */
+  /** Distinctive "packed rounds" tint per Pack-a-Punch tier, so an upgraded gun
+   *  is obvious at a glance: I = electric cyan, II = arcane violet, III = gold. */
+  static readonly PAP_BULLET = [0x6ad7ff, 0xc792ea, 0xffe14a];
+
   upgrade(): boolean {
     if (this.maxUpgraded) return false;
     this.tier++;
@@ -385,8 +389,10 @@ export class Weapon {
       reserve: d.reserve === Infinity ? Infinity : Math.ceil(d.reserve * 1.4),
       reloadTime: d.reloadTime * 0.9,
       splashDamage: d.splashDamage ? Math.round(d.splashDamage * 1.8) : d.splashDamage,
-      // packed rounds read brighter + a touch bigger each tier.
+      // packed rounds read brighter + a touch bigger each tier, and recolour to
+      // the tier's signature hue (overriding the stock bullet colour).
       bulletScale: (d.bulletScale ?? 1) * 1.12,
+      bulletColor: Weapon.PAP_BULLET[this.tier - 1] ?? d.bulletColor,
     };
     this.ammo = this.def.magSize;
     if (this.reserve !== Infinity) this.reserve = this.def.reserve;

@@ -344,23 +344,37 @@ class PackAPunch implements Interactable {
     const { x, z } = pos;
     const steelMat = voxelMaterial(VOX.steel);
     const steelDarkMat = voxelMaterial(VOX.steelDark);
-    // chunky steel voxel machine body
-    this.group.add(vox(1.8, 2.0, 1.2, x, 1.0, z, steelDarkMat, true));
-    // bolted steel panel + side ribs
-    this.group.add(vox(1.3, 1.4, 0.14, x, 1.2, z + 0.6, steelMat));
-    this.group.add(vox(0.18, 2.0, 1.2, x - 0.9, 1.0, z, steelMat));
-    this.group.add(vox(0.18, 2.0, 1.2, x + 0.9, 1.0, z, steelMat));
-    // vent stack on top
-    this.group.add(vox(0.4, 0.5, 0.4, x + 0.5, 2.25, z, steelDarkMat, true));
-    // glowing intake slot
-    this.group.add(vox(1.3, 0.3, 0.2, x, 1.5, z + 0.62, glowMaterial(VOX.rvWindow, 1.4)));
-    // hovering halo ring above (glow accent the bloom catches)
-    this.ring = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.07, 8, 24), glowMaterial(COLORS.boxGold, 1.4));
-    this.ring.position.set(x, 2.5, z);
+    const arcane = 0x6ad7ff; // the signature Pack-a-Punch energy hue
+    // ---- a heavy arcane workshop machine ----
+    // weighted plinth + main chassis
+    this.group.add(vox(2.1, 0.4, 1.5, x, 0.2, z, steelDarkMat, true));
+    this.group.add(vox(1.9, 2.2, 1.3, x, 1.45, z, steelDarkMat, true));
+    // bevelled steel face plate + bolted side ribs
+    this.group.add(vox(1.45, 1.7, 0.16, x, 1.55, z + 0.66, steelMat));
+    for (const dx of [-0.96, 0.96]) this.group.add(vox(0.2, 2.2, 1.34, x + dx, 1.45, z, steelMat));
+    // a glowing arcane sigil inset on the face (cross of energy bars)
+    this.group.add(vox(0.9, 0.18, 0.1, x, 1.7, z + 0.75, glowMaterial(arcane, 1.3)));
+    this.group.add(vox(0.18, 1.0, 0.1, x, 1.7, z + 0.75, glowMaterial(arcane, 1.3)));
+    // the iconic glowing INTAKE slot (where the gun goes in)
+    this.group.add(vox(1.4, 0.34, 0.24, x, 0.95, z + 0.66, glowMaterial(arcane, 1.5)));
+    // energy coil pillars up the corners + glowing caps
+    for (const dx of [-0.84, 0.84]) {
+      this.group.add(vox(0.16, 2.4, 0.16, x + dx, 1.45, z + 0.5, steelMat));
+      this.group.add(vox(0.28, 0.28, 0.28, x + dx, 2.72, z + 0.5, glowMaterial(arcane, 1.4)));
+    }
+    // crowned top: a stepped header + a floating power gem
+    this.group.add(vox(2.0, 0.4, 1.0, x, 2.75, z, steelMat, true));
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), glowMaterial(COLORS.boxGold, 1.5));
+    gem.position.set(x, 3.3, z);
+    gem.rotation.set(Math.PI / 5, 0, Math.PI / 5);
+    this.group.add(gem);
+    // hovering halo ring above (glow accent the bloom catches; animated)
+    this.ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.08, 8, 28), glowMaterial(arcane, 1.5));
+    this.ring.position.set(x, 3.3, z);
     this.ring.rotation.x = Math.PI / 2;
     this.group.add(this.ring);
-    const light = new THREE.PointLight(0x6ad7ff, 5, 8, 2);
-    light.position.set(x, 2.0, z + 0.5);
+    const light = new THREE.PointLight(arcane, 6, 9, 2);
+    light.position.set(x, 2.2, z + 0.6);
     this.group.add(light);
   }
   prompt(game: GameApi) {
