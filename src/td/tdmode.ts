@@ -4,8 +4,9 @@ import { TdMap } from "./tdmap";
 import { TdEnemies, type TdSpawnSpec } from "./tdenemy";
 import { TD_PADS, TD_GOAL } from "./tdpath";
 import {
-  TD_TOWERS, TD_TOWER_IDS, towerStats, tdUpgradeCost, tdSellValue, pickTarget,
-  TD_TARGET_MODES, type TdTowerId, type TdTargetMode, type TdTargetable, type TdTowerDef,
+  TD_TOWERS, TD_TOWER_IDS, TD_MAX_TIER, towerStats, tdUpgradeCost, tdSellValue,
+  pickTarget, pickTargets, nearestCreep,
+  TD_TARGET_MODES, type TdTowerId, type TdTargetMode, type TdTargetable, type TdTowerDef, type TdTowerStats,
 } from "./tdtowers";
 import { buildWave, spawnInterval, waveClearBonus, TD_START_GOLD, TD_START_LIVES, TD_TOTAL_WAVES } from "./tdwaves";
 import {
@@ -50,6 +51,9 @@ const BUILD_REACH = 4;
 const TURRET_SCALE = 2.1;       // base turret size (they were dwarfed by the pads)
 const NEXT_WAVE_DELAY = 10;     // auto-start the next wave after this many seconds
 const EARLY_CALL_RATE = 2;      // bonus gold per second skipped when calling early
+const COMBO_WINDOW = 2.6;       // seconds between kills before the streak drops
+const COMBO_STEP = 0.04;        // gold/score multiplier gained per kill in a streak
+const COMBO_CAP = 50;           // combo count past which the multiplier stops growing
 
 /** Spring-overshoot easing (0..1 → past 1 then settle) for the deploy pop. */
 function easeOutBack(x: number): number {
@@ -92,6 +96,16 @@ export class TdMode {
   wave = 0;
   /** Waves fully cleared this session (cross-mode daily-quest metric). */
   wavesCleared = 0;
+  /** Running run score (kills × bounty × combo). Read by main for the high score. */
+  score = 0;
+  /** Best kill-streak reached this session. */
+  bestCombo = 0;
+  // kill-streak combo: each kill within COMBO_WINDOW seconds raises the streak,
+  // which multiplies gold + score. A leak resets it.
+  private combo = 0;
+  private comboTimer = 0;
+  // active poison/burn DoTs keyed by creep id (venom + cannon incendiary)
+  private poison = new Map<number, { dps: number; until: number; color: number; puff: number }>();
   private opts: TdEnterOpts = {};
   private _tAnim = 0; // animation clock for turret idle motion
   private _shakeImpulse = 0; // camera shake to hand to main (consumed each frame)
@@ -164,6 +178,11 @@ export class TdMode {
     this.pendingBotSends = [];
     this.wave = 0;
     this.wavesCleared = 0;
+    this.score = 0;
+    this.combo = 0;
+    this.comboTimer = 0;
+    this.bestCombo = 0;
+    this.poison.clear();
     this._ended = false;
     this.spawnQueue = [];
     this.spawnTimer = 0;
@@ -338,6 +357,13 @@ export class TdMode {
   tick(dt: number, playerPos?: THREE.Vector3) {
     if (!this.active || this.result.over) return;
     this.map.update(dt);
+    this._tAnim += dt; // animation/DoT clock (advanced early so poison reads it)
+
+    // combo decay: the streak drops if no kill lands inside the window
+    if (this.comboTimer > 0) {
+      this.comboTimer -= dt;
+      if (this.comboTimer <= 0) this.combo = 0;
+    }
 
     // wave pacing
     if (this.betweenWaves) {
@@ -351,10 +377,14 @@ export class TdMode {
       }
     }
 
-    // advance creeps; bank kills, take leaks
+    // poison/burn DoTs eat away at marked creeps before the reap
+    this.tickPoison(dt);
+
+    // advance creeps; bank kills (combo-multiplied), take leaks
     const res = this.creeps.update(dt);
-    for (const b of res.bounties) this.addGold(b);
+    for (const b of res.bounties) this.registerKill(b);
     if (res.leaked > 0) {
+      this.combo = 0; this.comboTimer = 0; // a leak breaks the streak
       this.map.flashBase(0.4);
       this.audio.leak();
       this._shakeImpulse = Math.min(0.5, this._shakeImpulse + 0.12 + res.leaked * 0.02);
@@ -375,7 +405,6 @@ export class TdMode {
       if (t.def.detect) this.creeps.revealZone(t.pos, towerStats(t.id, t.tier).range);
     }
 
-    this._tAnim += dt;
     this.fireTowers(dt);
     this.animateTowers(dt);
     this.vfx.update(dt);
@@ -409,6 +438,59 @@ export class TdMode {
     this.refreshHud();
   }
 
+  // ---- combo / score ----
+  /** Live gold/score multiplier from the current kill streak (1× … ~3×). */
+  private comboMult(): number { return 1 + Math.min(this.combo, COMBO_CAP) * COMBO_STEP; }
+  /** Credit a kill: bump the streak, pay combo-scaled gold, accrue score, and
+   *  punch a little feedback at streak milestones. */
+  private registerKill(bounty: number) {
+    this.combo++;
+    this.comboTimer = COMBO_WINDOW;
+    if (this.combo > this.bestCombo) this.bestCombo = this.combo;
+    const mult = this.comboMult();
+    this.addGold(Math.round(bounty * mult));
+    this.score += Math.round(bounty * mult * 10);
+    // streak milestones: a celebratory pop over the base + a tiny shake
+    if (this.combo >= 5 && this.combo % 5 === 0) {
+      this.vfx.floatText(new THREE.Vector3(TD_GOAL.x, 3.6, TD_GOAL.z), `COMBO ×${mult.toFixed(1)}`, 0xffe14a);
+      this._shakeImpulse = Math.min(0.5, this._shakeImpulse + 0.03);
+    }
+  }
+
+  // ---- poison / burn DoTs ----
+  /** Mark a creep with a poison/burn tick (strongest dps wins; longest time kept). */
+  private addPoison(id: number, dps: number, time: number, color: number) {
+    if (dps <= 0 || time <= 0) return;
+    const until = this._tAnim + time;
+    const cur = this.poison.get(id);
+    if (!cur) this.poison.set(id, { dps, until, color, puff: 0 });
+    else { cur.dps = Math.max(cur.dps, dps); cur.until = Math.max(cur.until, until); cur.color = color; }
+  }
+  /** Splash-apply a DoT to every creep within radius of a point. */
+  private poisonNear(x: number, z: number, radius: number, dps: number, time: number, color: number) {
+    const r2 = radius * radius;
+    for (const e of this.creeps.enemies()) {
+      const dx = e.pos.x - x, dz = e.pos.z - z;
+      if (dx * dx + dz * dz <= r2) this.addPoison(e.id, dps, time, color);
+    }
+  }
+  /** Drain HP from poisoned creeps each frame; expire finished marks + puff FX. */
+  private tickPoison(dt: number) {
+    if (this.poison.size === 0) return;
+    const now = this._tAnim;
+    for (const [id, p] of this.poison) {
+      if (now >= p.until) { this.poison.delete(id); continue; }
+      this.creeps.damage(id, p.dps * dt, true); // poison/burn ignores armor
+      p.puff -= dt;
+      if (p.puff <= 0) {
+        p.puff = 0.4;
+        const e = this.creeps.enemies().find((v) => v.id === id);
+        if (e) this.vfx.ring(new THREE.Vector3(e.pos.x, 0.5, e.pos.z), p.color, 0.7);
+        else { this.poison.delete(id); }
+      }
+    }
+  }
+
   // ---- tower firing ----
   private fireTowers(dt: number) {
     if (this.towers.size === 0) return;
@@ -418,13 +500,29 @@ export class TdMode {
       id: e.id, pos: { x: e.pos.x, z: e.pos.z }, dist: e.dist, hp: e.hp,
       alive: e.alive, targetable: !e.camo || e.revealed,
     }));
+    const byId = new Map<number, (typeof view)[number]>();
+    for (const e of view) byId.set(e.id, e);
+
+    // OVERCHARGE auras (pylon t4): a tower's outgoing damage is amplified by the
+    // sum of overlapping aura buffs. Precompute the aura discs once per frame.
+    const auras: { x: number; z: number; r2: number; buff: number }[] = [];
+    for (const t of this.towers.values()) {
+      const s = towerStats(t.id, t.tier);
+      if (s.buff > 0) auras.push({ x: t.pos.x, z: t.pos.z, r2: s.buffRange * s.buffRange, buff: s.buff });
+    }
+    const ampAt = (x: number, z: number) => {
+      let m = 1;
+      for (const a of auras) { const dx = x - a.x, dz = z - a.z; if (dx * dx + dz * dz <= a.r2) m += a.buff; }
+      return m;
+    };
+
     for (const t of this.towers.values()) {
       t.cooldown -= dt;
       t.aiming = false;
       const st = towerStats(t.id, t.tier);
       const tid = pickTarget(t.pos.x, t.pos.z, st.range, targets, t.target);
       if (tid < 0) continue;
-      const tgt = view.find((e) => e.id === tid);
+      const tgt = byId.get(tid);
       if (!tgt) continue;
       t.barrel.rotation.y = Math.atan2(tgt.pos.x - t.pos.x, tgt.pos.z - t.pos.z);
       t.aiming = true;
@@ -436,23 +534,83 @@ export class TdMode {
       }
       if (t.cooldown > 0) continue;
       t.cooldown = 1 / st.fireRate;
-      if (st.splash > 0) this.creeps.damageNear(tgt.pos, st.splash, st.damage, t.def.pierce);
-      else this.creeps.damage(tid, st.damage, t.def.pierce);
-      if (st.slow > 0) this.creeps.applySlow(tid, st.slow, st.slowTime);
-      // VFX: muzzle flash at the barrel, a travelling shot, an impact on arrival
+
+      const amp = ampAt(t.pos.x, t.pos.z);
       const from = new THREE.Vector3(t.pos.x, 1.4, t.pos.z);
-      const to = new THREE.Vector3(tgt.pos.x, 0.7, tgt.pos.z);
+      // MULTISHOT (arrow t4): the volley forks to several distinct targets.
+      const shotIds = st.multishot > 1
+        ? pickTargets(t.pos.x, t.pos.z, st.range, targets, t.target, st.multishot)
+        : [tid];
+      for (const sid of shotIds) {
+        const e = byId.get(sid);
+        if (e) this.fireShot(t, st, amp, from, e, view, byId);
+      }
+
       const dir = new THREE.Vector3(tgt.pos.x - t.pos.x, 0, tgt.pos.z - t.pos.z).normalize();
-      const kind = (t.id === "sniper" || t.id === "pylon") ? "beam" : t.id === "cannon" ? "shell" : "bolt";
-      const big = st.splash > 0;
       this.vfx.muzzleFlash(from, dir, t.def.color);
-      this.vfx.tracer(from, to, t.def.color, kind, (p, c) => { this.vfx.impact(p, c, big); this.audio.impact(big); });
       this.audio.fire(t.id);
       t.recoil = 1; t.flash = 1; // kick + muzzle glow
       if (t.id === "cannon") { // a heavy boom: shake + a sliver of hit-stop
         this._shakeImpulse = Math.min(0.5, this._shakeImpulse + 0.05);
         this._hitStop = Math.max(this._hitStop, 0.045);
       }
+    }
+  }
+
+  /** Resolve a single bolt against creep `e`: crit roll, splash/single damage,
+   *  slow/stun, DoT seeding, and the chain arc — plus the travelling tracer. */
+  private fireShot(
+    t: Tower, st: TdTowerStats, amp: number, from: THREE.Vector3,
+    e: { id: number; pos: THREE.Vector3 }, view: ReturnType<TdEnemies["enemies"]>,
+    byId: Map<number, (typeof view)[number]>,
+  ) {
+    const big = st.splash > 0;
+    const crit = st.crit > 0 && Math.random() < st.crit;
+    const dmg = st.damage * amp * (crit ? st.critMul : 1);
+    const ex = e.pos.x, ez = e.pos.z;
+
+    if (st.splash > 0) {
+      this.creeps.damageNear(e.pos, st.splash, dmg, t.def.pierce);
+      if (st.dot > 0) this.poisonNear(ex, ez, st.splash, st.dot * amp, st.dotTime, t.def.color);
+    } else {
+      this.creeps.damage(e.id, dmg, t.def.pierce);
+      if (st.dot > 0) this.addPoison(e.id, st.dot * amp, st.dotTime, t.def.color);
+    }
+    if (st.slow > 0) this.creeps.applySlow(e.id, st.slow, st.slowTime);
+    if (st.stun > 0) this.creeps.applySlow(e.id, 0.96, st.stun); // flash-freeze ≈ stun
+
+    // CHAIN ARC (tesla): jump to the nearest creeps, damage falling off per hop.
+    if (st.chain > 0) this.chainArc(ex, ez, e.id, st, dmg, t.def.color, byId);
+
+    const to = new THREE.Vector3(ex, 0.7, ez);
+    const kind = (t.id === "sniper" || t.id === "pylon" || t.id === "tesla") ? "beam" : t.id === "cannon" ? "shell" : "bolt";
+    this.vfx.tracer(from, to, t.def.color, kind, (p, c) => {
+      this.vfx.impact(p, c, big || crit);
+      if (crit) this.vfx.floatText(new THREE.Vector3(ex, 1.7, ez), "CRIT", 0xffe14a);
+      this.audio.impact(big || crit);
+    });
+  }
+
+  /** Arc lightning from (x,z) to up to st.chain nearby creeps, fading per hop. */
+  private chainArc(
+    x: number, z: number, fromId: number, st: TdTowerStats, baseDmg: number, color: number,
+    byId: Map<number, { id: number; pos: THREE.Vector3; camo: boolean; revealed: boolean; alive: boolean; hp: number; dist: number }>,
+  ) {
+    const chainTargets: TdTargetable[] = [];
+    for (const e of byId.values()) {
+      chainTargets.push({ id: e.id, pos: { x: e.pos.x, z: e.pos.z }, dist: e.dist, hp: e.hp, alive: e.alive, targetable: !e.camo || e.revealed });
+    }
+    const excl = new Set<number>([fromId]);
+    let cx = x, cz = z, dmg = baseDmg * st.chainFalloff;
+    for (let i = 0; i < st.chain; i++) {
+      const nid = nearestCreep(cx, cz, st.chainRange, chainTargets, excl);
+      if (nid < 0) break;
+      const ne = byId.get(nid);
+      if (!ne) break;
+      this.creeps.damage(nid, dmg, false);
+      this.vfx.tracer(new THREE.Vector3(cx, 0.8, cz), new THREE.Vector3(ne.pos.x, 0.8, ne.pos.z), color, "beam");
+      excl.add(nid);
+      cx = ne.pos.x; cz = ne.pos.z; dmg *= st.chainFalloff;
     }
   }
 
@@ -670,7 +828,7 @@ export class TdMode {
         for (const sx of [-1, 1]) g.add(box(0.2, 0.7, 1.1, metal, sx * 0.62, 0.3, 0));
       }
       barrel.position.y = 0.75;
-    } else { // sniper
+    } else if (id === "sniper") {
       g.add(box(1.2, 0.4, 1.2, stone, 0, -0.4, 0));
       g.add(box(0.85, 1.7, 0.85, stoneDark, 0, 0.65, 0));
       g.add(box(1.05, 0.3, 1.05, wood, 0, 1.55, 0));
@@ -688,6 +846,47 @@ export class TdMode {
         banner.position.set(0, 0.7, 0.46); g.add(banner);
       }
       barrel.position.y = 1.6;
+    } else if (id === "tesla") {
+      g.add(box(1.4, 0.4, 1.4, metal, 0, -0.4, 0));
+      g.add(box(0.5, 1.0, 0.5, stoneDark, 0, 0.2, 0));               // ceramic insulator column
+      // stacked copper coil rings winding up the column
+      const coils = 3 + (tier >= 2 ? 1 : 0) + (tier >= 4 ? 1 : 0);
+      for (let i = 0; i < coils; i++) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34 - i * 0.035, 0.06, 6, 16), glowMaterial(0xff9d5c, 0.55));
+        ring.rotation.x = Math.PI / 2; ring.position.y = 0.35 + i * 0.2; g.add(ring);
+      }
+      // the toroid ball cap that crackles with charge
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.32 + (tier - 1) * 0.05, 12, 8), glowMaterial(accent, 1.1));
+      ball.position.y = 1.45; g.add(ball);
+      // aiming emitter prong (barrel) with a glowing arc tip
+      barrel.add(box(0.12, 0.12, 0.7, metal, 0, 0, 0.35));
+      { const mz = glow(0.22, 0.22, 0.22, accent, 0, 0, 0.72, 1.4); mz.name = "muzzle"; barrel.add(mz); }
+      if (tier >= 3) for (const ax of [-0.22, 0.22]) barrel.add(glow(0.08, 0.08, 0.5, accent, ax, 0, 0.55, 1.1));
+      barrel.position.y = 1.0;
+    } else { // venom
+      g.add(box(1.5, 0.4, 1.5, stoneDark, 0, -0.4, 0));
+      g.add(box(0.9, 0.55, 0.9, 0x3a2f23, 0, 0.05, 0));             // dark plinth
+      // a cauldron brimming with bubbling toxin
+      const cauldron = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.4, 0.5, 10), voxelMaterial(0x2a2f26));
+      cauldron.position.y = 0.45; cauldron.castShadow = true; g.add(cauldron);
+      const brew = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.12, 10), glowMaterial(accent, 1.0));
+      brew.position.y = 0.72; g.add(brew);
+      for (const [bx, bz, s] of [[-0.15, 0.1, 1], [0.18, -0.05, 1.3], [0.0, 0.2, 0.8]] as const) {
+        const b = new THREE.Mesh(new THREE.SphereGeometry(0.08 * s, 6, 6), glowMaterial(accent, 0.9));
+        b.position.set(bx, 0.8, bz); g.add(b);
+      }
+      // aiming nozzle (barrel) that spits venom globs
+      barrel.add(box(0.16, 0.16, 0.6, 0x2a2f26, 0, 0, 0.3));
+      { const mz = glow(0.24, 0.24, 0.24, accent, 0, 0, 0.6, 1.2); mz.name = "muzzle"; barrel.add(mz); }
+      if (tier >= 2) for (const [bx, bz] of [[-0.42, 0.18], [0.42, 0.24]] as const) {
+        const sp = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), glowMaterial(accent, 0.7));
+        sp.position.set(bx, 0.6, bz); g.add(sp);
+      }
+      if (tier >= 3) {
+        const halo = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.05, 6, 18), glowMaterial(accent, 0.8));
+        halo.rotation.x = Math.PI / 2; halo.position.y = 0.98; g.add(halo);
+      }
+      barrel.position.y = 0.95;
     }
 
     g.add(barrel);
@@ -756,7 +955,8 @@ export class TdMode {
     if (this.ui) return;
     this.ui = new TdHud(document.getElementById("ui") ?? document.body);
     this.ui.setTowers(TD_TOWER_IDS.map((id, i) => ({
-      name: TD_TOWERS[id].name, cost: TD_TOWERS[id].cost, key: String(i + 1), color: TD_TOWERS[id].color,
+      name: TD_TOWERS[id].name, cost: TD_TOWERS[id].cost, key: String(i + 1),
+      color: TD_TOWERS[id].color, ability: TD_TOWERS[id].ability,
     })));
     this.refreshHud();
   }
@@ -776,6 +976,7 @@ export class TdMode {
       totalWaves: this.opts.endless ? undefined : TD_TOTAL_WAVES, // endless shows a bare wave count
       betweenWaves: this.betweenWaves, earlyCallBonus: this.earlyCallBonus(), lives: this.soloLives,
       over: this.result.over, win: this.result.win,
+      combo: this.combo, comboMult: this.comboMult(), score: this.score,
     };
   }
   private refreshHud() {
@@ -789,8 +990,9 @@ export class TdMode {
     const t = pad >= 0 ? this.towers.get(pad) : undefined;
     if (t) {
       this.ui.showTowerPanel({
-        name: t.def.name, tier: t.tier, target: t.target,
+        name: t.def.name, tier: t.tier, maxTier: TD_MAX_TIER, target: t.target,
         upgradeCost: tdUpgradeCost(t.id, t.tier), sellValue: tdSellValue(t.id, t.tier),
+        ability: t.def.ability, abilityUnlocked: t.tier >= TD_MAX_TIER,
       });
     } else {
       this.ui.showTowerPanel(null);

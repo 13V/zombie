@@ -43,7 +43,10 @@ export function creepHpAt(wave: number): number {
 
 /**
  * The creeps for wave `n` (1-based). Builds an archetype mix per the pacing
- * schedule and attaches the traits (armor/camo/regen) that gate the counter.
+ * schedule and attaches the traits (armor/camo/regen) that gate the counter:
+ *   fast    → runner (arrow/tesla)        armored → piercing (cannon/sniper/venom)
+ *   tank    → high-HP wall (venom/sniper)  camo    → detector pylon
+ *   regrow  → burst or poison it down      boss    → single-target + slow
  */
 export function buildWave(n: number): TdSpawnSpec[] {
   const wave = Math.max(1, Math.floor(n));
@@ -56,31 +59,45 @@ export function buildWave(n: number): TdSpawnSpec[] {
 
   // ---- boss / elite waves (every 5th) ----
   if (isBoss) {
-    const bhp = Math.round(hp * (wave >= 15 ? 16 : 10));
+    const mega = wave >= 15;
+    const bhp = Math.round(hp * (mega ? 16 : 10));
     out.push({ hp: bhp, speed: speed * 0.6, bounty: Math.round(bhp * 0.05), kind: "boss",
-      armor: wave >= 15 ? 0.3 : 0, regen: wave >= 10 ? hp * 0.5 : 0, leakDmg: 12 });
-    // escort pack
+      armor: mega ? 0.3 : 0, regen: wave >= 10 ? hp * 0.5 : 0, leakDmg: 12 });
+    // a co-boss tank from wave 10 so the finale isn't a single check
+    if (wave >= 10) {
+      out.push({ hp: Math.round(hp * 5), speed: speed * 0.7, bounty: Math.round(hp * 5 * 0.05),
+        kind: "tank", armor: 0.4, leakDmg: 6 });
+    }
+    // escort pack — fast runners up front, armored bruisers from wave 10
     const escorts = 5 + Math.floor(wave / 5) * 2;
     for (let i = 0; i < escorts; i++) {
-      out.push({ hp: Math.round(hp * 0.8), speed: speed * 1.3, bounty: bounty(hp * 0.8), kind: "fast", leakDmg: 1 });
+      out.push({ hp: Math.round(hp * 0.8), speed: speed * 1.35, bounty: bounty(hp * 0.8), kind: "fast", leakDmg: 1 });
+    }
+    if (wave >= 10) {
+      const bruisers = 2 + Math.floor((wave - 10) / 5);
+      for (let i = 0; i < bruisers; i++) {
+        out.push({ hp: Math.round(hp * 1.5), speed: speed * 0.85, bounty: bounty(hp * 1.5), kind: "armored", armor: 0.6, leakDmg: 2 });
+      }
     }
     return out;
   }
 
   // ---- normal waves: a base pack + the archetype(s) unlocked by this wave ----
   const count = 6 + wave * 2;
-  for (let i = 0; i < count; i++) {
-    // swarm filler from wave 3+: a quarter are fast runners
-    const fast = wave >= 3 && i % 4 === 3;
+  // every 3rd non-boss wave from 4+ is a SWARM SURGE: more, faster, frailer
+  const surge = wave >= 4 && wave % 3 === 1;
+  for (let i = 0; i < count + (surge ? 6 : 0); i++) {
+    // swarm filler from wave 3+: a quarter are fast runners (more during a surge)
+    const fast = wave >= 3 && (surge ? i % 2 === 1 : i % 4 === 3);
     out.push({
-      hp: Math.round(hp * (fast ? 0.65 : 1)),
-      speed: speed * (fast ? 1.5 : 1),
-      bounty: bounty(hp * (fast ? 0.65 : 1)),
+      hp: Math.round(hp * (fast ? 0.6 : 1)),
+      speed: speed * (fast ? (surge ? 1.65 : 1.5) : 1),
+      bounty: bounty(hp * (fast ? 0.6 : 1)),
       kind: fast ? "fast" : undefined,
     });
   }
 
-  // ARMORED debuts ~wave 6: needs piercing (cannon/sniper)
+  // ARMORED debuts ~wave 6: needs piercing (cannon/sniper/venom)
   if (wave >= 6) {
     const n2 = 2 + Math.floor((wave - 6) / 2);
     for (let i = 0; i < n2; i++) {
@@ -94,7 +111,14 @@ export function buildWave(n: number): TdSpawnSpec[] {
       out.push({ hp: Math.round(hp * 0.7), speed: speed * 1.15, bounty: bounty(hp * 0.7), kind: "camo", camo: true, leakDmg: 1 });
     }
   }
-  // REGROW debuts ~wave 11: self-heals, must be burst down
+  // TANK debuts ~wave 9: a slow high-HP wall — poison & big single hits answer it
+  if (wave >= 9) {
+    const n2 = 1 + Math.floor((wave - 9) / 4);
+    for (let i = 0; i < n2; i++) {
+      out.push({ hp: Math.round(hp * 3.2), speed: speed * 0.7, bounty: bounty(hp * 3.2), kind: "tank", armor: 0.25, leakDmg: 4 });
+    }
+  }
+  // REGROW debuts ~wave 11: self-heals, must be burst or poisoned down
   if (wave >= 11) {
     const n2 = 2 + Math.floor((wave - 11) / 3);
     for (let i = 0; i < n2; i++) {

@@ -32,7 +32,7 @@ const SHORT_DECAY = 0.08;
 // Tiny detune variance (cents) so repeats don't fatigue the ear.
 const DETUNE_CENTS = 35;
 
-type Tower = "arrow" | "frost" | "cannon" | "sniper" | "pylon";
+type Tower = "arrow" | "frost" | "cannon" | "sniper" | "pylon" | "tesla" | "venom";
 
 /** Equal-tempered semitone ratio. */
 function semi(n: number): number {
@@ -53,6 +53,8 @@ export class TdAudio {
     cannon: 0,
     sniper: 0,
     pylon: 0,
+    tesla: 0,
+    venom: 0,
   };
   private lastImpact = 0;
   private lastLeak = 0;
@@ -262,6 +264,19 @@ export class TdAudio {
         // perfect fifth above.
         this.blip("sine", 1320 * v, SHORT_DECAY, 0.1, { sweepTo: 980 });
         this.blip("triangle", 1320 * v * semi(7), 0.05, 0.025);
+        break;
+      }
+      case "tesla": {
+        // electric zap / crackle — buzzy square zap + a hot noise crackle.
+        this.blip("square", 1500 * v, 0.06, 0.07, { sweepTo: 3000 });
+        this.noise(0.05, 0.06, "highpass", 4200, 0.7);
+        this.blip("sawtooth", 760 * v, 0.05, 0.04, { sweepTo: 1800 });
+        break;
+      }
+      case "venom": {
+        // wet hiss / bubble — a low filtered noise burst + a sour detuned blip.
+        this.noise(0.12, 0.07, "bandpass", 900 * v, 3, { sweepTo: 400 });
+        this.blip("triangle", 360 * v, 0.13, 0.05, { sweepTo: 220 });
         break;
       }
     }

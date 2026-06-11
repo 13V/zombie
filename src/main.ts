@@ -1791,7 +1791,7 @@ class Game implements GameApi {
     //  • away from pads (Duel) → 1-5 send a creep tier at the opponent
     // (The TD HUD shows the build palette + tower panel; here we just read keys.)
     const pad = td.nearestPad(this.player.pos);
-    const dkeys = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"] as const;
+    const dkeys = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7"] as const;
     if (pad >= 0) {
       if (td.towerAt(pad)) {
         if (this.input.pressed("KeyE")) td.upgrade(pad);

@@ -36,6 +36,8 @@ export interface TdTower {
   key: string;
   /** Accent colour as a 0xRRGGBB number; tints the icon + card. */
   color: number;
+  /** Signature-ability headline (e.g. "Chain Arc"), shown on the card. */
+  ability?: string;
 }
 
 /** Info for the owned-tower panel (upgrade / sell / target). */
@@ -43,12 +45,17 @@ export interface TdTowerInfo {
   name: string;
   /** 1-based upgrade tier. */
   tier: number;
+  /** Highest tier reachable (for the "T3/T4" pip display). */
+  maxTier?: number;
   /** Current targeting mode label (e.g. "First", "Strong", "Close"). */
   target: string;
   /** Gold to upgrade, or null when maxed. */
   upgradeCost: number | null;
   /** Gold refunded on sell. */
   sellValue: number;
+  /** Signature ability headline; unlocked flag tells the HUD to highlight it. */
+  ability?: string;
+  abilityUnlocked?: boolean;
 }
 
 /** Plain per-frame snapshot the HUD renders from. */
@@ -65,6 +72,12 @@ export interface TdHudState {
   income?: number;
   over: boolean;
   win: boolean;
+  /** Kill-streak combo meter (solo/endless). 0 = no active streak. */
+  combo?: number;
+  /** Live combo gold/score multiplier (e.g. 2.4 → ×2.4). */
+  comboMult?: number;
+  /** Running run score. */
+  score?: number;
 }
 
 /** Optional callbacks fired by the HUD's buttons. */
