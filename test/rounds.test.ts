@@ -22,7 +22,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ZOMBIE, ROUNDS, ZOMBIE_TYPES, SPECIAL_ROUNDS } from "../src/config.ts";
+import { ZOMBIE, ROUNDS, ZOMBIE_TYPES, SPECIAL_ROUNDS, DIFFICULTY } from "../src/config.ts";
 
 // ---- re-derived from rounds.ts beginRound() (kept verbatim) ---------------
 // HP curve WITH the horde-regime growth discount applied to rounds past R20
@@ -89,6 +89,38 @@ test("inflection seam is continuous: R(inflect) equals the multiplicative branch
   assert.equal(roundHP(inflect), linAtInflect);
   // first multiplicative round is exactly base * growth (no discontinuity)
   assert.ok(Math.abs(roundHP(inflect + 1) - linAtInflect * ZOMBIE.hpGrowth) < 1e-9);
+});
+
+test("HARDNESS: R40 zombies are a genuine bullet-wall — many× the R20 HP", () => {
+  // The whole point of this pass: undo the over-discount + steepen the curve so a
+  // maxed loadout+pet squad can't insta-kill R40. R40 must dwarf R20.
+  const r20 = roundHP(20);
+  const r40 = roundHP(40);
+  assert.ok(r40 >= 12 * r20, `R40 HP (${Math.round(r40)}) should be >=12× R20 (${Math.round(r20)})`);
+  // and the absolute floor: an R40 zombie should be a heavy sponge (tens of k HP)
+  assert.ok(r40 >= 25000, `R40 HP (${Math.round(r40)}) should be a real wall (>=25k)`);
+});
+
+test("HARDNESS: the horde HP-growth discount is only a hair (>=0.97), never the old 0.92", () => {
+  // 0.92 compounded into ~5× weaker R40 zombies and let pets trivialize the horde.
+  assert.ok(ROUNDS.hordeHpGrowthDiscount >= 0.97, `discount ${ROUNDS.hordeHpGrowthDiscount} too generous`);
+  assert.ok(ROUNDS.hordeHpGrowthDiscount < 1, "discount must still be a real (tiny) reduction");
+});
+
+test("HARDNESS: early/mid baseline aggression is up across the board", () => {
+  // Player report wanted it harder "the whole way", not just late.
+  assert.ok(ZOMBIE.baseHealth >= 80, `baseHealth ${ZOMBIE.baseHealth} should be >=80`);
+  assert.ok(ZOMBIE.healthPerRound >= 32, `healthPerRound ${ZOMBIE.healthPerRound} should be >=32`);
+  assert.ok(ZOMBIE.touchDamage >= 20, `touchDamage ${ZOMBIE.touchDamage} should be >=20`);
+  assert.ok(ZOMBIE.speedCap >= 6.9, `speedCap ${ZOMBIE.speedCap} should be >=6.9`);
+});
+
+test("HARDNESS: the difficulty director ramps fast enough to bite before the horde regime", () => {
+  // Coeff must cross 1.0 (where the elite credit-swap kicks in) well before R20.
+  const coeffAt = (round: number) => (round - 1) * DIFFICULTY.perRound;
+  assert.ok(coeffAt(20) >= 1.0, "director should pass the elite-swap threshold by R20 (round term alone)");
+  // and it should be meaningfully faster than the pre-pass 0.05/round
+  assert.ok(DIFFICULTY.perRound >= 0.08, `perRound ${DIFFICULTY.perRound} should be >=0.08`);
 });
 
 test("between the inflection and the horde regime HP compounds by exactly hpGrowth", () => {
@@ -162,7 +194,7 @@ test("a re-derived pickType only returns types unlocked at the given round", () 
   // gating + weighting logic deterministically against the real type table.
   const ELITE_IDS = new Set(["brute", "armored", "abomination", "splitter", "necro"]);
   function pickType(round: number, rng: () => number) {
-    const eliteBonus = Math.max(0, Math.min(0.35, (round - 9) * 0.03));
+    const eliteBonus = Math.max(0, Math.min(0.6, (round - 5) * 0.04));
     const shamblerWeight = Math.max(0.25, 0.9 - (round - 1) * 0.04);
     let total = shamblerWeight;
     for (let i = 1; i < ZOMBIE_TYPES.length; i++) {
@@ -209,12 +241,12 @@ test("shambler filler weight floors at 0.25 and never vanishes", () => {
   }
 });
 
-test("elite bonus ramp is clamped to [0, 0.35] and starts at R10", () => {
-  const bonus = (round: number) => Math.max(0, Math.min(0.35, (round - 9) * 0.03));
-  assert.equal(bonus(9), 0); // (9-9)*0.03 = 0
-  assert.ok(bonus(8) === 0); // clamped, no negative bonus before R10
-  assert.ok(Math.abs(bonus(10) - 0.03) < 1e-9);
-  assert.equal(bonus(100), 0.35); // hard cap
+test("elite bonus ramp is clamped to [0, 0.6] and starts at R6 (steeper this pass)", () => {
+  const bonus = (round: number) => Math.max(0, Math.min(0.6, (round - 5) * 0.04));
+  assert.equal(bonus(5), 0); // (5-5)*0.04 = 0
+  assert.ok(bonus(4) === 0); // clamped, no negative bonus before R6
+  assert.ok(Math.abs(bonus(6) - 0.04) < 1e-9); // first ramp step at R6
+  assert.equal(bonus(100), 0.6); // hard cap (raised from 0.35)
 });
 
 // ---- mutation rounds (classifySpecial), derived from SPECIAL_ROUNDS --------

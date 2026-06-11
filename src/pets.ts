@@ -278,11 +278,11 @@ export const PETS: PetDef[] = [
   mk({ id: "thunder_orb", name: "Thunder Orb", desc: "Machine-gun lightning", cost: 3800, rarity: "epic", color: 0x9fe8ff, accent: 0xffffff,
     damage: 70, interval: 0.3, bulletColor: 0xeaffff, bulletScale: 0.7, pierce: 2, shape: "orb", range: 18 }),
   mk({ id: "inferno_drake", name: "Inferno Drake", desc: "Roaring fireball storm", cost: 4000, rarity: "epic", color: 0xff3a2a, accent: 0xffd24a,
-    damage: 120, interval: 0.55, bulletColor: 0xff7a3a, bulletScale: 1.7, pierce: 3, splashRadius: 3.0, splashDamage: 90, homing: 1, shape: "dragon", range: 22 }),
+    damage: 95, interval: 0.55, bulletColor: 0xff7a3a, bulletScale: 1.7, pierce: 3, splashRadius: 3.0, splashDamage: 72, homing: 1, shape: "dragon", range: 22 }), // dmg 120→95, splash 90→72
   mk({ id: "prism_totem", name: "Prism Totem", desc: "+45% damage to your other pets", cost: 4200, rarity: "epic", color: 0xc792ea, accent: 0xffd24a,
     shape: "totem", range: 0, role: "buffer", roleValue: 0.45 }),
   mk({ id: "heavy_turret", name: "Heavy Turret", desc: "Armor-piercing shells", cost: 4500, rarity: "epic", color: 0x7a8aa8, accent: 0x2a3450,
-    damage: 130, interval: 0.7, bulletColor: 0xffc06a, bulletScale: 1.4, pierce: 5, shape: "turret", range: 22 }),
+    damage: 105, interval: 0.7, bulletColor: 0xffc06a, bulletScale: 1.4, pierce: 5, shape: "turret", range: 22 }), // dmg 130→105
   mk({ id: "void_eye", name: "Void Eye", desc: "Homing void lances", cost: 4800, rarity: "epic", color: 0x9a5ad6, accent: 0x1a1030,
     damage: 100, interval: 0.6, bulletColor: 0xc0a0ff, bulletScale: 1.0, homing: 1, splashRadius: 2.0, splashDamage: 40, shape: "eye", range: 20 }),
   mk({ id: "golden_piggy", name: "Golden Piggy", desc: "Mints serious gold", cost: 5000, rarity: "epic", color: 0xffd24a, accent: 0xfff0b0,
@@ -290,41 +290,44 @@ export const PETS: PetDef[] = [
   mk({ id: "seraph_star", name: "Seraph Star", desc: "Holy starlight nova", cost: 5200, rarity: "epic", color: 0xffffff, accent: 0xffe14a,
     damage: 120, interval: 0.45, bulletColor: 0xfffbd0, bulletScale: 1.2, splashRadius: 2.2, splashDamage: 55, shape: "star", range: 20 }),
   mk({ id: "crystal_wyrm", name: "Crystal Wyrm", desc: "Shattering shard breath", cost: 5500, rarity: "epic", color: 0x6ad7ff, accent: 0xeaffff,
-    damage: 150, interval: 0.6, bulletColor: 0x9fe8ff, bulletScale: 1.6, pierce: 4, splashRadius: 2.6, splashDamage: 80, homing: 1, shape: "dragon", range: 22 }),
+    damage: 120, interval: 0.6, bulletColor: 0x9fe8ff, bulletScale: 1.6, pierce: 4, splashRadius: 2.6, splashDamage: 64, homing: 1, shape: "dragon", range: 22 }), // dmg 150→120, splash 80→64
   mk({ id: "solar_phoenix", name: "Solar Phoenix", desc: "Blazing rebirth flares", cost: 6000, rarity: "epic", color: 0xffb84a, accent: 0xff5a3a,
     damage: 140, interval: 0.5, bulletColor: 0xffd24a, bulletScale: 1.3, pierce: 3, splashRadius: 2.4, splashDamage: 70, shape: "phoenix", range: 20 }),
 
   // ───────────────────────── LEGENDARY ─────────────────────────
+  // NOTE: top-end shooter base damage trimmed ~25-30% this pass (legendary/mythic/
+  // celestial were the pet-snowball offenders). They're still the strongest pets by
+  // a wide margin — just not "delete the whole horde" strong with a softened level mul.
   mk({ id: "reaper_lord", name: "Reaper Lord", desc: "Soul-harvest splash", cost: 8500, rarity: "legendary", color: 0x7a3aff, accent: 0xf3e6ff,
-    damage: 220, interval: 0.65, bulletColor: 0xc0a0ff, bulletScale: 1.9, splashRadius: 3.4, splashDamage: 140, homing: 1, shape: "ghost", range: 22 }),
+    damage: 160, interval: 0.65, bulletColor: 0xc0a0ff, bulletScale: 1.9, splashRadius: 3.4, splashDamage: 100, homing: 1, shape: "ghost", range: 22 }), // dmg 220→160, splash 140→100
   mk({ id: "celestial_dragon", name: "Celestial Dragon", desc: "Starfire devastation", cost: 9000, rarity: "legendary", color: 0x9fe8ff, accent: 0xffd24a,
-    damage: 260, interval: 0.55, bulletColor: 0xeaffff, bulletScale: 1.9, pierce: 5, splashRadius: 3.2, splashDamage: 160, homing: 1, shape: "dragon", range: 24 }),
+    damage: 190, interval: 0.55, bulletColor: 0xeaffff, bulletScale: 1.9, pierce: 5, splashRadius: 3.2, splashDamage: 115, homing: 1, shape: "dragon", range: 24 }), // dmg 260→190, splash 160→115
   mk({ id: "divine_totem", name: "Divine Totem", desc: "+70% damage to your other pets", cost: 9500, rarity: "legendary", color: 0xffffff, accent: 0xffd24a,
     shape: "totem", range: 0, role: "buffer", roleValue: 0.7 }),
   mk({ id: "omni_cannon", name: "Omni Cannon", desc: "Ridiculous pierce barrage", cost: 10000, rarity: "legendary", color: 0xffd24a, accent: 0x2a3450,
-    damage: 320, interval: 0.6, bulletColor: 0xfff080, bulletScale: 1.8, pierce: 8, shape: "turret", range: 26 }),
+    damage: 230, interval: 0.6, bulletColor: 0xfff080, bulletScale: 1.8, pierce: 8, shape: "turret", range: 26 }), // dmg 320→230
   mk({ id: "galaxy_orb", name: "Galaxy Orb", desc: "Hyper-rapid star bolts", cost: 11000, rarity: "legendary", color: 0xc792ea, accent: 0xffffff,
-    damage: 200, interval: 0.28, bulletColor: 0xeaccff, bulletScale: 1.1, pierce: 4, splashRadius: 2.0, splashDamage: 80, shape: "orb", range: 22 }),
+    damage: 145, interval: 0.28, bulletColor: 0xeaccff, bulletScale: 1.1, pierce: 4, splashRadius: 2.0, splashDamage: 60, homing: 1, shape: "orb", range: 22 }), // dmg 200→145, splash 80→60
   mk({ id: "fortune_dragon", name: "Fortune Dragon", desc: "Hoards gold by the second", cost: 12000, rarity: "legendary", color: 0xffd24a, accent: 0xff5a3a,
     shape: "dragon", range: 0, role: "banker", roleValue: 9 }),
   mk({ id: "eclipse_phoenix", name: "Eclipse Phoenix", desc: "Apocalyptic firestorm", cost: 14000, rarity: "legendary", color: 0xff5a7a, accent: 0xffd24a,
-    damage: 340, interval: 0.5, bulletColor: 0xff8aa0, bulletScale: 1.7, pierce: 5, splashRadius: 3.0, splashDamage: 180, homing: 1, shape: "phoenix", range: 24 }),
+    damage: 245, interval: 0.5, bulletColor: 0xff8aa0, bulletScale: 1.7, pierce: 5, splashRadius: 3.0, splashDamage: 130, homing: 1, shape: "phoenix", range: 24 }), // dmg 340→245, splash 180→130
 
   // ───────────────────────── MYTHIC ─────────────────────────
   mk({ id: "cosmic_serpent", name: "Cosmic Serpent", desc: "Ten-pierce cosmic venom", cost: 22000, rarity: "mythic", color: 0x7a3aff, accent: 0x9fe8ff,
-    damage: 500, interval: 0.5, bulletColor: 0xc0a0ff, bulletScale: 1.8, pierce: 10, splashRadius: 2.6, splashDamage: 200, homing: 1, shape: "serpent", range: 26 }),
+    damage: 360, interval: 0.5, bulletColor: 0xc0a0ff, bulletScale: 1.8, pierce: 10, splashRadius: 2.6, splashDamage: 145, homing: 1, shape: "serpent", range: 26 }), // dmg 500→360, splash 200→145
   mk({ id: "midas_golem", name: "Midas Golem", desc: "Turns the carnage to gold", cost: 26000, rarity: "mythic", color: 0xffd24a, accent: 0xfff0b0,
     shape: "golem", range: 0, role: "banker", roleValue: 20 }),
   mk({ id: "void_sovereign", name: "Void Sovereign", desc: "Reality-ending fireballs", cost: 30000, rarity: "mythic", color: 0x3a1a5a, accent: 0xff3aff,
-    damage: 800, interval: 0.5, bulletColor: 0xff3aff, bulletScale: 2.2, pierce: 8, splashRadius: 4.0, splashDamage: 400, homing: 1, shape: "dragon", range: 28 }),
+    damage: 560, interval: 0.5, bulletColor: 0xff3aff, bulletScale: 2.2, pierce: 8, splashRadius: 4.0, splashDamage: 280, homing: 1, shape: "dragon", range: 28 }), // dmg 800→560, splash 400→280
 
   // ─────────────────────── ✦ CELESTIAL ✦ ───────────────────────
   // The single pet above Mythic. Its signature bends time itself: OVERDRIVE
   // runs the whole game at 2x for a few seconds. Radiant, one-of-a-kind.
   mk({ id: "chronos", name: "Chronos, the Eternal", desc: "Bends time — the whole game runs at 2× speed while equipped", cost: 0, rarity: "celestial", color: 0x9af7ff, accent: 0xfff6c8,
-    damage: 600, interval: 0.32, bulletColor: 0xeaffff, bulletScale: 1.4, pierce: 6, splashRadius: 2.4, splashDamage: 220, homing: 1, shape: "chronos", range: 30 }),
+    damage: 430, interval: 0.32, bulletColor: 0xeaffff, bulletScale: 1.4, pierce: 6, splashRadius: 2.4, splashDamage: 160, homing: 1, shape: "chronos", range: 30 }), // dmg 600→430, splash 220→160
   mk({ id: "oracle", name: "The Oracle of Fate", desc: "Foresight — auto-grants the BEST perk at the end of every round", cost: 0, rarity: "celestial", color: 0xc89bff, accent: 0xffe89a,
-    damage: 560, interval: 0.34, bulletColor: 0xe6ccff, bulletScale: 1.4, pierce: 5, splashRadius: 2.4, splashDamage: 210, homing: 1, shape: "oracle", range: 30 }),
+    damage: 400, interval: 0.34, bulletColor: 0xe6ccff, bulletScale: 1.4, pierce: 5, splashRadius: 2.4, splashDamage: 150, homing: 1, shape: "oracle", range: 30 }), // dmg 560→400, splash 210→150
 ];
 
 /**
@@ -542,9 +545,22 @@ export function petLevelCost(def: PetDef, level: number): number {
   return Math.round(at * (1 + (level - soft) * 0.5));
 }
 
-/** Damage multiplier from a pet's level (+18%/level, compounding feel). */
+/**
+ * Damage multiplier from a pet's level. Was an UNBOUNDED +18%/level (L30 ≈ 6.2×,
+ * L50 ≈ 9.8×) which — stacked with petStageMul, the totem buffCap and the player's
+ * own Damage tree — let a leveled squad insta-kill the whole late-game horde.
+ *
+ * Now: +11%/level up to a SOFT CAP (level 12, ≈2.2×), then steep diminishing
+ * returns past it (each extra level adds ~3.3% of the soft-cap value, not a fresh
+ * +11% of base). A maxed pet lands around 3× instead of 6-10×, so pets stay strong
+ * SUPPORT (~a third of your DPS) without being the whole army.
+ */
 export function petDamageMul(level: number): number {
-  return 1 + (level - 1) * 0.18;
+  const soft = 12;
+  const perLevel = 0.11;
+  if (level <= soft) return 1 + (level - 1) * perLevel;
+  const atSoft = 1 + (soft - 1) * perLevel; // ≈2.21 at the soft cap
+  return atSoft + (level - soft) * perLevel * 0.3; // diminishing past the cap
 }
 
 /**

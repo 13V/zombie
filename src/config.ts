@@ -30,15 +30,15 @@ export const ZOMBIE = {
   // HP is ADDITIVE through the inflection round, then COMPOUNDS multiplicatively
   // (CoD's exact trick: a 10%/round wall at R10 that's smooth at the seam but
   // never gets lapped by player DPS). See rounds.ts beginRound().
-  baseHealth: 60,
-  healthPerRound: 22,
+  baseHealth: 80, // was 70 — even R1 basics should take a real burst, not pop instantly
+  healthPerRound: 32, // was 26 — much steeper flat ramp so R1-9 escalates HARD "the whole way"
   hpInflection: 9, // round after which HP goes multiplicative
-  hpGrowth: 1.16, // per-round HP multiplier past the inflection (was 1.10 — pets
-  //                were one-shotting the horde by R12; steeper so it survives to pressure you)
-  baseSpeed: 2.4,
-  speedPerRound: 0.1, // nudged up so kiting gets riskier through 10→20
-  speedCap: 6.2, // raised from 5.4 — late-game horde can close the gap on a kiter
-  touchDamage: 12,
+  hpGrowth: 1.17, // per-round HP multiplier past the inflection (was 1.16 — pets+PaP DPS
+  //                still outran 1.16; a hair steeper so mid/late zombies stay bullet-walls)
+  baseSpeed: 2.6, // was 2.5 — a touch faster off the line so kiting is never free
+  speedPerRound: 0.14, // was 0.12 — kiting gets riskier faster through 10→20
+  speedCap: 6.9, // was 6.5 — late-game horde can genuinely run a kiter down
+  touchDamage: 20, // was 16 — getting caught really hurts now (≈33 dps in contact)
   touchInterval: 0.6, // seconds between hits while in contact
   separation: 2.0, // how hard they push apart so they don't stack
 };
@@ -93,12 +93,14 @@ export const ROUNDS = {
   // horde round LAST. 1.8× a count that's already near countCap keeps the
   // refill-the-wall loop going long enough to feel like a tide, then clamps.
   hordeBudgetMul: 1.8, // ×round count budget at full ramp (clamped by countCap)
-  // Past R20 individual zombie HP growth gets a modest DISCOUNT so time-to-kill
-  // drops — with a sea of bodies you want "mowing", not bullet-sponge gridlock.
-  // beginRound() swaps hpGrowth → hpGrowth*hordeHpGrowthDiscount for rounds spent
-  // past hordeFromRound. 0.92 turns the 1.16/round wall into ~1.067/round past
-  // R20: still rising, but ~half the per-round steepening, so DPS keeps pace.
-  hordeHpGrowthDiscount: 0.92, // multiplier on per-round HP growth for rounds past R20
+  // Past R20 individual zombie HP growth gets a TINY DISCOUNT so a sea of bodies
+  // still "mows" rather than gridlocks — but only a hair. 0.92 (the original)
+  // compounded into ~5× weaker zombies by R40 and let a leveled pet squad insta-
+  // kill everything; that overshot badly. 0.98 keeps the seam continuous and
+  // shaves only the very top of the curve: 1.17*0.98 ≈ 1.147/round past R20, so
+  // late zombies stay genuine bullet-walls that demand sustained focused fire even
+  // from a maxed loadout+pets. (Density/firehose are untouched — the horde BITES.)
+  hordeHpGrowthDiscount: 0.98, // multiplier on per-round HP growth for rounds past R20 (was 0.92 then 0.985 — both too generous)
 };
 
 /** The Loot Goblin: a rare fleeing bounty mob that drops a jackpot if you catch
@@ -115,8 +117,11 @@ export const PETS_TUNING = {
    *  Bankers/buffers are non-combat and don't count toward this. */
   activeSquadCap: 5,
   /** Hard clamp on the total Power-Totem buffer multiplier applied to pet damage.
-   *  Stops 3 stacked totems at L20 from turning into a 7x one-shot. */
-  buffCap: 2.5,
+   *  Was 2.5 — but the totem buff MULTIPLIES on top of the pet's level mul, stage
+   *  mul AND the player's own Damage tree (applied again in resolveBulletHits), so
+   *  2.5× was a big slice of the pet-snowball. 1.8 keeps totems a worthwhile pick
+   *  without letting a stacked-totem squad delete the late-game horde. */
+  buffCap: 1.8,
   /** Per-kill gold drip so COMBAT is the primary gold faucet (scaled by scoreMul). */
   killGoldBase: 2,
   /** Banker gold/sec is flattened: roleValue * (1 + level*this) instead of *level. */
@@ -217,12 +222,12 @@ export const ZOMBIE_TYPES: ZombieType[] = [
   { id: "walker", name: "Walker", from: 2, weight: 0.26, healthMul: 1.35, speedMul: 0.95, scale: 1.05, touchDamage: 12, scoreMul: 1.1, body: 0x73b85a, head: 0x4c8038 },
   { id: "runner", name: "Runner", from: 3, weight: 0.22, healthMul: 0.7, speedMul: 1.9, scale: 0.82, touchDamage: 9, scoreMul: 1.2, body: 0xe8923a, head: 0xc9701f },
   { id: "crawler", name: "Crawler", from: 4, weight: 0.16, healthMul: 0.5, speedMul: 1.5, scale: 0.6, touchDamage: 8, scoreMul: 1.2, body: 0xbcae3c, head: 0x8f8424 },
-  { id: "brute", name: "Brute", from: 5, weight: 0.16, healthMul: 4.0, speedMul: 0.7, scale: 1.55, touchDamage: 26, scoreMul: 3.0, body: 0xc0452f, head: 0x8f2f1f },
+  { id: "brute", name: "Brute", from: 4, weight: 0.24, healthMul: 4.5, speedMul: 0.74, scale: 1.55, touchDamage: 34, scoreMul: 3.0, body: 0xc0452f, head: 0x8f2f1f }, // weight 0.20→0.24, hp 4.0→4.5, touch 30→34: a tanky threat earlier, oftener, scarier
   { id: "bomber", name: "Bomber", from: 6, weight: 0.14, healthMul: 0.9, speedMul: 1.15, scale: 0.95, touchDamage: 12, scoreMul: 2.0, body: 0x9b6ad6, head: 0x6e4a9e, blastRadius: 3.6, blastDamage: 34 },
   { id: "spitter", name: "Spitter", from: 7, weight: 0.13, healthMul: 1.2, speedMul: 1.1, scale: 1.0, touchDamage: 14, scoreMul: 1.6, body: 0x3fbf9a, head: 0x278f72 },
-  { id: "armored", name: "Armored", from: 8, weight: 0.13, healthMul: 6.5, speedMul: 0.6, scale: 1.35, touchDamage: 22, scoreMul: 3.5, body: 0x6c7a8a, head: 0x44505c },
+  { id: "armored", name: "Armored", from: 6, weight: 0.2, healthMul: 7.0, speedMul: 0.62, scale: 1.35, touchDamage: 30, scoreMul: 3.5, body: 0x6c7a8a, head: 0x44505c }, // from 7→6, weight 0.16→0.20, hp 6.5→7.0: heavy walls join the wall sooner + thicker
   { id: "banshee", name: "Banshee", from: 9, weight: 0.13, healthMul: 0.85, speedMul: 2.4, scale: 0.9, touchDamage: 16, scoreMul: 2.2, body: 0xe85aa6, head: 0xb53a7e },
-  { id: "abomination", name: "Abomination", from: 10, weight: 0.15, healthMul: 13.0, speedMul: 0.6, scale: 2.0, touchDamage: 42, scoreMul: 6.0, body: 0x7a1f1f, head: 0x4a0f0f, blastRadius: 4.2, blastDamage: 55 },
+  { id: "abomination", name: "Abomination", from: 9, weight: 0.16, healthMul: 14.0, speedMul: 0.62, scale: 2.0, touchDamage: 48, scoreMul: 6.0, body: 0x7a1f1f, head: 0x4a0f0f, blastRadius: 4.2, blastDamage: 62 }, // from 10→9, hp 13→14, touch 42→48, blast 55→62: the megatank arrives a round sooner and hits harder
   // ---- flying mobs (aerial threat layer; forces dodging + priority targeting) ----
   { id: "vulture", name: "Vulture", from: 6, weight: 0.13, healthMul: 0.8, speedMul: 1.6, scale: 0.9, touchDamage: 20, scoreMul: 2.2, body: 0x6a5a7a, head: 0x9a7aa0, flying: true, flyHeight: 3.2, airMode: "dive" },
   { id: "gnat", name: "Gnat Swarm", from: 5, weight: 0.16, healthMul: 0.35, speedMul: 1.5, scale: 0.5, touchDamage: 7, scoreMul: 1.4, body: 0x9fb04a, head: 0x7a8a30, flying: true, flyHeight: 2.4, airMode: "swarm" },
@@ -364,12 +369,12 @@ export const SPECIAL_ROUNDS = {
 /** Elite affix layer: late-game zombies get a behavior affix + colored tell. */
 export const ELITE = {
   /** Round before which no affixes appear at all. */
-  fromRound: 8,
+  fromRound: 6, // was 8 — affixes start biting earlier in the mid-game
   /** Base fraction of eligible spawns that get an affix at fromRound. */
-  baseFraction: 0.1, // was 0.06 — more elites sooner
+  baseFraction: 0.14, // was 0.1 — more elites sooner
   /** Extra fraction per round past fromRound (clamped by maxFraction). */
-  fractionPerRound: 0.03, // was 0.015 — ramps to a real elite-heavy horde
-  maxFraction: 0.5, // was 0.32 — by late game half the horde is affixed
+  fractionPerRound: 0.035, // was 0.03 — ramps to a real elite-heavy horde
+  maxFraction: 0.6, // was 0.5 — by late game well over half the horde is affixed
   /** Hard cap on simultaneously-alive affixed zombies (perf + readability). */
   maxAlive: 24, // was 10 — let the late-game elite swarm actually fill out
   /** Difficulty-coeff weight folded into the affix fraction. */
@@ -387,10 +392,13 @@ export const ELITE = {
 /** Continuous difficulty director: a coefficient that climbs with round + time,
  *  surfaced as escalating zombie-themed tier names on the HUD banner. */
 export const DIFFICULTY = {
-  /** Coeff contribution per round. */
-  perRound: 0.05,
-  /** Coeff contribution per minute of run time. */
-  perMinute: 0.08,
+  /** Coeff contribution per round. (was 0.05 — director ramped too slowly; the
+   *  elite-credit swap + affix fraction barely bit before R20. 0.08 pushes the
+   *  coeff past 1.0 — where the elite credit-swap kicks in — by ~R14 instead of R20.) */
+  perRound: 0.08,
+  /** Coeff contribution per minute of run time. (was 0.08 — a slow camper should
+   *  also feel the director climb, so time pressure ramps harder too.) */
+  perMinute: 0.12,
   /** Tiers (ascending). `at` is the coeff threshold the tier unlocks at. */
   tiers: [
     { at: 0.0, name: "RESTLESS", color: "#8fcf6f" },
@@ -514,7 +522,9 @@ export const PET_STAGES = {
   levels: [1, 8, 18], // stage 0 / 1 / 2 begin at these levels
   names: ["", "Evolved", "Ascended"], // stage label (blank = base, no tag)
   scalePerStage: 0.4, // +size per stage — Evolved is visibly bigger, Ascended bigger still
-  damagePerStage: 0.22, // +damage per stage — the stat jump that makes it matter
+  damagePerStage: 0.16, // was 0.22 — Ascended (×1.32) still a real jump, but the stage mul
+  //                       stacked with the level mul + totem buff was a big chunk of the
+  //                       pet-snowball; trimmed so pets are support, not the whole army
 };
 
 export const PET_DEPTH = {

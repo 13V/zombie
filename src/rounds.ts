@@ -411,7 +411,9 @@ export class RoundManager {
     // Themed showcase rounds bias the pick hard toward the theme's type ids
     // (still allowing a thin spread of others so the horde reads as a horde).
     const bias = this.special?.biasTo;
-    const eliteBonus = Math.max(0, Math.min(0.35, (this.round - 9) * 0.03));
+    // Elite weight ramp: starts at R6 (was R10) and climbs to a higher ceiling so
+    // the brute/armored/abomination tiers dominate the mid+late horde, not basics.
+    const eliteBonus = Math.max(0, Math.min(0.6, (this.round - 5) * 0.04));
     // Shambler always keeps a baseline slice that shrinks as rounds climb but
     // never vanishes, so basics are always part of the horde. On a biased round
     // the shambler share is cut right down so the theme dominates.
