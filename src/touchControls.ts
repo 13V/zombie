@@ -26,6 +26,7 @@ export class TouchControls {
 
   private moveId = -1;
   private aimId = -1;
+  private aimEnabled = true; // off in non-combat modes (lobby / Tower Defense)
   private moveOrigin = new THREE.Vector2();
   private aimOrigin = new THREE.Vector2();
 
@@ -84,6 +85,17 @@ export class TouchControls {
     });
   }
 
+  /** Enable the right-hand AIM/fire stick. Off in non-shooting modes (lobby,
+   *  Tower Defense) so a stray right-side drag doesn't pop a useless aim stick. */
+  setAimEnabled(on: boolean) {
+    this.aimEnabled = on;
+    if (!on) {
+      this.aimId = -1;
+      this.input.touchAim = null;
+      this.aimStick.classList.remove("show");
+    }
+  }
+
   private reset() {
     this.moveId = this.aimId = -1;
     this.input.moveVec.set(0, 0);
@@ -100,7 +112,7 @@ export class TouchControls {
       this.moveOrigin.set(e.clientX, e.clientY);
       this.placeStick(this.moveStick, e.clientX, e.clientY);
       this.moveKnob.style.transform = "translate(-50%, -50%)";
-    } else if (!leftHalf && this.aimId === -1) {
+    } else if (!leftHalf && this.aimId === -1 && this.aimEnabled) {
       this.aimId = e.pointerId;
       this.aimOrigin.set(e.clientX, e.clientY);
       this.placeStick(this.aimStick, e.clientX, e.clientY);

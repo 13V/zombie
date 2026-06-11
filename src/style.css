@@ -13,6 +13,11 @@ html, body {
   height: 100%;
   overflow: hidden;
   background: #e9dcc2;
+  /* It's a game, not a document: never let touch drags select HUD text or pop
+     the iOS selection/"Copy" bubble + magnifier over the canvas. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #app { position: fixed; inset: 0; }

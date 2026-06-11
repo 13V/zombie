@@ -95,6 +95,7 @@ const STYLE_CSS = `
   position: absolute; inset: 0; z-index: 36; pointer-events: none;
   font-family: inherit; color: #f1ece1;
   font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 #tdh * { box-sizing: border-box; }
 

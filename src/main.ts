@@ -1610,6 +1610,9 @@ class Game implements GameApi {
     this.touch?.setActive(this.state === "playing" || this.state === "paused" || this.state === "island" || this.state === "bedwars" || this.state === "td");
     // Reload/Swap/Nuke buttons only in the shooter; lobby/TD/BW just need E + emote
     this.touch?.setCombatButtons(this.state === "playing" || this.state === "paused");
+    // Right-hand AIM stick only where you actually shoot (zombies + Bed Wars).
+    // The lobby and Tower Defense move-only, so suppress the stray aim stick.
+    this.touch?.setAimEnabled(this.state === "playing" || this.state === "paused" || this.state === "bedwars");
     this.player.showAimGuide(this.state === "playing");
     if (this.state === "playing") {
       if (this.netplay && !this.netplay.isHost) this.simulateGuest(dt);
