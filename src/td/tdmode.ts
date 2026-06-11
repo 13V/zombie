@@ -750,145 +750,265 @@ export class TdMode {
       m.position.set(x, y, z); return m;
     };
 
+    // a few shared shades for the new detailing
+    const iron = 0x2b2e34, brass = 0xc89b4a, ice = 0x9fd6f5, iceDeep = 0x6fb0e0, bone = 0x2a2f26;
+
     if (id === "arrow") {
-      g.add(box(1.5, 0.4, 1.5, stone, 0, -0.4, 0));
-      g.add(box(0.6, 1.1, 0.6, wood, 0, 0.25, 0));
-      barrel.add(box(0.26, 0.26, 1.1, wood, 0, 0, 0.35));          // stock
-      const lL = box(0.16, 0.16, 0.95, woodDark, 0, 0, 0.6); lL.rotation.y = 0.55;
-      const lR = box(0.16, 0.16, 0.95, woodDark, 0, 0, 0.6); lR.rotation.y = -0.55;
-      barrel.add(lL, lR);                                           // crossbow limbs
-      { const mz = glow(0.16, 0.16, 0.55, accent, 0, 0, 0.95, 1.1); mz.name = "muzzle"; barrel.add(mz); } // glowing bolt
-      if (tier >= 3) { // beefier double-limb crossbow
-        const l2L = box(0.16, 0.16, 0.8, woodDark, 0, -0.22, 0.5); l2L.rotation.y = 0.45;
-        const l2R = box(0.16, 0.16, 0.8, woodDark, 0, -0.22, 0.5); l2R.rotation.y = -0.45;
-        barrel.add(l2L, l2R, glow(0.13, 0.13, 0.45, accent, 0, -0.22, 0.85, 1.0));
+      // ---- fortified archer turret: stone battlements + a mounted ballista ----
+      g.add(box(1.7, 0.45, 1.7, stone, 0, -0.38, 0));                 // stone footing
+      // crenellated battlement ring (merlons on the four corners + sides)
+      for (const [mx, mz] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7], [0, -0.75], [0, 0.75], [-0.75, 0], [0.75, 0]] as const)
+        g.add(box(0.34, 0.42, 0.34, stoneDark, mx, 0.05, mz));
+      g.add(box(1.15, 0.55, 1.15, stone, 0, -0.05, 0));               // inner rampart deck
+      g.add(box(0.7, 0.95, 0.7, wood, 0, 0.45, 0));                   // timber mount post
+      g.add(box(0.86, 0.18, 0.86, woodDark, 0, 0.9, 0));              // pivot collar
+      // --- ballista weapon (aims) ---
+      barrel.add(box(0.3, 0.3, 1.35, wood, 0, 0, 0.4));               // stock rail
+      barrel.add(box(0.42, 0.16, 0.42, woodDark, 0, 0.02, -0.15));    // tiller block
+      const lL = box(0.16, 0.18, 1.0, woodDark, 0, 0.04, 0.62); lL.rotation.y = 0.6;
+      const lR = box(0.16, 0.18, 1.0, woodDark, 0, 0.04, 0.62); lR.rotation.y = -0.6;
+      barrel.add(lL, lR);                                             // prod limbs
+      barrel.add(glow(0.04, 0.04, 0.95, accent, 0, 0.04, 0.62, 0.6)); // taut bowstring glow
+      { const mz = glow(0.16, 0.16, 0.7, accent, 0, 0.04, 1.05, 1.1); mz.name = "muzzle"; barrel.add(mz); } // nocked glowing bolt
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.3, 4), glowMaterial(accent, 1.0));
+      head.rotation.x = Math.PI / 2; head.position.set(0, 0.04, 1.42); barrel.add(head); // arrowhead
+      if (tier >= 2) { // a quiver of glowing arrows mounted on the rail
+        g.add(box(0.3, 0.6, 0.3, woodDark, 0.62, 0.65, -0.4));
+        for (const ax of [-0.08, 0.06, 0.2]) g.add(glow(0.05, 0.55, 0.05, accent, 0.62 + ax, 1.05, -0.4, 0.7));
       }
-      if (tier >= 2) { // a quiver of arrows on the post
-        g.add(box(0.3, 0.6, 0.3, woodDark, 0.5, 0.7, -0.2));
-        for (const ax of [-0.06, 0.06, 0.18]) g.add(glow(0.05, 0.5, 0.05, accent, 0.5 + ax, 1.1, -0.2, 0.7));
+      if (tier >= 3) { // a heavier repeating cross-prod (second limb set)
+        const l2L = box(0.16, 0.16, 0.85, woodDark, 0, -0.24, 0.5); l2L.rotation.y = 0.5;
+        const l2R = box(0.16, 0.16, 0.85, woodDark, 0, -0.24, 0.5); l2R.rotation.y = -0.5;
+        barrel.add(l2L, l2R, glow(0.13, 0.13, 0.55, accent, 0, -0.24, 0.95, 1.0));
       }
-      barrel.position.y = 0.95;
+      if (tier >= 4) { // ULTIMATE: big repeating crossbow — magazine + extra bolt rails
+        barrel.add(box(0.5, 0.5, 0.45, woodDark, 0, 0.34, 0.0));      // bolt magazine
+        for (const bx of [-0.13, 0.13]) barrel.add(glow(0.05, 0.05, 0.6, accent, bx, 0.34, 0.3, 0.9));
+        for (const lx of [-1, 1]) {                                   // outer reinforced limbs
+          const lo = box(0.18, 0.2, 1.1, brass, 0, -0.02, 0.7); lo.rotation.y = lx * 0.7; barrel.add(lo);
+        }
+        for (const sx of [-1, 1]) g.add(box(0.22, 1.0, 0.22, stoneDark, sx * 0.62, 0.55, 0.62)); // corner watch-spikes
+      }
+      barrel.position.y = 1.0;
     } else if (id === "frost") {
-      g.add(box(1.5, 0.4, 1.5, stoneDark, 0, -0.4, 0));
-      g.add(box(1.0, 0.5, 1.0, 0x9fc7e8, 0, 0.0, 0));
-      for (const [cx, cz, s] of [[-0.32, -0.2, 1.0], [0.32, -0.1, 1.4], [0.0, 0.32, 1.15]] as const) {
-        const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), glowMaterial(0x9fe0ff, 0.65));
+      // ---- frozen crystal cannon: an ice spire ringed with icicles ----
+      g.add(box(1.6, 0.4, 1.6, stoneDark, 0, -0.4, 0));
+      g.add(box(1.05, 0.5, 1.05, iceDeep, 0, -0.05, 0));              // frosted base
+      const spire = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.0, 6), glowMaterial(ice, 0.4));
+      spire.position.y = 0.55; spire.castShadow = true; g.add(spire); // central ice spire
+      // a ring of jagged icicles around the base
+      for (const [cx, cz, s] of [[-0.34, -0.22, 1.0], [0.34, -0.1, 1.4], [0.0, 0.34, 1.15], [-0.2, 0.3, 0.9]] as const) {
+        const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.24, 0), glowMaterial(ice, 0.65));
         cr.scale.set(1, s, 1); cr.position.set(cx, 0.45 + s * 0.25, cz); g.add(cr);
       }
-      const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.34 + (tier - 1) * 0.06, 0), glowMaterial(accent, 1.15));
-      orb.position.z = 0.15; orb.name = "muzzle"; barrel.add(orb);
-      barrel.add(glow(0.5, 0.12, 0.12, accent, 0, 0, 0.55, 0.8));
-      if (tier >= 2) { // a thicker crown of crystals
-        for (const [cx, cz, s] of [[-0.5, 0.1, 1.3], [0.5, 0.2, 1.5], [0.1, -0.45, 1.2], [-0.15, 0.5, 1.4]] as const) {
-          const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), glowMaterial(0x9fe0ff, 0.7));
+      // --- frozen cannon (aims) ---
+      barrel.add(box(0.42, 0.42, 0.7, iceDeep, 0, 0, 0.15));          // crystal breech
+      const facet = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.6, 6, 1, true), glowMaterial(ice, 0.55));
+      facet.rotation.x = -Math.PI / 2; facet.position.z = 0.62; barrel.add(facet); // faceted muzzle cone
+      const orb = new THREE.Mesh(new THREE.OctahedronGeometry(0.3 + (tier - 1) * 0.05, 0), glowMaterial(accent, 1.2));
+      orb.position.z = 0.7; orb.name = "muzzle"; barrel.add(orb);     // frozen core charge
+      if (tier >= 2) { // a thicker crown of crystals around the spire
+        for (const [cx, cz, s] of [[-0.5, 0.1, 1.3], [0.5, 0.2, 1.5], [0.1, -0.48, 1.2], [-0.18, 0.5, 1.4]] as const) {
+          const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), glowMaterial(ice, 0.7));
           cr.scale.set(1, s, 1); cr.position.set(cx, 0.4 + s * 0.25, cz); g.add(cr);
         }
       }
-      if (tier >= 3) { // a frosty halo ring above the orb
-        const halo = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.06, 6, 22), glowMaterial(0xc7f0ff, 1.0));
-        halo.rotation.x = Math.PI / 2; halo.position.y = 0.35; barrel.add(halo);
+      if (tier >= 3) { // a frosty halo ring spinning around the muzzle
+        const halo = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.06, 6, 20), glowMaterial(0xc7f0ff, 1.0));
+        halo.rotation.x = Math.PI / 2; halo.position.z = 0.65; barrel.add(halo);
+      }
+      if (tier >= 4) { // ULTIMATE: a towering glacial obelisk + twin frost emitters
+        const ob = new THREE.Mesh(new THREE.ConeGeometry(0.34, 1.3, 4), glowMaterial(accent, 0.6));
+        ob.position.y = 1.5; ob.rotation.y = Math.PI / 4; g.add(ob);  // glacial obelisk
+        for (const sx of [-1, 1]) {
+          const sub = box(0.22, 0.22, 0.8, iceDeep, sx * 0.34, -0.04, 0.35); barrel.add(sub);
+          barrel.add(glow(0.16, 0.16, 0.18, accent, sx * 0.34, -0.04, 0.78, 1.1));
+        }
       }
       barrel.position.y = 1.05;
     } else if (id === "pylon") {
-      g.add(box(1.4, 0.4, 1.4, metal, 0, -0.4, 0));
-      g.add(box(0.45, 1.5, 0.45, stoneDark, 0, 0.45, 0));
-      // a continuously-spinning radar sweep bar (independent of aim)
-      const scan = new THREE.Group(); scan.name = "scan"; scan.position.y = 1.45;
-      scan.add(glow(0.1, 0.04, 1.1, accent, 0, 0, 0.45, 1.0));
+      // ---- sci-fi radar/detector array ----
+      g.add(box(1.5, 0.4, 1.5, metal, 0, -0.4, 0));
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(box(0.14, 0.5, 0.14, iron, sx * 0.6, -0.1, sz * 0.6)); // strut feet
+      g.add(box(0.5, 1.5, 0.5, iron, 0, 0.5, 0));                     // mast
+      for (const yy of [0.2, 0.7, 1.2]) g.add(glow(0.55, 0.06, 0.55, accent, 0, yy, 0, 0.5)); // glowing data bands
+      // continuously-spinning radar sweep (independent of aim)
+      const scan = new THREE.Group(); scan.name = "scan"; scan.position.y = 1.5;
+      scan.add(glow(0.1, 0.04, 1.2, accent, 0, 0, 0.5, 1.0));         // sweep bar
+      scan.add(glow(0.18, 0.06, 0.18, accent, 0, 0, 1.05, 1.3));      // sweep beacon
       g.add(scan);
-      const dish = new THREE.Mesh(new THREE.ConeGeometry(0.62, 0.45, 10, 1, true), glowMaterial(accent, 0.45));
-      dish.rotation.x = Math.PI * 0.5 - 0.45; dish.position.z = 0.32; dish.position.y = 0.05;
-      barrel.add(dish);
-      { const mz = glow(0.22, 0.22, 0.22, accent, 0, 0.08, 0.5, 1.3); mz.name = "muzzle"; barrel.add(mz); } // scanner lens
-      barrel.add(box(0.06, 0.55, 0.06, metal, 0, 0.4, 0));            // antenna
+      // --- detector dish (aims) ---
+      const dish = new THREE.Mesh(new THREE.ConeGeometry(0.66, 0.5, 12, 1, true), glowMaterial(accent, 0.45));
+      dish.rotation.x = Math.PI * 0.5 - 0.45; dish.position.set(0, 0.05, 0.34); barrel.add(dish);
+      barrel.add(box(0.08, 0.08, 0.4, iron, 0, 0.05, 0.1));           // feed boom
+      { const mz = glow(0.24, 0.24, 0.24, accent, 0, 0.12, 0.52, 1.3); mz.name = "muzzle"; barrel.add(mz); } // scanner lens
+      barrel.add(box(0.06, 0.6, 0.06, iron, 0, 0.42, -0.05));         // antenna
+      barrel.add(glow(0.1, 0.1, 0.1, accent, 0, 0.78, -0.05, 1.0));   // antenna tip
       if (tier >= 2) { // a second smaller dish stacked above
-        const d2 = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.3, 8, 1, true), glowMaterial(accent, 0.45));
-        d2.rotation.x = Math.PI * 0.5 - 0.45; d2.position.set(0, 0.55, 0.22); barrel.add(d2);
+        const d2 = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.32, 10, 1, true), glowMaterial(accent, 0.45));
+        d2.rotation.x = Math.PI * 0.5 - 0.45; d2.position.set(0, 0.62, 0.24); barrel.add(d2);
       }
       if (tier >= 3) { // bristling antenna array + blinking tips
-        for (const ax of [-0.28, 0.28]) {
-          barrel.add(box(0.05, 0.65, 0.05, metal, ax, 0.45, -0.1));
-          barrel.add(glow(0.1, 0.1, 0.1, accent, ax, 0.8, -0.1, 1.2));
+        for (const ax of [-0.32, 0.32]) {
+          barrel.add(box(0.05, 0.7, 0.05, iron, ax, 0.45, -0.12));
+          barrel.add(glow(0.1, 0.1, 0.1, accent, ax, 0.82, -0.12, 1.2));
         }
+      }
+      if (tier >= 4) { // ULTIMATE: a wide phased-array panel + rotating outer ring frame
+        const panel = box(1.05, 0.7, 0.1, iron, 0, 0.1, -0.2); barrel.add(panel);
+        for (let r = -1; r <= 1; r++) for (let c = -1; c <= 1; c++)
+          barrel.add(glow(0.18, 0.18, 0.06, accent, c * 0.32, 0.1 + r * 0.2, -0.13, 0.9)); // emitter grid
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.78, 0.05, 6, 22), glowMaterial(accent, 0.9));
+        ring.rotation.x = Math.PI / 2; ring.position.y = 1.0; g.add(ring);
       }
       barrel.position.y = 1.3;
     } else if (id === "cannon") {
-      g.add(box(1.8, 0.5, 1.8, stone, 0, -0.35, 0));
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(box(0.36, 0.6, 0.36, stoneDark, sx * 0.72, 0.1, sz * 0.72));
-      g.add(box(1.05, 0.7, 1.05, stoneDark, 0, 0.25, 0));
-      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 1.3, 10), voxelMaterial(metal));
-      tube.rotation.x = Math.PI / 2 - 0.22; tube.position.set(0, 0.2, 0.55); tube.castShadow = true;
-      barrel.add(tube);
-      { const mz = glow(0.52, 0.52, 0.22, accent, 0, 0.42, 1.05, 0.8); mz.name = "muzzle"; barrel.add(mz); } // muzzle ring
-      if (tier >= 3) { // twin barrels
-        for (const ox of [-0.34, 0.34]) {
-          const t2 = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 1.1, 8), voxelMaterial(metal));
-          t2.rotation.x = Math.PI / 2 - 0.22; t2.position.set(ox, 0.05, 0.5); t2.castShadow = true; barrel.add(t2);
+      // ---- heavy armored howitzer/mortar ----
+      g.add(box(1.9, 0.55, 1.9, stone, 0, -0.32, 0));                 // wide footing
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(box(0.4, 0.66, 0.4, stoneDark, sx * 0.74, 0.12, sz * 0.74)); // corner bastions
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(glow(0.1, 0.1, 0.1, accent, sx * 0.74, 0.46, sz * 0.74, 0.8)); // corner rivets
+      g.add(box(1.1, 0.75, 1.1, stoneDark, 0, 0.28, 0));              // armored turret box
+      g.add(box(1.2, 0.16, 1.2, iron, 0, 0.66, 0));                   // top deck plate
+      // --- big mortar tube (aims) ---
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.46, 1.4, 12), voxelMaterial(iron));
+      tube.rotation.x = Math.PI / 2 - 0.2; tube.position.set(0, 0.22, 0.55); tube.castShadow = true; barrel.add(tube);
+      barrel.add(box(0.6, 0.6, 0.5, iron, 0, 0.08, -0.05));           // breech block
+      for (const bz of [0.2, 0.55, 0.9]) barrel.add(box(0.78, 0.12, 0.16, metal, 0, 0.22 + bz * 0.12, bz)); // barrel reinforcement bands
+      { const mz = glow(0.56, 0.56, 0.24, accent, 0, 0.46, 1.1, 0.8); mz.name = "muzzle"; barrel.add(mz); } // muzzle blast ring
+      if (tier >= 2) { // bolted side armor plates
+        for (const sx of [-1, 1]) {
+          g.add(box(0.22, 0.75, 1.1, iron, sx * 0.64, 0.32, 0));
+          for (const bz of [-0.35, 0.35]) g.add(glow(0.09, 0.09, 0.09, accent, sx * 0.66, 0.32, bz, 0.7)); // plate bolts
         }
       }
-      if (tier >= 2) { // bolted side armor plates
-        for (const sx of [-1, 1]) g.add(box(0.2, 0.7, 1.1, metal, sx * 0.62, 0.3, 0));
+      if (tier >= 3) { // twin side barrels
+        for (const ox of [-0.36, 0.36]) {
+          const t2 = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 1.15, 10), voxelMaterial(iron));
+          t2.rotation.x = Math.PI / 2 - 0.2; t2.position.set(ox, 0.04, 0.5); t2.castShadow = true; barrel.add(t2);
+          barrel.add(glow(0.24, 0.24, 0.16, accent, ox, 0.16, 1.0, 0.7));
+        }
       }
-      barrel.position.y = 0.75;
+      if (tier >= 4) { // ULTIMATE: a third high mortar + shell rack + smoke stacks
+        const t3 = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 1.3, 12), voxelMaterial(iron));
+        t3.rotation.x = Math.PI / 2 - 0.34; t3.position.set(0, 0.5, 0.45); t3.castShadow = true; barrel.add(t3);
+        barrel.add(glow(0.4, 0.4, 0.2, accent, 0, 0.84, 0.98, 0.9));
+        for (const sx of [-1, 1]) { // ammo drums on the deck
+          g.add(box(0.26, 0.4, 0.26, brass, sx * 0.42, 0.85, -0.45));
+          g.add(glow(0.12, 0.12, 0.12, accent, sx * 0.42, 1.08, -0.45, 0.8));
+        }
+      }
+      barrel.position.y = 0.78;
     } else if (id === "sniper") {
-      g.add(box(1.2, 0.4, 1.2, stone, 0, -0.4, 0));
-      g.add(box(0.85, 1.7, 0.85, stoneDark, 0, 0.65, 0));
-      g.add(box(1.05, 0.3, 1.05, wood, 0, 1.55, 0));
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(0.88, 0.75, 4), voxelMaterial(accent));
-      roof.position.y = 2.1; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
-      const barrelLen = 1.9 + (tier - 1) * 0.5; // rifle grows longer per tier
-      barrel.add(box(0.14, 0.14, barrelLen, metal, 0, 0, barrelLen / 2 - 0.2));
-      barrel.add(box(0.22, 0.22, 0.42, stoneDark, 0, 0.14, 0.05));    // scope
-      { const mz = glow(0.12, 0.12, 0.2, accent, 0, 0, barrelLen - 0.25, 1.3); mz.name = "muzzle"; barrel.add(mz); } // muzzle glow
-      if (tier >= 3) { // a steadying bipod under the long barrel
-        for (const sx of [-1, 1]) { const leg = box(0.06, 0.7, 0.06, metal, sx * 0.18, -0.35, 0.9); leg.rotation.z = sx * 0.3; barrel.add(leg); }
-      }
-      if (tier >= 2) { // a banner down the tower
+      // ---- tall watchtower with a long railgun rifle ----
+      g.add(box(1.25, 0.4, 1.25, stone, 0, -0.4, 0));
+      g.add(box(0.9, 1.85, 0.9, stoneDark, 0, 0.72, 0));              // tower shaft
+      for (const yy of [0.1, 0.7, 1.3]) g.add(box(0.96, 0.1, 0.96, stone, 0, yy, 0)); // course lines
+      g.add(box(1.15, 0.32, 1.15, wood, 0, 1.7, 0));                  // lookout platform
+      for (const [mx, mz] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]] as const)
+        g.add(box(0.2, 0.3, 0.2, stoneDark, mx, 1.95, mz));          // platform merlons
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(0.95, 0.85, 4), voxelMaterial(accent));
+      roof.position.y = 2.35; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+      g.add(glow(0.12, 0.12, 0.12, accent, 0, 2.85, 0, 1.1));         // roof finial
+      // --- long railgun rifle (aims) ---
+      const barrelLen = 1.95 + (tier - 1) * 0.45;
+      barrel.add(box(0.16, 0.16, barrelLen, iron, 0, 0, barrelLen / 2 - 0.2)); // barrel
+      barrel.add(box(0.34, 0.22, 0.5, stoneDark, 0, -0.02, -0.05));   // receiver body
+      barrel.add(box(0.24, 0.26, 0.46, iron, 0, 0.2, 0.05));          // scope housing
+      { const sc = glow(0.1, 0.1, 0.1, accent, 0, 0.2, 0.28, 1.1); barrel.add(sc); } // scope lens
+      { const mz = glow(0.14, 0.14, 0.24, accent, 0, 0, barrelLen - 0.25, 1.3); mz.name = "muzzle"; barrel.add(mz); }
+      if (tier >= 2) { // a banner hung from the lookout
         const banner = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.0, 0.08), glowMaterial(accent, 0.4));
-        banner.position.set(0, 0.7, 0.46); g.add(banner);
+        banner.position.set(0, 0.85, 0.5); g.add(banner);
       }
-      barrel.position.y = 1.6;
+      if (tier >= 3) { // a steadying bipod under the long barrel
+        for (const sx of [-1, 1]) { const leg = box(0.06, 0.75, 0.06, iron, sx * 0.2, -0.38, 0.95); leg.rotation.z = sx * 0.32; barrel.add(leg); }
+      }
+      if (tier >= 4) { // ULTIMATE: energy coils + heavier muzzle brake on a huge barrel
+        for (const cz of [0.5, 0.9, 1.3, 1.7]) {
+          const coil = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.05, 6, 14), glowMaterial(accent, 1.0));
+          coil.position.z = cz; barrel.add(coil);
+        }
+        barrel.add(box(0.3, 0.3, 0.4, iron, 0, 0, barrelLen - 0.1));  // muzzle brake
+        for (const sx of [-1, 1]) barrel.add(glow(0.06, 0.06, 0.3, accent, sx * 0.16, 0, barrelLen - 0.1, 1.1));
+      }
+      barrel.position.y = 1.65;
     } else if (id === "tesla") {
-      g.add(box(1.4, 0.4, 1.4, metal, 0, -0.4, 0));
-      g.add(box(0.5, 1.0, 0.5, stoneDark, 0, 0.2, 0));               // ceramic insulator column
+      // ---- Tesla coil: insulator column, copper coils, crackling toroid ----
+      g.add(box(1.45, 0.4, 1.45, metal, 0, -0.4, 0));
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(box(0.18, 0.4, 0.18, iron, sx * 0.55, -0.1, sz * 0.55)); // grounding posts
+      // stacked ceramic insulator discs
+      for (let i = 0; i < 3; i++) {
+        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.42 - i * 0.04, 0.46 - i * 0.04, 0.18, 8), voxelMaterial(0xd9d2c4));
+        disc.position.y = -0.05 + i * 0.22; g.add(disc);
+      }
+      g.add(box(0.34, 0.9, 0.34, iron, 0, 0.65, 0));                  // central core rod
       // stacked copper coil rings winding up the column
       const coils = 3 + (tier >= 2 ? 1 : 0) + (tier >= 4 ? 1 : 0);
       for (let i = 0; i < coils; i++) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34 - i * 0.035, 0.06, 6, 16), glowMaterial(0xff9d5c, 0.55));
-        ring.rotation.x = Math.PI / 2; ring.position.y = 0.35 + i * 0.2; g.add(ring);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34 - i * 0.035, 0.06, 6, 16), glowMaterial(brass, 0.55));
+        ring.rotation.x = Math.PI / 2; ring.position.y = 0.55 + i * 0.18; g.add(ring);
       }
-      // the toroid ball cap that crackles with charge
+      // the crackling toroid ball cap
       const ball = new THREE.Mesh(new THREE.SphereGeometry(0.32 + (tier - 1) * 0.05, 12, 8), glowMaterial(accent, 1.1));
-      ball.position.y = 1.45; g.add(ball);
-      // aiming emitter prong (barrel) with a glowing arc tip
-      barrel.add(box(0.12, 0.12, 0.7, metal, 0, 0, 0.35));
-      { const mz = glow(0.22, 0.22, 0.22, accent, 0, 0, 0.72, 1.4); mz.name = "muzzle"; barrel.add(mz); }
-      if (tier >= 3) for (const ax of [-0.22, 0.22]) barrel.add(glow(0.08, 0.08, 0.5, accent, ax, 0, 0.55, 1.1));
-      barrel.position.y = 1.0;
+      ball.position.y = 1.55; g.add(ball);
+      const cap = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.08, 6, 16), glowMaterial(accent, 1.0));
+      cap.rotation.x = Math.PI / 2; cap.position.y = 1.4; g.add(cap); // toroid ring
+      // --- aiming emitter prong (barrel) ---
+      barrel.add(box(0.14, 0.14, 0.75, iron, 0, 0, 0.38));
+      barrel.add(box(0.24, 0.24, 0.2, 0xd9d2c4, 0, 0, -0.02));        // insulator base
+      { const mz = glow(0.24, 0.24, 0.24, accent, 0, 0, 0.78, 1.4); mz.name = "muzzle"; barrel.add(mz); }
+      if (tier >= 3) for (const ax of [-0.22, 0.22]) barrel.add(glow(0.08, 0.08, 0.55, accent, ax, 0, 0.6, 1.1)); // side arcs
+      if (tier >= 4) { // ULTIMATE: arcing prongs splayed around the emitter
+        for (const a of [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5]) {
+          const px = Math.cos(a) * 0.3, py = Math.sin(a) * 0.3;
+          const prong = box(0.07, 0.07, 0.6, iron, px, py, 0.4); prong.lookAt(px * 2, py * 2, 1.2); barrel.add(prong);
+          barrel.add(glow(0.13, 0.13, 0.13, accent, px * 1.3, py * 1.3, 0.82, 1.2));
+        }
+      }
+      barrel.position.y = 1.05;
     } else { // venom
-      g.add(box(1.5, 0.4, 1.5, stoneDark, 0, -0.4, 0));
-      g.add(box(0.9, 0.55, 0.9, 0x3a2f23, 0, 0.05, 0));             // dark plinth
-      // a cauldron brimming with bubbling toxin
-      const cauldron = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.4, 0.5, 10), voxelMaterial(0x2a2f26));
+      // ---- alchemist's cauldron / spire of bubbling toxin ----
+      g.add(box(1.6, 0.4, 1.6, stoneDark, 0, -0.4, 0));
+      g.add(box(1.0, 0.5, 1.0, 0x3a2f23, 0, -0.05, 0));              // dark plinth
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(box(0.16, 0.55, 0.16, bone, sx * 0.42, 0.1, sz * 0.42)); // cauldron legs
+      // the cauldron brimming with bubbling toxin
+      const cauldron = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.42, 0.55, 12), voxelMaterial(bone));
       cauldron.position.y = 0.45; cauldron.castShadow = true; g.add(cauldron);
-      const brew = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.46, 0.12, 10), glowMaterial(accent, 1.0));
-      brew.position.y = 0.72; g.add(brew);
-      for (const [bx, bz, s] of [[-0.15, 0.1, 1], [0.18, -0.05, 1.3], [0.0, 0.2, 0.8]] as const) {
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.07, 6, 14), voxelMaterial(0x4a4036));
+      rim.rotation.x = Math.PI / 2; rim.position.y = 0.72; g.add(rim);
+      const brew = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.14, 12), glowMaterial(accent, 1.0));
+      brew.position.y = 0.7; g.add(brew);                            // toxic surface
+      for (const [bx, bz, s] of [[-0.16, 0.1, 1], [0.2, -0.06, 1.3], [0.0, 0.22, 0.8], [0.1, -0.2, 1.1]] as const) {
         const b = new THREE.Mesh(new THREE.SphereGeometry(0.08 * s, 6, 6), glowMaterial(accent, 0.9));
-        b.position.set(bx, 0.8, bz); g.add(b);
+        b.position.set(bx, 0.82, bz); g.add(b);                      // rising bubbles
       }
-      // aiming nozzle (barrel) that spits venom globs
-      barrel.add(box(0.16, 0.16, 0.6, 0x2a2f26, 0, 0, 0.3));
-      { const mz = glow(0.24, 0.24, 0.24, accent, 0, 0, 0.6, 1.2); mz.name = "muzzle"; barrel.add(mz); }
-      if (tier >= 2) for (const [bx, bz] of [[-0.42, 0.18], [0.42, 0.24]] as const) {
-        const sp = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), glowMaterial(accent, 0.7));
-        sp.position.set(bx, 0.6, bz); g.add(sp);
+      // --- aiming nozzle (barrel) that spits venom globs ---
+      barrel.add(box(0.2, 0.2, 0.6, bone, 0, 0, 0.3));
+      barrel.add(box(0.3, 0.3, 0.24, 0x4a4036, 0, 0, -0.02));        // valve block
+      { const mz = glow(0.26, 0.26, 0.26, accent, 0, 0, 0.62, 1.2); mz.name = "muzzle"; barrel.add(mz); }
+      const drip = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.22, 5), glowMaterial(accent, 1.0));
+      drip.rotation.x = Math.PI; drip.position.z = 0.6; drip.position.y = -0.12; barrel.add(drip); // dripping toxin
+      if (tier >= 2) for (const [bx, bz] of [[-0.46, 0.18], [0.46, 0.24]] as const) { // spore pods
+        const sp = new THREE.Mesh(new THREE.OctahedronGeometry(0.17, 0), glowMaterial(accent, 0.7));
+        sp.position.set(bx, 0.62, bz); g.add(sp);
       }
-      if (tier >= 3) {
-        const halo = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.05, 6, 18), glowMaterial(accent, 0.8));
-        halo.rotation.x = Math.PI / 2; halo.position.y = 0.98; g.add(halo);
+      if (tier >= 3) { // a toxic vapor halo
+        const halo = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 6, 18), glowMaterial(accent, 0.8));
+        halo.rotation.x = Math.PI / 2; halo.position.y = 1.0; g.add(halo);
       }
-      barrel.position.y = 0.95;
+      if (tier >= 4) { // ULTIMATE: alchemist spire of vials + extra spitting nozzles
+        const spire = new THREE.Mesh(new THREE.ConeGeometry(0.3, 1.1, 6), glowMaterial(accent, 0.55));
+        spire.position.y = 1.5; g.add(spire);                        // toxin spire
+        for (const sx of [-1, 1]) {                                  // glass vials of brew
+          g.add(box(0.18, 0.5, 0.18, 0x4a4036, sx * 0.62, 0.55, -0.5));
+          g.add(glow(0.12, 0.34, 0.12, accent, sx * 0.62, 0.55, -0.5, 0.9));
+        }
+        for (const sx of [-1, 1]) { // secondary aiming nozzles
+          barrel.add(box(0.13, 0.13, 0.5, bone, sx * 0.26, 0, 0.28));
+          barrel.add(glow(0.18, 0.18, 0.18, accent, sx * 0.26, 0, 0.55, 1.0));
+        }
+      }
+      barrel.position.y = 0.98;
     }
 
     g.add(barrel);
