@@ -2763,16 +2763,18 @@ export class Island {
     let seed = 8181;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     // ---- fireflies: one InstancedMesh, matrices driven in animateLife ----
-    const FF = 40;
+    // A FEW, dim, and kept close to the fountain — a swarm of 40 bright motes
+    // ringing the lawn read as "a ton of lanterns", which we don't want.
+    const FF = 10;
     this.fireflyMat = new THREE.MeshStandardMaterial({
-      color: 0xfff6c0, emissive: 0xd8ff7a, emissiveIntensity: 1.4,
-      transparent: true, opacity: 0.85, depthWrite: false, toneMapped: false,
+      color: 0xfff6c0, emissive: 0xd8ff7a, emissiveIntensity: 0.7,
+      transparent: true, opacity: 0.7, depthWrite: false, toneMapped: false,
     });
-    const ff = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.055, 0), this.fireflyMat, FF);
+    const ff = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.05, 0), this.fireflyMat, FF);
     this.fireflyBase = new Float32Array(FF * 4);
     for (let i = 0; i < FF; i++) {
       const a = rnd() * Math.PI * 2;
-      const r = 14 + rnd() * 16;
+      const r = 7 + rnd() * 9; // hug the fountain/plaza instead of ringing the lawn
       this.fireflyBase[i * 4] = Math.cos(a) * r;
       this.fireflyBase[i * 4 + 1] = 0.9 + rnd() * 1.3;
       this.fireflyBase[i * 4 + 2] = Math.sin(a) * r;

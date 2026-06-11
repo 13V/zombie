@@ -37,9 +37,9 @@ export class TouchControls {
       <div class="tstick" id="t-aim"><div class="tknob"></div></div>
       <div class="tbtns">
         <button class="tbtn act" data-k="KeyE" aria-label="Interact">E</button>
-        <button class="tbtn" data-k="KeyR" aria-label="Reload">R</button>
-        <button class="tbtn" data-k="KeyQ" aria-label="Swap">Q</button>
-        <button class="tbtn nuke" data-k="KeyF" aria-label="Nuke">☢</button>
+        <button class="tbtn combat" data-k="KeyR" aria-label="Reload">R</button>
+        <button class="tbtn combat" data-k="KeyQ" aria-label="Swap">Q</button>
+        <button class="tbtn nuke combat" data-k="KeyF" aria-label="Nuke">☢</button>
       </div>
       <button class="tbtn pause" data-k="KeyP" aria-label="Pause">II</button>
     `;
@@ -74,6 +74,14 @@ export class TouchControls {
   setActive(on: boolean) {
     this.root.style.display = on ? "block" : "none";
     if (!on) this.reset();
+  }
+
+  /** Show the combat-only buttons (Reload / Swap / Nuke). Off in the lobby and
+   *  other non-shooting modes, leaving just E (interact) + the emote button. */
+  setCombatButtons(on: boolean) {
+    this.root.querySelectorAll<HTMLElement>(".tbtn.combat").forEach((b) => {
+      b.style.display = on ? "" : "none";
+    });
   }
 
   private reset() {

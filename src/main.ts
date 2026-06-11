@@ -1590,6 +1590,8 @@ class Game implements GameApi {
     this.hud.setOverdrive(warpActive); // persistent "2× OVERDRIVE" banner
 
     this.touch?.setActive(this.state === "playing" || this.state === "paused" || this.state === "island" || this.state === "bedwars" || this.state === "td");
+    // Reload/Swap/Nuke buttons only in the shooter; lobby/TD/BW just need E + emote
+    this.touch?.setCombatButtons(this.state === "playing" || this.state === "paused");
     this.player.showAimGuide(this.state === "playing");
     if (this.state === "playing") {
       if (this.netplay && !this.netplay.isHost) this.simulateGuest(dt);

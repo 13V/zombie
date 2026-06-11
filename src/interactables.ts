@@ -145,7 +145,12 @@ class MysteryChest implements Interactable {
     this.group.add(base);
     for (const dx of [-0.96, 0.96]) this.group.add(vox(0.22, 1.35, 1.72, x + dx, 0.62, z, gold)); // corner bands
     this.group.add(vox(2.34, 0.2, 1.66, x, 1.2, z, gold)); // top rim
+    // horizontal plank seams across the front face for chunky wood detail
+    for (const py of [0.4, 0.85]) this.group.add(vox(2.04, 0.06, 0.04, x, py, z + 0.81, woodDark));
+    // gold corner feet so it sits like a real chest
+    for (const dx of [-0.92, 0.92]) for (const dz of [-0.66, 0.66]) this.group.add(vox(0.26, 0.24, 0.26, x + dx, 0.12, z + dz, gold));
     this.group.add(vox(0.44, 0.5, 0.18, x, 1.0, z + 0.84, gold)); // front clasp
+    this.group.add(vox(0.3, 0.32, 0.12, x, 0.92, z + 0.9, glowMaterial(COLORS.boxGold, 1.1))); // glowing padlock
 
     // lid on a hinge at the back-top edge (local coords inside the pivot)
     this.lidPivot.position.set(x, 1.24, z - 0.8);
@@ -387,29 +392,45 @@ class Bubblegum implements Interactable {
   private t = 0;
   constructor(public pos: THREE.Vector3, private cost: number) {
     const { x, z } = pos;
-    const bodyMat = voxelMaterial(VOX.toolbox);
-    const bodyDarkMat = voxelMaterial(VOX.toolboxDark);
-    // boxy voxel vending machine / cooler body
-    this.group.add(vox(1.1, 2.2, 0.9, x, 1.1, z, bodyMat, true));
-    // dark base + top trim
-    this.group.add(vox(1.2, 0.3, 1.0, x, 0.15, z, bodyDarkMat, true));
-    this.group.add(vox(1.2, 0.22, 1.0, x, 2.3, z, bodyDarkMat));
-    // glowing display window on the front
-    this.group.add(vox(0.8, 1.0, 0.12, x, 1.45, z + 0.46, glowMaterial(VOX.windowGlow, 0.7)));
-    // dispense tray at the bottom
-    this.group.add(vox(0.7, 0.28, 0.18, x, 0.6, z + 0.46, bodyDarkMat));
-    // colored power-up gum voxels stacked behind the glass (GUMS colors)
-    for (let i = 0; i < 6; i++) {
+    const red = voxelMaterial(0xd6463f);
+    const redDark = voxelMaterial(0x9e302b);
+    const chrome = voxelMaterial(VOX.steel);
+    // local helper: a positioned cylinder added to the group (group.add returns
+    // the GROUP, not the child — so we must position before adding).
+    const cyl = (rt: number, rb: number, h: number, yy: number, mat: THREE.Material, zz = z) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, 16), mat);
+      m.position.set(x, yy, zz); m.castShadow = true; this.group.add(m); return m;
+    };
+    // ---- a classic GUMBALL MACHINE: red base + chrome neck + glass globe ----
+    cyl(0.78, 0.92, 0.7, 0.35, redDark);   // weighted base
+    cyl(0.66, 0.78, 0.7, 0.95, red);       // body
+    cyl(0.6, 0.6, 0.18, 1.32, chrome);     // chrome collar under the globe
+    cyl(0.12, 0.12, 0.1, 0.95, chrome, z + 0.62); // coin knob
+    this.group.add(vox(0.42, 0.3, 0.12, x, 0.6, z + 0.6, redDark)); // dispense door
+    // the GLASS GLOBE (transparent sphere) full of colored gumballs
+    const glass = new THREE.Mesh(
+      new THREE.SphereGeometry(0.92, 18, 14),
+      new THREE.MeshStandardMaterial({ color: 0xbfe6ff, transparent: true, opacity: 0.22, roughness: 0.1, metalness: 0, depthWrite: false }),
+    );
+    glass.position.set(x, 2.05, z);
+    this.group.add(glass);
+    const ballGeo = new THREE.SphereGeometry(0.17, 8, 6);
+    let seed = Math.floor(Math.abs(x * 53 + z * 131)) + 1;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let i = 0; i < 16; i++) {
       const c = GUMS[i % GUMS.length].color;
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      this.group.add(vox(0.26, 0.26, 0.1, x - 0.18 + col * 0.36, 1.15 + row * 0.34, z + 0.5, glowMaterial(c, 0.7)));
+      const ball = new THREE.Mesh(ballGeo, glowMaterial(c, 0.45));
+      const a = rnd() * Math.PI * 2, rr = rnd() * 0.6; // pack into the lower globe
+      ball.position.set(x + Math.cos(a) * rr, 1.78 + rnd() * 0.5, z + Math.sin(a) * rr);
+      this.group.add(ball);
     }
-    // spinning power-up display element (animated by update)
-    this.globe = vox(0.34, 0.34, 0.34, x, 1.95, z + 0.3, glowMaterial(GUMS[0].color, 1.1));
+    cyl(0.34, 0.42, 0.2, 2.95, chrome);    // chrome crown
+    // a spinning gumball finial on top (animated by update)
+    this.globe = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), glowMaterial(GUMS[0].color, 1.2));
+    this.globe.position.set(x, 3.2, z);
     this.group.add(this.globe);
-    const light = new THREE.PointLight(0xff7ab0, 3, 6, 2);
-    light.position.set(x, 1.7, z + 0.4);
+    const light = new THREE.PointLight(0xff7ab0, 3.2, 7, 2);
+    light.position.set(x, 2.1, z + 0.5);
     this.group.add(light);
   }
   prompt(game: GameApi) {
@@ -515,17 +536,33 @@ class PerkPad implements Interactable {
     color: number,
   ) {
     const { x, z } = pos;
-    // chunky voxel supply pad on the ground, in the perk color
-    this.group.add(vox(2.0, 0.3, 2.0, x, 0.15, z, voxelMaterial(VOX.steelDark)));
-    this.group.add(vox(1.5, 0.22, 1.5, x, 0.34, z, glowMaterial(color, 0.8)));
-    // a low voxel crate marker in the middle
-    this.group.add(vox(0.7, 0.6, 0.7, x, 0.6, z, voxelMaterial(VOX.crate), true));
+    const steelDark = voxelMaterial(VOX.steelDark);
+    const shell = voxelMaterial(color);
+    // ---- a chunky PERK VENDING MACHINE in the perk's signature color ----
+    // footing pad + dark base
+    this.group.add(vox(1.9, 0.3, 1.5, x, 0.15, z, steelDark));
+    this.group.add(vox(1.55, 0.45, 1.25, x, 0.45, z, steelDark, true));
+    // tall coloured cabinet
+    this.group.add(vox(1.5, 2.5, 1.2, x, 1.85, z, shell, true));
+    // side trims (darker) so the body reads as panelled
+    for (const dx of [-0.78, 0.78]) this.group.add(vox(0.08, 2.5, 1.24, x + dx, 1.85, z, steelDark));
+    // glowing display window with a bottle silhouette inside
+    this.group.add(vox(1.05, 1.4, 0.1, x, 2.0, z + 0.62, glowMaterial(color, 0.55)));
+    this.group.add(vox(0.34, 0.8, 0.14, x, 1.95, z + 0.66, glowMaterial(0xfff4e0, 0.9))); // bottle body
+    this.group.add(vox(0.16, 0.28, 0.14, x, 2.5, z + 0.66, glowMaterial(0xfff4e0, 0.9)));  // bottle neck
+    // lit marquee sign on top
+    this.group.add(vox(1.7, 0.5, 1.0, x, 3.25, z, steelDark, true));
+    this.group.add(vox(1.5, 0.34, 0.12, x, 3.27, z + 0.5, glowMaterial(color, 1.2)));
+    // dispense tray + coin slot
+    this.group.add(vox(0.9, 0.26, 0.2, x, 0.95, z + 0.62, steelDark));
+    this.group.add(vox(0.2, 0.1, 0.1, x + 0.55, 2.2, z + 0.62, glowMaterial(0xffe27a, 1.0)));
+    // a glowing service ring hovering above (kept for the idle animation)
     this.ring = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.08, 8, 24), glowMaterial(color, 1.3));
-    this.ring.position.set(x, 1.4, z);
+    this.ring.position.set(x, 3.8, z);
     this.ring.rotation.x = Math.PI / 2;
     this.group.add(this.ring);
-    const light = new THREE.PointLight(color, 4, 7, 2);
-    light.position.set(x, 1.2, z);
+    const light = new THREE.PointLight(color, 4, 8, 2);
+    light.position.set(x, 2.2, z + 0.6);
     this.group.add(light);
   }
   prompt(game: GameApi) {
