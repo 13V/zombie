@@ -104,6 +104,7 @@ export class TdMode {
   // which multiplies gold + score. A leak resets it.
   private combo = 0;
   private comboTimer = 0;
+  private _curPad = -1; // pad the engineer is standing at (HUD taps act on it)
   // active poison/burn DoTs keyed by creep id (venom + cannon incendiary)
   private poison = new Map<number, { dps: number; until: number; color: number; puff: number }>();
   private opts: TdEnterOpts = {};
@@ -408,6 +409,7 @@ export class TdMode {
     this.fireTowers(dt);
     this.animateTowers(dt);
     this.vfx.update(dt);
+    this._curPad = playerPos ? this.nearestPad(playerPos) : -1;
     if (playerPos) { this.updateRing(playerPos); this.updateTowerPanel(playerPos); }
 
     // wave cleared?
@@ -953,7 +955,19 @@ export class TdMode {
   // ---- HUD ----
   private buildHud() {
     if (this.ui) return;
-    this.ui = new TdHud(document.getElementById("ui") ?? document.body);
+    // Wire the HUD buttons to the controller so TOUCH players (no keyboard) can
+    // build/upgrade/sell/retarget by tapping. Desktop keeps the 1-7/E/X/T keys
+    // too — both routes act on the pad the engineer is standing at (_curPad).
+    this.ui = new TdHud(document.getElementById("ui") ?? document.body, {
+      onBuild: (_t, i) => {
+        const id = TD_TOWER_IDS[i];
+        if (id && this._curPad >= 0 && !this.towers.has(this._curPad)) this.build(this._curPad, id);
+      },
+      onUpgrade: () => { if (this._curPad >= 0) this.upgrade(this._curPad); },
+      onSell: () => { if (this._curPad >= 0) this.sell(this._curPad); },
+      onTarget: () => { if (this._curPad >= 0) this.cycleTarget(this._curPad); },
+      onCall: () => this.startNextWave(),
+    });
     this.ui.setTowers(TD_TOWER_IDS.map((id, i) => ({
       name: TD_TOWERS[id].name, cost: TD_TOWERS[id].cost, key: String(i + 1),
       color: TD_TOWERS[id].color, ability: TD_TOWERS[id].ability,

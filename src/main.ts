@@ -1008,6 +1008,7 @@ class Game implements GameApi {
 
   private startRun() {
     // leaving the hub for the zombie world: swap scenes back to the arena
+    this.resetRenderScale();
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.interactables.setVisible(true); // restore the map fixtures for the run
@@ -1514,6 +1515,18 @@ class Game implements GameApi {
     this.composer?.setSize(innerWidth, innerHeight);
   }
 
+  /** Snap the internal render scale back to full (crisp) — called on entering a
+   *  new mode so a low scale forced by one heavy scene (e.g. the zombie horde)
+   *  doesn't leave a lighter scene (lobby / Tower Defense) blurry. The frame
+   *  governor will step it back down only if THIS scene actually needs it. */
+  private resetRenderScale() {
+    if (this._dprScale === 1) return;
+    this._dprScale = 1;
+    this._ftSmooth = 1 / 60;
+    this._adaptT = 0;
+    this.applyPixelRatio();
+  }
+
   /** Frame-time governor: if frames run long for a sustained stretch, step the
    *  internal resolution down (to 55% min); recover slowly when there's
    *  headroom. This is what keeps dense waves playable on phones. */
@@ -1710,6 +1723,7 @@ class Game implements GameApi {
     this.bullets.clear();
     this._tdEndTimer = 0;
     this.td.enter(mode, opts);
+    this.resetRenderScale(); // start crisp; the governor only drops res if TD itself struggles
     this.player.pos.copy(this.td.spawn());
     this.player.group.position.copy(this.player.pos);
     this.camZoomTarget = 2.2;         // pull back to read the whole lane
@@ -1942,6 +1956,7 @@ class Game implements GameApi {
   /** Enter the island hub: hide the arena, show the island, drop the player in. */
   private enterIsland() {
     this.teardownNet();
+    this.resetRenderScale(); // lobby is light — never inherit a blurry low render scale
     this.music.play("hub"); // warm lofi for the lobby
     this.state = "island";
     this.hud.hideStart();
