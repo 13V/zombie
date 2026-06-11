@@ -1196,7 +1196,7 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 .emote-fab {
   position: absolute;
   right: 18px;
-  bottom: 150px;
+  bottom: 220px; /* sit above the touch E button (right:18 / bottom:150) so both show */
   width: 56px;
   height: 56px;
   border-radius: 50%;
