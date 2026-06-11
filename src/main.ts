@@ -64,6 +64,7 @@ class Game implements GameApi {
   private renderer: THREE.WebGLRenderer;
   // ---- adaptive resolution: scale render DPR down when frames run long ----
   private _dprCap = 1.5; // device tier ceiling (1 on mobile, 1.5 desktop)
+  private _lowSpec = false; // touch/mobile tier (set at construction)
   private _dprScale = 1; // live multiplier, stepped by the frame-time governor
   private _ftSmooth = 1 / 60; // exponentially-smoothed frame time (seconds)
   private _adaptT = 0; // seconds since the governor last adjusted
@@ -208,6 +209,7 @@ class Game implements GameApi {
     // hardware MSAA (near-free on mobile tile GPUs), no shadow depth pass,
     // and Lambert-tier materials (see palette.ts).
     const lowSpec = isTouchDevice();
+    this._lowSpec = lowSpec;
     this._dprCap = lowSpec ? 1 : 1.5;
 
     // Desktop: antialias:false — SMAA in the composer handles edges; MSAA here
@@ -1008,7 +1010,7 @@ class Game implements GameApi {
 
   private startRun() {
     // leaving the hub for the zombie world: swap scenes back to the arena
-    this.resetRenderScale();
+    this.setRenderTier(this._lowSpec ? 1 : 1.5); // the horde is heavy — keep the phone ceiling at 1x
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.interactables.setVisible(true); // restore the map fixtures for the run
@@ -1515,12 +1517,13 @@ class Game implements GameApi {
     this.composer?.setSize(innerWidth, innerHeight);
   }
 
-  /** Snap the internal render scale back to full (crisp) — called on entering a
-   *  new mode so a low scale forced by one heavy scene (e.g. the zombie horde)
-   *  doesn't leave a lighter scene (lobby / Tower Defense) blurry. The frame
-   *  governor will step it back down only if THIS scene actually needs it. */
-  private resetRenderScale() {
-    if (this._dprScale === 1) return;
+  /** Set the device-pixel-ratio ceiling for the scene we're entering and snap the
+   *  internal render scale back to full (crisp). Light scenes (lobby / Tower
+   *  Defense) get a higher ceiling than the heavy zombie horde, so they render
+   *  sharp on phones instead of inheriting the horde's low scale. The frame
+   *  governor still steps the scale back down if THIS scene actually struggles. */
+  private setRenderTier(cap: number) {
+    this._dprCap = cap;
     this._dprScale = 1;
     this._ftSmooth = 1 / 60;
     this._adaptT = 0;
@@ -1723,7 +1726,7 @@ class Game implements GameApi {
     this.bullets.clear();
     this._tdEndTimer = 0;
     this.td.enter(mode, opts);
-    this.resetRenderScale(); // start crisp; the governor only drops res if TD itself struggles
+    this.setRenderTier(this._lowSpec ? 1.5 : 2); // TD is light — render it sharp (governor drops only if it struggles)
     this.player.pos.copy(this.td.spawn());
     this.player.group.position.copy(this.player.pos);
     this.camZoomTarget = 2.2;         // pull back to read the whole lane
@@ -1956,7 +1959,7 @@ class Game implements GameApi {
   /** Enter the island hub: hide the arena, show the island, drop the player in. */
   private enterIsland() {
     this.teardownNet();
-    this.resetRenderScale(); // lobby is light — never inherit a blurry low render scale
+    this.setRenderTier(this._lowSpec ? 1.4 : 2); // lobby renders sharp; never inherit the horde's low scale
     this.music.play("hub"); // warm lofi for the lobby
     this.state = "island";
     this.hud.hideStart();

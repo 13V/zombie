@@ -92,7 +92,7 @@ export interface TdHudOpts {
 const STYLE_ID = "tdh-style";
 const STYLE_CSS = `
 #tdh {
-  position: absolute; inset: 0; z-index: 25; pointer-events: none;
+  position: absolute; inset: 0; z-index: 36; pointer-events: none;
   font-family: inherit; color: #f1ece1;
   font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
 }
