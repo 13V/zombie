@@ -25,13 +25,45 @@ import assert from "node:assert/strict";
 import { ZOMBIE, ROUNDS, ZOMBIE_TYPES, SPECIAL_ROUNDS } from "../src/config.ts";
 
 // ---- re-derived from rounds.ts beginRound() (kept verbatim) ---------------
+// HP curve WITH the horde-regime growth discount applied to rounds past R20
+// (mirrors beginRound's split-power form). normalRounds use full hpGrowth;
+// hordeRounds (past hordeFromRound) use hpGrowth*hordeHpGrowthDiscount.
 function roundHP(n: number): number {
   const inflect = ZOMBIE.hpInflection;
   const past = Math.max(0, n - inflect);
   const linHP = ZOMBIE.baseHealth + (n - 1) * ZOMBIE.healthPerRound;
   if (n <= inflect) return linHP;
   const baseHP = ZOMBIE.baseHealth + (inflect - 1) * ZOMBIE.healthPerRound;
-  return baseHP * Math.pow(ZOMBIE.hpGrowth, past);
+  const hordeRounds = Math.max(0, n - ROUNDS.hordeFromRound);
+  const normalRounds = past - hordeRounds;
+  const discounted = ZOMBIE.hpGrowth * ROUNDS.hordeHpGrowthDiscount;
+  return baseHP * Math.pow(ZOMBIE.hpGrowth, normalRounds) * Math.pow(discounted, hordeRounds);
+}
+
+// horde-regime 0..1 ramp (verbatim from beginRound)
+function hordeRamp(n: number): number {
+  return Math.max(0, Math.min(1, (n - ROUNDS.hordeFromRound) / ROUNDS.hordeRampRounds));
+}
+// per-round alive cap (no co-op/swarm), WITH the horde multiplier + ceiling
+// clamp — verbatim port of beginRound's curMaxAlive math for a given ceiling.
+function aliveCap(n: number, ceiling: number): number {
+  const past = Math.max(0, n - ZOMBIE.hpInflection);
+  let cap = Math.min(ceiling, ROUNDS.maxAliveBase + past * ROUNDS.maxAlivePerRound);
+  if (n >= ROUNDS.hordeFromRound) {
+    const aliveMul = 1 + (ROUNDS.hordeAliveMul - 1) * hordeRamp(n);
+    cap = Math.min(ceiling, Math.round(cap * aliveMul));
+  }
+  return cap;
+}
+// per-round spawn BUDGET (no co-op/swarm), WITH the horde multiplier + countCap
+// clamp — verbatim port of beginRound's count math.
+function budget(n: number): number {
+  let count = Math.min(ROUNDS.countCap, ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound);
+  if (n >= ROUNDS.hordeFromRound) {
+    const budgetMul = 1 + (ROUNDS.hordeBudgetMul - 1) * hordeRamp(n);
+    count = Math.min(ROUNDS.countCap, Math.round(count * budgetMul));
+  }
+  return count;
 }
 
 test("HP curve is strictly monotonic increasing across R1..R40", () => {
@@ -59,8 +91,9 @@ test("inflection seam is continuous: R(inflect) equals the multiplicative branch
   assert.ok(Math.abs(roundHP(inflect + 1) - linAtInflect * ZOMBIE.hpGrowth) < 1e-9);
 });
 
-test("past the inflection HP compounds by exactly hpGrowth each round", () => {
-  for (let n = ZOMBIE.hpInflection + 1; n <= 30; n++) {
+test("between the inflection and the horde regime HP compounds by exactly hpGrowth", () => {
+  // Only valid up to hordeFromRound; the discount kicks in for rounds PAST R20.
+  for (let n = ZOMBIE.hpInflection + 1; n <= ROUNDS.hordeFromRound; n++) {
     const ratio = roundHP(n) / roundHP(n - 1);
     assert.ok(Math.abs(ratio - ZOMBIE.hpGrowth) < 1e-9, `R${n}/R${n - 1} ratio ${ratio}`);
   }
@@ -244,4 +277,118 @@ test("swarm rounds: every Nth round that isn't a boss round (n%5)", () => {
   assert.equal(isSwarm(35), false); // boss round wins
   assert.equal(isSwarm(6), false);
   assert.equal(isSwarm(5), false);
+});
+
+// ---- HORDE REGIME (R20+), derived verbatim from beginRound -----------------
+
+test("horde ramp is 0 before R20, climbs 0→1 across R20..R30, pinned at 1 after", () => {
+  assert.equal(hordeRamp(ROUNDS.hordeFromRound - 1), 0); // R19: regime not yet live
+  assert.equal(hordeRamp(ROUNDS.hordeFromRound), 0); // R20: announced start, ramp just 0
+  assert.ok(hordeRamp(25) > 0 && hordeRamp(25) < 1, "mid-climb ramp strictly between 0 and 1");
+  assert.equal(hordeRamp(ROUNDS.hordeFromRound + ROUNDS.hordeRampRounds), 1); // R30: full
+  assert.equal(hordeRamp(50), 1); // pinned at 1 well past the climb
+  // monotonic non-decreasing across the climb
+  let prev = -1;
+  for (let n = 18; n <= 35; n++) {
+    const r = hordeRamp(n);
+    assert.ok(r >= prev, `ramp must not decrease at R${n}`);
+    prev = r;
+  }
+});
+
+test("horde regime is a CLIMB, not a step-function: R20 alive cap rises but isn't instantly maxed", () => {
+  const ceiling = ROUNDS.maxAliveCap;
+  // R20 ramp is 0, so the alive multiplier is 1× — R20 starts the announcement
+  // without a one-round spike (the cap equals the plain pre-horde curve, clamped).
+  assert.equal(hordeRamp(ROUNDS.hordeFromRound), 0);
+  // The cap then climbs hard and is pinned at the ceiling by the top of the ramp.
+  assert.ok(aliveCap(25, ceiling) > aliveCap(20, ceiling), "R25 cap exceeds R20 cap");
+  assert.equal(aliveCap(30, ceiling), ceiling, "by R30 the desktop cap is pinned at the ceiling");
+});
+
+test("horde alive cap is monotonic non-decreasing and never exceeds the ceiling", () => {
+  for (const ceiling of [ROUNDS.maxAliveCap, 96 /* mobile */]) {
+    let prev = -1;
+    for (let n = 1; n <= 60; n++) {
+      const cap = aliveCap(n, ceiling);
+      assert.ok(cap <= ceiling, `R${n} cap ${cap} exceeds ceiling ${ceiling}`);
+      assert.ok(cap >= prev, `R${n} cap ${cap} dropped below R${n - 1} ${prev}`);
+      prev = cap;
+    }
+  }
+});
+
+test("horde regime drives desktop density far above pre-horde mid-game", () => {
+  const ceiling = ROUNDS.maxAliveCap;
+  // R19 is the last pre-horde round (cap 130 under today's curve); R30 is full
+  // horde, pinned at the RAISED 230 ceiling — a ~1.77× jump in on-screen bodies,
+  // and roughly 2× the OLD 170 ceiling that capped the mid-20s before this pass.
+  const r19 = aliveCap(19, ceiling);
+  const r30 = aliveCap(30, ceiling);
+  assert.ok(r30 >= 1.7 * r19, `R30 cap ${r30} should be well above R19 ${r19}`);
+  assert.equal(r30, ceiling); // pinned at the raised ceiling
+  assert.ok(r30 >= 2 * 170 * 0.6, "R30 density is a genuine wall vs. the old 170 ceiling");
+});
+
+test("the spawn BUDGET rises under the horde regime (a horde round LASTS)", () => {
+  // R19 vs R30: the fatter budget keeps the refill-the-wall loop going longer.
+  assert.ok(budget(30) > budget(19), "R30 budget must exceed R19 budget");
+  // and it climbs through the ramp
+  assert.ok(budget(25) >= budget(20), "budget non-decreasing through the climb");
+  // clamped at countCap
+  for (let n = 1; n <= 80; n++) assert.ok(budget(n) <= ROUNDS.countCap, `R${n} budget over countCap`);
+});
+
+test("HP-growth discount applies ONLY past R20 and softens (but never reverses) the curve", () => {
+  // The discount must make post-R20 per-round growth SMALLER than the full
+  // hpGrowth, but HP must still rise every round (mowing, not shrinking sponges).
+  const discounted = ZOMBIE.hpGrowth * ROUNDS.hordeHpGrowthDiscount;
+  assert.ok(ROUNDS.hordeHpGrowthDiscount < 1, "discount must be a real reduction");
+  assert.ok(discounted > 1, "even discounted, HP must still grow each round (>1×)");
+  for (let n = ROUNDS.hordeFromRound + 1; n <= 40; n++) {
+    const ratio = roundHP(n) / roundHP(n - 1);
+    assert.ok(Math.abs(ratio - discounted) < 1e-9, `R${n} post-horde ratio ${ratio} != ${discounted}`);
+  }
+  // the discount genuinely lowers late HP vs. the un-discounted curve
+  const undiscounted = (n: number) => {
+    const baseHP = ZOMBIE.baseHealth + (ZOMBIE.hpInflection - 1) * ZOMBIE.healthPerRound;
+    return baseHP * Math.pow(ZOMBIE.hpGrowth, n - ZOMBIE.hpInflection);
+  };
+  assert.ok(roundHP(30) < undiscounted(30), "R30 HP should be below the no-discount curve");
+});
+
+test("HP curve stays strictly monotonic across the horde seam (R19→R20→R30)", () => {
+  let prev = -Infinity;
+  for (let n = 1; n <= 50; n++) {
+    const hp = roundHP(n);
+    assert.ok(hp > prev, `HP at R${n} (${hp}) should exceed R${n - 1} (${prev})`);
+    prev = hp;
+  }
+  // seam continuity: R20 HP equals the plain (un-discounted) curve at R20, since
+  // the discount only applies to rounds PAST hordeFromRound.
+  const plainAt20 = (() => {
+    const baseHP = ZOMBIE.baseHealth + (ZOMBIE.hpInflection - 1) * ZOMBIE.healthPerRound;
+    return baseHP * Math.pow(ZOMBIE.hpGrowth, ROUNDS.hordeFromRound - ZOMBIE.hpInflection);
+  })();
+  assert.ok(Math.abs(roundHP(ROUNDS.hordeFromRound) - plainAt20) < 1e-9, "R20 seam is continuous");
+});
+
+test("mobile horde ceiling stays distinctly below the desktop ceiling", () => {
+  const desktop = ROUNDS.maxAliveCap; // 230
+  const mobile = 96; // set in main.ts (lowSpec)
+  assert.ok(mobile < desktop, "mobile ceiling must stay below desktop");
+  assert.ok(mobile <= desktop * 0.6, "mobile ceiling kept well under desktop for the frame budget");
+  // even at full horde the mobile cap is clamped to its own (lower) ceiling
+  assert.equal(aliveCap(30, mobile), mobile, "R30 mobile cap pinned at mobile ceiling");
+  assert.ok(aliveCap(30, mobile) < aliveCap(30, desktop), "mobile R30 density below desktop");
+});
+
+test("horde knobs are sane: ramp>0, full multipliers >1, discount in (0,1)", () => {
+  assert.ok(ROUNDS.hordeFromRound > 0);
+  assert.ok(ROUNDS.hordeRampRounds > 0);
+  assert.ok(ROUNDS.hordeAliveMul > 1, "alive multiplier must increase density");
+  assert.ok(ROUNDS.hordeBudgetMul > 1, "budget multiplier must fatten the round");
+  assert.ok(ROUNDS.hordeHpGrowthDiscount > 0 && ROUNDS.hordeHpGrowthDiscount < 1);
+  // countCap must exceed the desktop alive ceiling (the refill-the-wall invariant)
+  assert.ok(ROUNDS.countCap > ROUNDS.maxAliveCap, "countCap must sit above the alive ceiling");
 });

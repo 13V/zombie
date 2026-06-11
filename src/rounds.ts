@@ -61,6 +61,21 @@ export class RoundManager {
   maxAliveCeiling = ROUNDS.maxAliveCap;
 
   /**
+   * HORDE REGIME flags, surfaced for main.ts (read-only). `hordeActive` is true
+   * for any round at/after ROUNDS.hordeFromRound (the regime is live). `hordeJustRose`
+   * is a ONE-SHOT set true only on the exact round the regime begins (R20) and
+   * cleared on every later beginRound — main reads it in onRoundStart to fire the
+   * "THE HORDE RISES" banner exactly once. We do NOT wire UI here; we only raise
+   * the flag (same contract as specialRound / guaranteedDrop).
+   */
+  hordeActive = false;
+  hordeJustRose = false;
+  /** 0 below the regime, ramping 0→1 across [hordeFromRound, +hordeRampRounds],
+   *  pinned at 1 after. Drives the alive-cap / budget / HP-discount lerps. Public
+   *  so main.ts (or tests) can read how far into the climb the current round is. */
+  hordeRamp = 0;
+
+  /**
    * Opt-in Curse multiplier (≥1). Raising it makes enemies faster / tankier /
    * spawn quicker AND lifts score+loot proportionally (see curseRewardMul). The
    * player nudges it between rounds via the HUD slider; main applies the reward
@@ -245,13 +260,33 @@ export class RoundManager {
     const inflect = ZOMBIE.hpInflection;
     const past = Math.max(0, n - inflect); // rounds past the inflection point
 
-    // HP: additive through the inflection, then compounds ×hpGrowth/round.
+    // HORDE REGIME ramp: 0 below hordeFromRound, climbing linearly 0→1 across
+    // [hordeFromRound, hordeFromRound+hordeRampRounds], pinned at 1 after. This
+    // single 0..1 scalar drives the alive-cap, budget, and HP-discount lerps so
+    // R20 is the ANNOUNCED start of a steep climb — never a one-round step.
+    this.hordeRamp = Math.max(0, Math.min(1, (n - ROUNDS.hordeFromRound) / ROUNDS.hordeRampRounds));
+    const wasActive = this.hordeActive;
+    this.hordeActive = n >= ROUNDS.hordeFromRound;
+    // One-shot "THE HORDE RISES" beat: true ONLY on the exact round the regime
+    // begins (the first beginRound that flips hordeActive on). Cleared otherwise.
+    this.hordeJustRose = this.hordeActive && !wasActive;
+
+    // HP: additive through the inflection, then compounds ×hpGrowth/round. Past
+    // R20 the per-round growth gets a DISCOUNT (hpGrowth*hordeHpGrowthDiscount,
+    // lerped in over the ramp) so time-to-kill drops — a "mow the sea" feel, not
+    // bullet-sponge gridlock. The discount applies ONLY to the rounds spent past
+    // hordeFromRound, so the seam at R20 stays continuous (it equals the plain
+    // curve at R20 and only bends downward after).
     const linHP = ZOMBIE.baseHealth + (n - 1) * ZOMBIE.healthPerRound;
     if (n <= inflect) {
       this.curHealth = linHP;
     } else {
       const baseHP = ZOMBIE.baseHealth + (inflect - 1) * ZOMBIE.healthPerRound;
-      this.curHealth = baseHP * Math.pow(ZOMBIE.hpGrowth, past);
+      // rounds spent in the pre-horde regime (full growth) vs. past R20 (discounted)
+      const hordeRounds = Math.max(0, n - ROUNDS.hordeFromRound);
+      const normalRounds = past - hordeRounds; // rounds past inflection but pre-R20
+      const discounted = ZOMBIE.hpGrowth * ROUNDS.hordeHpGrowthDiscount;
+      this.curHealth = baseHP * Math.pow(ZOMBIE.hpGrowth, normalRounds) * Math.pow(discounted, hordeRounds);
     }
     this.curSpeed = Math.min(ZOMBIE.speedCap, ZOMBIE.baseSpeed + (n - 1) * ZOMBIE.speedPerRound);
 
@@ -259,9 +294,21 @@ export class RoundManager {
     this.curMaxAlive = Math.min(this.maxAliveCeiling, ROUNDS.maxAliveBase + past * ROUNDS.maxAlivePerRound);
     this.curSpawnInterval = Math.max(ROUNDS.spawnIntervalMin, ROUNDS.spawnIntervalBase - past * ROUNDS.spawnIntervalDecay);
 
+    // HORDE REGIME: drive the alive cap HARD toward the (raised) ceiling and fatten
+    // the round's spawn budget so the wall never thins. Both multipliers lerp from
+    // 1.0 at R20 up to their full value at R30, then clamp (alive → maxAliveCeiling,
+    // budget → countCap). Applied BEFORE the swarm/curse/co-op stack so those still
+    // compound on top of the horde-scaled base.
+    let count = Math.min(ROUNDS.countCap, ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound);
+    if (this.hordeActive) {
+      const aliveMul = 1 + (ROUNDS.hordeAliveMul - 1) * this.hordeRamp;
+      const budgetMul = 1 + (ROUNDS.hordeBudgetMul - 1) * this.hordeRamp;
+      this.curMaxAlive = Math.min(this.maxAliveCeiling, Math.round(this.curMaxAlive * aliveMul));
+      count = Math.min(ROUNDS.countCap, Math.round(count * budgetMul));
+    }
+
     // Swarm/dog round: short burst of fast/weak enemies from all sides.
     this.isSwarm = n >= ROUNDS.swarmEvery && n % ROUNDS.swarmEvery === 0 && n % 5 !== 0;
-    let count = Math.min(ROUNDS.countCap, ROUNDS.baseCount + (n - 1) * ROUNDS.countPerRound);
     if (this.isSwarm) {
       count = Math.round(count * 0.7);
       this.curMaxAlive = Math.min(this.maxAliveCeiling + 8, Math.round(this.curMaxAlive * 1.4));
@@ -641,5 +688,8 @@ export class RoundManager {
     this.runTime = 0;
     this.difficultyCoeff = 0;
     this.lastTier = -1;
+    this.hordeActive = false;
+    this.hordeJustRose = false;
+    this.hordeRamp = 0;
   }
 }

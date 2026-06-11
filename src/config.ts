@@ -56,17 +56,49 @@ export const ROUNDS = {
   // queue refills the screen back to curMaxAlive instantly, so the horde never
   // thins until the round's whole budget is spent. (A countCap *below* the alive
   // cap would starve it — the screen could never fill.)
-  countCap: 200, // max zombies a round will spawn (reached ~R50) — feeds a packed screen
+  // countCap was 200 (reached ~R50). The HORDE REGIME (R20+) needs a FATTER
+  // budget so a horde round LASTS — the firehose has to keep refilling a far
+  // bigger screen until the budget drains. Raised to 360: at the horde alive cap
+  // (~230 desktop) a 360-body budget is ~1.5 screen-refills of mowing, which is
+  // the "wade through a sea" feel without dragging a round past ~a minute.
+  countCap: 360, // max zombies a round will spawn — fat enough to sustain the R20+ wall
   intermission: 2.2, // breather between rounds (seconds) — was 4, snappier pacing
   // The three ceilings are ROUND-SCALED: a rising alive-cap + faster spawns keep
   // the screen FULL even as pets clear. Aggressive so late game stays a wall.
   maxAliveBase: 40, // on-screen cap through the inflection round (was 32 — busier mid-game)
   maxAlivePerRound: 9, // +per round past inflection (was 6 — reach the ceiling by ~R22, not R30)
-  maxAliveCap: 170, // desktop ceiling — a genuinely packed screen (mobile uses a lower one, main.ts)
+  // Desktop ceiling RAISED 170 → 230 for the horde regime: ~2× today's effective
+  // mid-20s density. 230 individual voxel rigs is the frame-safe headroom we set
+  // (the adaptive-resolution governor in main.ts absorbs the rest). Mobile uses a
+  // distinctly lower ceiling set in main.ts (96) so phones never approach this.
+  maxAliveCap: 230, // desktop ceiling — a genuinely packed WALL (mobile ceiling is lower, main.ts)
   spawnIntervalBase: 0.7, // seconds between spawns through inflection (was 0.9 — faster early too)
   spawnIntervalMin: 0.11, // floor of the spawn-interval ramp — a firehose that keeps the wall topped up
   spawnIntervalDecay: 0.08, // -per round past inflection (reach the floor by ~R16)
   swarmEvery: 7, // every Nth round is a fast "swarm/dog" round
+
+  // ── HORDE REGIME (round 20+) ──────────────────────────────────────────────
+  // From R20 the game escalates into true horde mode: a much higher alive cap +
+  // a fatter budget so the wall NEVER thins. We do NOT step-function it — R20 is
+  // the ANNOUNCED start of a steep climb that finishes at hordeRampRounds later.
+  // beginRound() lerps a per-round multiplier from 1.0 (at R<20) up to the full
+  // horde multipliers across [hordeFromRound, hordeFromRound+hordeRampRounds].
+  hordeFromRound: 20, // round the horde regime begins (the "THE HORDE RISES" beat)
+  hordeRampRounds: 10, // R20→R30 climb to full horde density (no one-round spike)
+  // Alive-cap multiplier at FULL horde (applied on top of the normal ramp before
+  // the ceiling clamp). 1.6× drives the cap hard into the raised 230 ceiling by
+  // ~R24 and pins it there — the screen stays a wall through the climb's top.
+  hordeAliveMul: 1.6, // ×curMaxAlive at full ramp (clamped by the ceiling)
+  // Budget multiplier at FULL horde: the round's spawn BUDGET is what makes a
+  // horde round LAST. 1.8× a count that's already near countCap keeps the
+  // refill-the-wall loop going long enough to feel like a tide, then clamps.
+  hordeBudgetMul: 1.8, // ×round count budget at full ramp (clamped by countCap)
+  // Past R20 individual zombie HP growth gets a modest DISCOUNT so time-to-kill
+  // drops — with a sea of bodies you want "mowing", not bullet-sponge gridlock.
+  // beginRound() swaps hpGrowth → hpGrowth*hordeHpGrowthDiscount for rounds spent
+  // past hordeFromRound. 0.92 turns the 1.16/round wall into ~1.067/round past
+  // R20: still rising, but ~half the per-round steepening, so DPS keeps pace.
+  hordeHpGrowthDiscount: 0.92, // multiplier on per-round HP growth for rounds past R20
 };
 
 /** The Loot Goblin: a rare fleeing bounty mob that drops a jackpot if you catch

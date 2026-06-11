@@ -288,7 +288,7 @@ class Game implements GameApi {
     this.bullets = new BulletSystem(this.scene);
     if (lowSpec) this.bullets.maxLive = 70; // fewer live tracers on mobile GPUs
     this.rounds = new RoundManager(this.scene, this.assets);
-    if (lowSpec) this.rounds.maxAliveCeiling = 70; // denser late-game horde, still phone-safe
+    if (lowSpec) this.rounds.maxAliveCeiling = 96; // denser late-game horde, still phone-safe
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene, lowSpec);
     this.floaters = new FloatingText(this.scene);
@@ -325,6 +325,11 @@ class Game implements GameApi {
         this.shake = Math.min(0.5, this.shake + 0.25);
       } else {
         this.hud.setScreenTint(null);
+      }
+      // One-shot HORDE REGIME announcement the round the climb begins (R20).
+      if (this.rounds.hordeJustRose) {
+        this.hud.showRoundBanner("☠️ THE HORDE RISES ☠️", "#ff5a3a");
+        this.shake = Math.min(0.6, this.shake + 0.35);
       }
       this.audio.roundStart();
       this.audio.setIntensity(n / 20);
