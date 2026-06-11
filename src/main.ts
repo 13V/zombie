@@ -1010,7 +1010,7 @@ class Game implements GameApi {
 
   private startRun() {
     // leaving the hub for the zombie world: swap scenes back to the arena
-    this.setRenderTier(this._lowSpec ? 1 : 1.5); // the horde is heavy — keep the phone ceiling at 1x
+    this.setRenderTier(this._lowSpec ? 1.3 : 1.5); // start crisp; the governor drops res if a heavy wave needs it
     this.island.setVisible(false);
     this.arena.group.visible = true;
     this.interactables.setVisible(true); // restore the map fixtures for the run
