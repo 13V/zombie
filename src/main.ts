@@ -288,7 +288,7 @@ class Game implements GameApi {
     this.bullets = new BulletSystem(this.scene);
     if (lowSpec) this.bullets.maxLive = 70; // fewer live tracers on mobile GPUs
     this.rounds = new RoundManager(this.scene, this.assets);
-    if (lowSpec) this.rounds.maxAliveCeiling = 96; // denser late-game horde, still phone-safe
+    if (lowSpec) this.rounds.maxAliveCeiling = 84; // dense horde wall, trimmed for phone draw-call budget
     this.interactables = new Interactables(this.scene, this.arena.half);
     this.puffs = new Puffs(this.scene, lowSpec);
     this.floaters = new FloatingText(this.scene);
@@ -330,6 +330,9 @@ class Game implements GameApi {
       if (this.rounds.hordeJustRose) {
         this.hud.showRoundBanner("☠️ THE HORDE RISES ☠️", "#ff5a3a");
         this.shake = Math.min(0.6, this.shake + 0.35);
+        // Proactively shed a step of internal resolution on phones so the
+        // density spike doesn't stall before the governor reacts.
+        if (this._lowSpec && this._dprScale > 0.7) { this._dprScale -= 0.2; this.applyPixelRatio(); }
       }
       this.audio.roundStart();
       this.audio.setIntensity(n / 20);
@@ -1318,6 +1321,10 @@ class Game implements GameApi {
       stop();
       console.error("[coop] join failed:", e);
       this.teardownNet();
+      // Clear the gather/portal latch so the hub stays interactive after a failed
+      // join (otherwise simulateIsland's portal guard freezes all interaction).
+      this._portalStarting = false;
+      this._gatherPortal = "";
       this.hud.setLobbyStatus("Couldn't join — check the code, or the server may be down.");
     }
   }
@@ -1541,10 +1548,15 @@ class Game implements GameApi {
   private governFrameBudget(dt: number) {
     this._ftSmooth += (dt - this._ftSmooth) * 0.05;
     this._adaptT += dt;
-    if (this._adaptT < 1.5) return; // adjust at most every 1.5s (no thrash)
+    // React FASTER when frames are badly over budget (e.g. the horde-rise spike):
+    // a hard overrun (>~30fps sustained) may step down after 0.5s, not the full
+    // 1.5s, so the heaviest moments don't stall for seconds before adapting.
+    const hardOverrun = this._ftSmooth > 0.033;
+    const minInterval = hardOverrun ? 0.5 : 1.5;
+    if (this._adaptT < minInterval) return;
     if (this._ftSmooth > 0.026 && this._dprScale > 0.55) {
-      // sustained under ~38fps → drop internal res a step
-      this._dprScale = Math.max(0.55, this._dprScale - 0.15);
+      // sustained under ~38fps → drop internal res (a bigger step on a hard overrun)
+      this._dprScale = Math.max(0.55, this._dprScale - (hardOverrun ? 0.2 : 0.15));
       this.applyPixelRatio();
       this._adaptT = 0;
     } else if (this._ftSmooth < 0.0168 && this._dprScale < 1) {
@@ -1652,6 +1664,7 @@ class Game implements GameApi {
   private enterBedWars() {
     if (!this.bw) this.bw = new BedWarsMode(this.scene);
     this.disconnectIslandPresence();
+    this.setRenderTier(this._lowSpec ? 1.4 : 2); // crisp start; parity with enterTd/enterIsland
     this.island.setVisible(false);
     this.arena.group.visible = false;
     this.interactables.setVisible(false);

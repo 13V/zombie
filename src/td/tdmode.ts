@@ -482,7 +482,7 @@ export class TdMode {
     const now = this._tAnim;
     for (const [id, p] of this.poison) {
       if (now >= p.until) { this.poison.delete(id); continue; }
-      this.creeps.damage(id, p.dps * dt, true); // poison/burn ignores armor
+      this.creeps.damage(id, p.dps * dt, true); // poison/burn ignores armor (no-op if reaped)
       p.puff -= dt;
       if (p.puff <= 0) {
         p.puff = 0.4;
