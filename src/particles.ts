@@ -30,13 +30,19 @@ export class Sparks {
   private lowSpec: boolean;
   // unit shard — a thin long box; stretched along velocity when streaking
   private geo = new THREE.BoxGeometry(0.08, 0.08, 0.5);
+  // Persistent container: every pooled shard is parented here ONCE (at make()),
+  // so activating/retiring a spark just toggles `mesh.visible` instead of
+  // mutating the scene graph every burst (which is exactly during the horde,
+  // when FPS matters most). Inactive shards stay visible=false → no draw cost.
+  private container = new THREE.Group();
   // scratch reused every orient to avoid per-particle allocs
   private _q = new THREE.Quaternion();
   private _dir = new THREE.Vector3();
 
-  constructor(private scene: THREE.Scene, lowSpec = false) {
+  constructor(scene: THREE.Scene, lowSpec = false) {
     this.lowSpec = lowSpec;
-    this.cap = lowSpec ? 90 : 220;
+    this.cap = lowSpec ? 80 : 220; // modest LOW_TIER trim (was 90)
+    scene.add(this.container);
   }
 
   /**
@@ -81,8 +87,7 @@ export class Sparks {
       s.life = s.maxLife = 0.32 + Math.random() * 0.28;
 
       this.applyTransform(s);
-      s.mesh.visible = true;
-      this.scene.add(s.mesh);
+      s.mesh.visible = true; // already parented to the container (see make())
       this.active.push(s);
     }
   }
@@ -150,12 +155,14 @@ export class Sparks {
       toneMapped: false,
     });
     const mesh = new THREE.Mesh(this.geo, mat);
+    mesh.visible = false; // parented once, hidden until a burst activates it
+    this.container.add(mesh);
     return { mesh, vel: new THREE.Vector3(), life: 0, maxLife: 0, gravity: 16, streak: false, size: 1 };
   }
 
   private retire(s: Spark) {
+    // Stays parented to the container — just hide it (no scene-graph churn).
     s.mesh.visible = false;
-    this.scene.remove(s.mesh);
     this.pool.push(s);
   }
 }

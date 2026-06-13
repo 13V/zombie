@@ -2,6 +2,16 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { WORLD } from "./config";
 import { VOX, voxelMaterial, glowMaterial } from "./palette";
+import { isTouchDevice } from "./touchControls";
+
+// LOW_TIER (mobile/touch) signal — same as used elsewhere in the game. On
+// mobile the horde is draw-call/fragment bound and three.js forward-renders
+// EVERY dynamic PointLight into EVERY Lambert fragment with no culling, so the
+// handful of decorative camp lights multiply per-pixel cost across the whole
+// field. We skip those decorative point lights on mobile (keeping their
+// emissive glow meshes, which self-illuminate and read fine without a real
+// light), and keep the key Directional + Hemisphere lights everywhere.
+const LOW_TIER = isTouchDevice();
 
 /** Axis-aligned box footprint that the player + zombies are pushed out of. */
 interface Obstacle {
@@ -779,11 +789,15 @@ export class Arena {
       props.add(x + 0.45, 1.6, z, VOX.steelDark, 0.07, 0.18, 0.07);
       const pane = this.glowBox(0.26, 0.3, 0.26, x + 0.45, 1.4, z, VOX.lantern, 1.2);
       props.add(x + 0.45, 1.58, z, VOX.steelDark, 0.32, 0.07, 0.32);
-      const light = new THREE.PointLight(0xffa258, 2.4, 7.5, 2);
-      light.position.set(x + 0.45, 1.5, z);
-      this.group.add(light);
+      // The emissive lantern pane always flickers (self-lit, cheap). The real
+      // PointLight is decorative and skipped on mobile (LOW_TIER).
       this.flickers.push({ mat: pane.material as THREE.MeshStandardMaterial, base: 1.2, speed: 7, phase: x });
-      this.flickers.push({ light, base: 2.4, speed: 9, phase: z });
+      if (!LOW_TIER) {
+        const light = new THREE.PointLight(0xffa258, 2.4, 7.5, 2);
+        light.position.set(x + 0.45, 1.5, z);
+        this.group.add(light);
+        this.flickers.push({ light, base: 2.4, speed: 9, phase: z });
+      }
     }
   }
 
@@ -902,7 +916,10 @@ export class Arena {
       }
       // mossy stones the shrooms feed on
       props.add(x + 0.5, 0.14, z - 0.3, VOX.rockDark, 0.4, 0.24, 0.4, 0, Math.random(), 0);
-      if (lit) {
+      // The shroom caps are emissive glow meshes (added above), so the cluster
+      // still reads as eerie teal without a real light. The decorative
+      // PointLight is skipped on mobile (LOW_TIER).
+      if (lit && !LOW_TIER) {
         const l = new THREE.PointLight(0x59e0c0, 1.5, 6, 2);
         l.position.set(x, 0.8, z);
         this.group.add(l);
@@ -1078,10 +1095,14 @@ export class Arena {
       this.flames.push({ mesh: m, baseY: 0.75 + f * 0.12, phase: f * 1.3 });
     }
     // The warm heart of the night map — a wider, richer pool of firelight.
-    const light = new THREE.PointLight(0xff8a3a, 5.5, 11, 2);
-    light.position.set(x, 1.3, z);
-    this.group.add(light);
-    this.flickers.push({ light, base: 5.5, speed: 13, phase: 0.7 });
+    // The emissive flame glow boxes (added above) keep the fire visibly lit;
+    // the decorative PointLight is skipped on mobile (LOW_TIER).
+    if (!LOW_TIER) {
+      const light = new THREE.PointLight(0xff8a3a, 5.5, 11, 2);
+      light.position.set(x, 1.3, z);
+      this.group.add(light);
+      this.flickers.push({ light, base: 5.5, speed: 13, phase: 0.7 });
+    }
     this.registerSmoke(x, 1.5, z);
     this.obstacles.push({ minX: x - 0.9, maxX: x + 0.9, minZ: z - 0.9, maxZ: z + 0.9 });
   }

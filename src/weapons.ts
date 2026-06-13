@@ -239,8 +239,15 @@ export class BulletSystem {
   private pool: Bullet[] = [];
   // A stretched capsule reads as a whizzing tracer once aligned to velocity.
   private geo = new THREE.CapsuleGeometry(0.07, 0.5, 4, 8);
+  // Persistent container: every bullet mesh is parented here ONCE (the first
+  // time it's created in spawn()), so activating/retiring a tracer just toggles
+  // `mesh.visible` instead of scene.add/remove every shot. That avoids
+  // scene-graph churn during the exact moment FPS matters (the horde).
+  private container = new THREE.Group();
 
-  constructor(private scene: THREE.Scene) {}
+  constructor(scene: THREE.Scene) {
+    scene.add(this.container);
+  }
 
   /** Hard cap on live tracers — bounds the O(bullets×zombies) collision pass
    *  AND the per-frame render/homing load. Lowered on mobile. */
@@ -257,6 +264,8 @@ export class BulletSystem {
     if (!b) {
       const mesh = new THREE.Mesh(this.geo, glowMaterial(opts.color, 1.8));
       mesh.castShadow = false;
+      mesh.visible = false; // parented once below, shown when activated
+      this.container.add(mesh);
       b = {
         mesh, vel: new THREE.Vector3(), life: 0, damage: 0, alive: false,
         pierce: 0, splashRadius: 0, splashDamage: 0, homing: 0, bounces: 0, knockback: 0, fromPet: false,
@@ -284,15 +293,14 @@ export class BulletSystem {
     b.mesh.scale.set(opts.scale, opts.scale * 1.4, opts.scale);
     // Orient the capsule's long (Y) axis along the flight direction.
     b.mesh.quaternion.setFromUnitVectors(_UP, _dir.copy(b.vel).normalize());
-    this.scene.add(b.mesh);
+    // Already parented to the container — visibility toggle is the activation.
     this.bullets.push(b);
   }
 
   retire(b: Bullet) {
     if (!b.alive) return;
     b.alive = false;
-    b.mesh.visible = false;
-    this.scene.remove(b.mesh);
+    b.mesh.visible = false; // stays parented to the container; just hidden
     // NOTE: do NOT pool here. The bullet is still in `this.bullets` until the
     // splice in update(); pooling now would let spawn() re-pop it and push a
     // duplicate reference into `bullets` (array grows unbounded → FPS death).
@@ -321,8 +329,7 @@ export class BulletSystem {
   clear() {
     for (const b of this.bullets) {
       b.alive = false;
-      b.mesh.visible = false;
-      this.scene.remove(b.mesh);
+      b.mesh.visible = false; // stays parented to the container; just hidden
       this.pool.push(b);
     }
     this.bullets.length = 0;
