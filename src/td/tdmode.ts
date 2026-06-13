@@ -83,6 +83,9 @@ export class TdMode {
   private ring: THREE.Mesh;                    // range preview around the nearest tower
 
   mode: TdGameMode = "solo";
+  /** Optional leave hook — fired by the HUD's on-screen "✕ Leave" button so
+   *  touch players (no Escape key) can quit. main sets this to its leaveTd(). */
+  onLeave?: () => void;
   private duel?: DuelState;
   private duelDifficulty = 0.5;
   private pendingBotSends: TdSpawnSpec[] = [];
@@ -1087,6 +1090,7 @@ export class TdMode {
       onSell: () => { if (this._curPad >= 0) this.sell(this._curPad); },
       onTarget: () => { if (this._curPad >= 0) this.cycleTarget(this._curPad); },
       onCall: () => this.startNextWave(),
+      onLeave: () => this.onLeave?.(),
     });
     this.ui.setTowers(TD_TOWER_IDS.map((id, i) => ({
       name: TD_TOWERS[id].name, cost: TD_TOWERS[id].cost, key: String(i + 1),

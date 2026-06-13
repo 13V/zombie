@@ -304,6 +304,7 @@ class Game implements GameApi {
     addEventListener("keydown", unlock, { once: true });
     this.audio.setEnabled(!this.save.muted);
     this.music.setEnabled(!this.save.muted);
+    this.music.setVolume(this.save.musicVolume); // restore the saved music volume
 
     // Menu progression UI (best run + Essence shop) + equipped cosmetic skin.
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
@@ -1025,6 +1026,7 @@ class Game implements GameApi {
     this.setLocalAura(0); this.setLocalPlate(false); // drop the lobby cosmetics for the run
     this.hud.setIslandMode(false);
     this.hud.hidePrompt();
+    this.hud.hideTdModeSelect();          // dismiss the gateway mode-select panel
     this.hud.setIslandPopulation(-1);     // no social chip during a run
     this.emoteMenu?.setAvailable(false);  // no island emote button in combat
     this.resetRun();
@@ -1573,8 +1575,8 @@ class Game implements GameApi {
     this.governFrameBudget(dt);
 
     if (this.input.pressed("KeyP") || this.input.pressed("Escape")) {
-      if (this.state === "playing") this.state = "paused";
-      else if (this.state === "paused") this.state = "playing";
+      if (this.state === "playing") this.pauseGame();
+      else if (this.state === "paused") this.resumeGame();
     }
     if (this.input.pressed("KeyF") && this.state === "playing" && this.nukeCharge >= 1) {
       this.nukeCharge = 0;
@@ -1582,12 +1584,7 @@ class Game implements GameApi {
       this.zoomPunch = 1;
       this.floaters.spawn(this.player.pos, "NUKE!", "#ff7a3a", 1.6, true);
     }
-    if (this.input.pressed("KeyM")) {
-      this.audio.setEnabled(!this.audio.enabled);
-      this.save.muted = !this.audio.enabled;
-      this.music.setEnabled(!this.save.muted); // music follows the master mute
-      writeSave(this.save);
-    }
+    if (this.input.pressed("KeyM")) this.toggleMasterMute();
 
     // Level-up picker: keyboard shortcuts (1/2/3 to pick, R to reroll).
     if (this.state === "levelup") {
@@ -1659,10 +1656,53 @@ class Game implements GameApi {
     this.input.endFrame();
   };
 
+  /** Flip the master mute (audio + music follows) and persist it. Returns the
+   *  new muted state so callers (e.g. the pause menu toggle) can update labels. */
+  private toggleMasterMute(): boolean {
+    this.audio.setEnabled(!this.audio.enabled);
+    this.save.muted = !this.audio.enabled;
+    this.music.setEnabled(!this.save.muted); // music follows the master mute
+    writeSave(this.save);
+    return this.save.muted;
+  }
+
+  /** Pause the run and raise the pause/settings overlay (RESUME · QUIT · mute ·
+   *  music volume). Reachable on desktop (P/Escape) and mobile (touch Pause btn).
+   *  Quit leaves the run cleanly to the hub (toMenu → menu, then enterIsland). */
+  private pauseGame() {
+    this.state = "paused";
+    this.hud.showPause({
+      muted: this.save.muted,
+      volume: this.save.musicVolume,
+      onResume: () => this.resumeGame(),
+      onQuit: () => this.quitRunToIsland(),
+      onToggleMute: () => this.toggleMasterMute(),
+      onVolume: (v) => {
+        this.save.musicVolume = v;
+        this.music.setVolume(v);
+        writeSave(this.save);
+      },
+    });
+  }
+
+  /** Dismiss the pause overlay and resume play. */
+  private resumeGame() {
+    this.hud.hidePause();
+    if (this.state === "paused") this.state = "playing";
+  }
+
+  /** Quit the active run from the pause menu: tear the run down like a normal
+   *  exit (toMenu settles net + resets), then drop the player back in the hub. */
+  private quitRunToIsland() {
+    this.hud.hidePause();
+    this.toMenu();        // clean teardown: disconnect net, resetRun, show menu state
+    this.enterIsland();   // …then hop straight into the island hub
+  }
+
   /** Enter the Bed Wars-lite mode (vertical slice): hide hub/arena, load the BW
    *  world, spawn on your team island, resources start ticking. */
   private enterBedWars() {
-    if (!this.bw) this.bw = new BedWarsMode(this.scene);
+    if (!this.bw) this.bw = new BedWarsMode(this.scene, () => this.leaveBedWars()); // on-screen "✕ Leave" (mobile)
     this.disconnectIslandPresence();
     this.setRenderTier(this._lowSpec ? 1.4 : 2); // crisp start; parity with enterTd/enterIsland
     this.island.setVisible(false);
@@ -1671,6 +1711,7 @@ class Game implements GameApi {
     this.setLocalAura(0); this.setLocalPlate(false);
     this.hud.hideEggPanel();
     this.hud.hidePrompt();
+    this.hud.hideTdModeSelect();  // dismiss the gateway mode-select panel
     this.hud.hideCombatHud(true); // hide combat HUD; BW draws its own resource HUD
     this.hud.setIslandPopulation(-1); // drop the "N players here" presence chip
     this.emoteMenu?.setAvailable(false); // hide the island emote button (T = upgrades here)
@@ -1696,12 +1737,27 @@ class Game implements GameApi {
     this.enterIsland();
   }
 
+  /** Gate the wager variant behind an honest confirm dialog (stake / payout /
+   *  90-10 House rake / mid-match forfeit warning) before any gold leaves the
+   *  balance; every other variant enters straight away. All TD entry points go
+   *  through here so the confirm can never be bypassed. */
+  private requestTd(kind: "solo" | "duel" | "endless" | "daily" | "wager") {
+    if (kind !== "wager") { this.enterTd(kind); return; }
+    const stake = WAGER_STAKES[1]; // 250g table for v1 (matches enterTd)
+    this.hud.hideTdModeSelect();
+    this.hud.showWagerConfirm(
+      { stake, payout: wagerPayout(stake), fee: stake * 2 - wagerPayout(stake), canAfford: this.save.gold >= stake },
+      () => this.enterTd("wager"),
+    );
+  }
+
   /** Enter Tower-Defense: hide hub/arena, load the TD field; you're the engineer
    *  who walks between pads raising towers while waves march your lane.
    *  Variants: solo (18 waves) · duel (vs AI) · endless · daily (seeded, one
    *  attempt/day) · wager (a gold-staked duel — 90% of the pot to the winner). */
   private enterTd(kind: "solo" | "duel" | "endless" | "daily" | "wager" = "solo") {
     if (!this.td) this.td = new TdMode(this.scene);
+    this.td.onLeave = () => this.leaveTd(); // on-screen "✕ Leave" → clean quit (mobile has no Escape)
     this._tdIsDaily = false;
     this._tdWager = null;
     let mode: "solo" | "duel" = "solo";
@@ -1731,7 +1787,7 @@ class Game implements GameApi {
       writeSave(this.save);
       this._tdWager = createWager(stake, "you", "treasury-bot");
       mode = "duel";
-      this.hud.toast(`💰 ${stake}g staked — win the duel for ${wagerPayout(stake)}g`);
+      this.hud.toast(`💰 ${stake}g staked vs the House — win the duel for ${wagerPayout(stake)}g`);
     }
     this.disconnectIslandPresence();
     this.island.setVisible(false);
@@ -1740,6 +1796,7 @@ class Game implements GameApi {
     this.setLocalAura(0); this.setLocalPlate(false);
     this.hud.hideEggPanel();
     this.hud.hidePrompt();
+    this.hud.hideTdModeSelect();      // dismiss the gateway mode-select panel
     this.hud.hideCombatHud(true);     // hide combat HUD; TD draws its own
     this.hud.setIslandPopulation(-1); // drop the island presence chip
     this.emoteMenu?.setAvailable(false);
@@ -1777,9 +1834,9 @@ class Game implements GameApi {
       if (won) {
         this.save.gold += r.payout;
         this.save.goldEarned += r.payout;
-        this.hud.toast(`💰 Wager won  +${r.payout} 🪙 (treasury kept ${r.fee})`);
+        this.hud.toast(`💰 Wager won  +${r.payout} 🪙 (the House kept ${r.fee})`);
       } else {
-        this.hud.toast(td.result.over ? `💸 Wager lost — ${this._tdWager.stake} 🪙 to the pot` : "💸 Left the table — stake forfeited");
+        this.hud.toast(td.result.over ? `💸 Wager lost — ${this._tdWager.stake} 🪙 to the House` : "💸 Left the table — stake forfeited");
       }
       this._tdWager = null;
     }
@@ -2193,25 +2250,33 @@ class Game implements GameApi {
       );
       this.hud.showPrompt(`Hatch ${egg.name} — ${egg.cost.toLocaleString()}g  [E]`, affordable);
     } else if (near?.kind === "td") {
-      // Tower Defense gateway auto-enters Solo; number keys pick a variant.
+      // Tower Defense gateway: a TAP/CLICK mode-select panel (so mobile can reach
+      // Duel/Endless/Daily/Wager — they used to be number-key-only). NO dwell
+      // auto-enter here; the player explicitly chooses. Desktop number keys 1-5
+      // still work as shortcuts. Wager routes through an honest confirm dialog.
       this.hud.hideEggPanel();
+      this.hud.hidePrompt();
       const dailyDone = !tdDailyAvailable(this.save.tdDailyDay, tdDailyDay());
-      this.hud.showPrompt(
-        `Tower Defense ${bar} entering Solo · 2: Duel · 3: Endless (best ${this.save.bestWave}) · 4: Daily${dailyDone ? " ✓" : ""} · 5: Wager ${WAGER_STAKES[1]}g`,
-        true,
+      const wagerStake = WAGER_STAKES[1];
+      this.hud.showTdModeSelect(
+        { bestWave: this.save.bestWave, dailyDone, wagerStake, canWager: this.save.gold >= wagerStake },
+        (kind) => { this._dwellTime = 0; this._dwellZone = ""; this.requestTd(kind); },
       );
-      if (this.input.pressed("Digit2")) { this._dwellTime = 0; this.enterTd("duel"); return; }
-      if (this.input.pressed("Digit3")) { this._dwellTime = 0; this.enterTd("endless"); return; }
-      if (this.input.pressed("Digit4")) { this._dwellTime = 0; this.enterTd("daily"); return; }
-      if (this.input.pressed("Digit5")) { this._dwellTime = 0; this.enterTd("wager"); return; }
-      if (ready) { this._dwellTime = 0; this.enterTd("solo"); return; }
+      if (this.input.pressed("Digit1")) { this._dwellTime = 0; this.requestTd("solo"); return; }
+      if (this.input.pressed("Digit2")) { this._dwellTime = 0; this.requestTd("duel"); return; }
+      if (this.input.pressed("Digit3")) { this._dwellTime = 0; this.requestTd("endless"); return; }
+      if (this.input.pressed("Digit4")) { this._dwellTime = 0; this.requestTd("daily"); return; }
+      if (this.input.pressed("Digit5")) { this._dwellTime = 0; this.requestTd("wager"); return; }
+      return; // don't fall through to the generic E-to-activate (panel owns entry)
     } else if (autoPortal && near) {
       // zombie mode portals + the Bed Wars portal: charge, then launch.
       this.hud.hideEggPanel();
+      this.hud.hideTdModeSelect();
       this.hud.showPrompt(`${near.label} ${bar}  (walk off to cancel)`, true);
       if (ready) { this._dwellTime = 0; this._dwellZone = ""; this.activateIslandZone(near); return; }
     } else {
       this.hud.hideEggPanel();
+      this.hud.hideTdModeSelect();
       if (near) this.hud.showPrompt(near.label + "  [E]", true);
       else this.hud.hidePrompt();
     }

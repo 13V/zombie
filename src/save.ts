@@ -85,6 +85,7 @@ export interface SaveData {
   benchedPets: string[]; // combat pet ids the player has manually benched (not in the active squad)
   stats: LifetimeStats;
   muted: boolean;
+  musicVolume: number; // music volume 0..1 (the pause-menu slider; default 0.5)
 }
 
 const KEY = "tinydead.save.v1";
@@ -137,6 +138,7 @@ function blank(): SaveData {
     benchedPets: [],
     stats: blankStats(),
     muted: false,
+    musicVolume: 0.5,
   };
 }
 
@@ -280,6 +282,8 @@ export function loadSave(): SaveData {
         games: num(data.stats?.games),
       },
       muted: !!data.muted,
+      // music volume 0..1; clamp a forged/out-of-range value to the default
+      musicVolume: Math.min(1, num(data.musicVolume, 0.5)),
     };
   } catch {
     return blank();

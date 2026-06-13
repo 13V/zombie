@@ -70,6 +70,7 @@ export class BedWarsMode {
   private readonly playerId = 1;
   private active = false;
   private hud?: HTMLElement;
+  private leaveBtn?: HTMLElement; // on-screen "✕ Leave" (mobile soft-lock fix)
   private shop?: BwShopUI;
   private upgUI?: BwUpgradeUI;
   private waveTimer = WAVE_START;
@@ -102,7 +103,12 @@ export class BedWarsMode {
 
   result: { over: boolean; win: boolean } = { over: false, win: false };
 
-  constructor(scene: THREE.Scene) {
+  /** Optional leave hook — fired by the on-screen "✕ Leave" button so touch
+   *  players (no Escape key) can quit. main passes its leaveBedWars(). */
+  onLeave?: () => void;
+
+  constructor(scene: THREE.Scene, onLeave?: () => void) {
+    this.onLeave = onLeave;
     this.map = new BedWarsMap(scene);
     this.match = createMatch([]);
     this.bots = new BwBots(scene);
@@ -202,6 +208,8 @@ export class BedWarsMode {
     this.upgUI?.close();
     this.hud?.remove();
     this.hud = undefined;
+    this.leaveBtn?.remove();
+    this.leaveBtn = undefined;
   }
 
   // ── diamond / emerald gem generators (walk-to-collect) ─────────────────────
@@ -625,10 +633,20 @@ export class BedWarsMode {
   // ── resource + status HUD ──
   private buildHud() {
     if (this.hud) return;
+    const parent = document.getElementById("ui") ?? document.body;
     const el = document.createElement("div");
     el.id = "bw-res";
-    (document.getElementById("ui") ?? document.body).appendChild(el);
+    parent.appendChild(el);
     this.hud = el;
+    // Always-visible on-screen leave button (mobile has no Escape key). Reuses
+    // the shared .mode-leave styling; tappable (pointer-events:auto via the class).
+    const leave = document.createElement("button");
+    leave.className = "mode-leave";
+    leave.type = "button";
+    leave.textContent = "✕ Leave";
+    leave.addEventListener("click", () => this.onLeave?.());
+    parent.appendChild(leave);
+    this.leaveBtn = leave;
     this.refreshHud();
   }
   private flashTrapHud(trap: BwTrapId) {

@@ -1332,6 +1332,154 @@ export class Hud {
     ov.style.display = "flex";
   }
 
+  // ── PAUSE / SETTINGS overlay ───────────────────────────────────────────────
+  // A full-screen pause menu shown whenever the game state is "paused". Works on
+  // desktop (P/Escape) AND mobile (the touch Pause button). The overlay sits at
+  // z-index 60 (above the touch joystick layer at 30) with pointer-events:auto so
+  // its buttons/slider are tappable. Built once, then re-shown; the live controls
+  // are wired on each show() so the callbacks always target the current run.
+  private pauseEl?: HTMLElement;
+  private pauseMuteBtn?: HTMLButtonElement;
+  /**
+   * Show the pause/settings overlay. `muted` seeds the mute toggle; `volume`
+   * (0..1) seeds the music slider. Callbacks fire live as the player interacts:
+   *   onResume       — dismiss + unpause
+   *   onQuit         — leave the run cleanly back to the island hub
+   *   onToggleMute   — flip the master mute (returns the NEW muted state for the label)
+   *   onVolume(v)    — set music volume (0..1)
+   */
+  showPause(opts: {
+    muted: boolean;
+    volume: number;
+    onResume: () => void;
+    onQuit: () => void;
+    onToggleMute: () => boolean;
+    onVolume: (v: number) => void;
+  }) {
+    const ov = this.overlayShell("overlay-pause");
+    // user-select:none on the shell avoids the iOS Copy bubble on long-press.
+    ov.style.userSelect = "none";
+    (ov.style as CSSStyleDeclaration & { webkitUserSelect?: string }).webkitUserSelect = "none";
+    ov.innerHTML =
+      `<div class="pause-card">` +
+        `<div class="pause-title">PAUSED</div>` +
+        `<button class="pause-btn pause-resume" id="btn-pause-resume">▶ Resume</button>` +
+        `<div class="pause-settings">` +
+          `<button class="pause-toggle" id="btn-pause-mute">${opts.muted ? "🔇 Sound: Off" : "🔊 Sound: On"}</button>` +
+          `<label class="pause-vol">` +
+            `<span>🎵 Music</span>` +
+            `<input type="range" id="pause-vol-slider" min="0" max="100" value="${Math.round(opts.volume * 100)}" />` +
+          `</label>` +
+        `</div>` +
+        `<button class="pause-btn pause-quit" id="btn-pause-quit">✕ Quit to Island</button>` +
+      `</div>`;
+    this.pauseEl = ov;
+    this.pauseMuteBtn = ov.querySelector("#btn-pause-mute") as HTMLButtonElement;
+    (ov.querySelector("#btn-pause-resume") as HTMLButtonElement).onclick = () => opts.onResume();
+    (ov.querySelector("#btn-pause-quit") as HTMLButtonElement).onclick = () => opts.onQuit();
+    this.pauseMuteBtn.onclick = () => {
+      const nowMuted = opts.onToggleMute();
+      if (this.pauseMuteBtn) this.pauseMuteBtn.textContent = nowMuted ? "🔇 Sound: Off" : "🔊 Sound: On";
+    };
+    const slider = ov.querySelector("#pause-vol-slider") as HTMLInputElement;
+    slider.oninput = () => opts.onVolume(Math.max(0, Math.min(1, Number(slider.value) / 100)));
+    ov.style.display = "flex";
+  }
+  hidePause() {
+    if (this.pauseEl) this.pauseEl.style.display = "none";
+  }
+  /** True while the pause overlay is on screen (lets the loop avoid re-binding it). */
+  get pauseOpen(): boolean {
+    return this.pauseEl?.style.display === "flex";
+  }
+
+  // ── TD MODE-SELECT panel (item 3) ──────────────────────────────────────────
+  // A tap/click menu shown at the Tower Defense gateway so mobile players can
+  // pick a variant (number keys still work on desktop as shortcuts). Lives in a
+  // pointer-events:none container (so the joystick works in empty space) with
+  // pointer-events:auto buttons. Rebuilt only when its signature changes.
+  private tdModeEl?: HTMLElement;
+  private tdModeSig = "";
+  showTdModeSelect(
+    info: { bestWave: number; dailyDone: boolean; wagerStake: number; canWager: boolean },
+    onPick: (kind: "solo" | "duel" | "endless" | "daily" | "wager") => void,
+  ) {
+    if (!this.tdModeEl) {
+      this.tdModeEl = document.createElement("div");
+      this.tdModeEl.id = "td-modeselect";
+      this.root.appendChild(this.tdModeEl);
+    }
+    const el = this.tdModeEl;
+    const sig = `${info.bestWave}|${info.dailyDone}|${info.wagerStake}|${info.canWager}`;
+    if (sig !== this.tdModeSig) {
+      this.tdModeSig = sig;
+      const btn = (kind: string, key: string, name: string, sub: string, cls = "") =>
+        `<button class="tdm-btn ${cls}" data-kind="${kind}" type="button">` +
+        `<span class="tdm-key">${key}</span><span class="tdm-name">${name}</span>` +
+        `<span class="tdm-sub">${sub}</span></button>`;
+      el.innerHTML =
+        `<div class="tdm-title">🗼 Tower Defense — pick a mode</div>` +
+        `<div class="tdm-row">` +
+          btn("solo", "1", "Solo", "18 waves") +
+          btn("duel", "2", "Duel", "vs the House") +
+          btn("endless", "3", "Endless", `best ${info.bestWave}`) +
+          btn("daily", "4", "Daily", info.dailyDone ? "✓ done" : "1/day", info.dailyDone ? "tdm-done" : "") +
+          btn("wager", "5", "Wager", `${info.wagerStake}🪙 gold`, "tdm-wager") +
+        `</div>`;
+      el.querySelectorAll<HTMLButtonElement>(".tdm-btn").forEach((b) => {
+        b.addEventListener("click", () => onPick(b.dataset.kind as "solo" | "duel" | "endless" | "daily" | "wager"));
+      });
+    }
+    el.classList.add("show");
+  }
+  hideTdModeSelect() {
+    this.tdModeEl?.classList.remove("show");
+  }
+  get tdModeSelectOpen(): boolean {
+    return !!this.tdModeEl?.classList.contains("show");
+  }
+
+  // ── WAGER CONFIRM (item 4) ──────────────────────────────────────────────────
+  /** Honest, explicit confirm before staking GOLD on a duel "vs the House".
+   *  Spells out stake, win payout, the 90/10 treasury split, and the mid-match
+   *  forfeit rule. Only `onConfirm` deducts + starts. Reuses the prestige-confirm
+   *  overlay pattern (z-index 60, pointer-events:auto — tappable on mobile). */
+  showWagerConfirm(
+    info: { stake: number; payout: number; fee: number; canAfford: boolean },
+    onConfirm: () => void,
+  ) {
+    const ov = this.overlayShell("overlay-wager");
+    ov.style.userSelect = "none";
+    (ov.style as CSSStyleDeclaration & { webkitUserSelect?: string }).webkitUserSelect = "none";
+    const can = info.canAfford;
+    ov.innerHTML =
+      `<div style="font-size:30px;font-weight:800;letter-spacing:1px;">💰 Gold Wager</div>` +
+      `<div style="opacity:0.85;max-width:420px;">A 1v1 Tower-Defense duel <b>vs the House</b> (an AI rival). This stakes <b>GOLD</b>, not SOL — on-chain SOL wagers are coming later.</div>` +
+      `<div style="font-size:16px;opacity:0.95;line-height:1.7;margin-top:2px;">` +
+        `Your stake: <b style="color:#ffd24a;">${info.stake.toLocaleString()} 🪙</b><br>` +
+        `Win the duel: <b style="color:#7be08a;">+${info.payout.toLocaleString()} 🪙</b><br>` +
+        `<span style="opacity:0.8;">The House keeps a 10% rake (${info.fee.toLocaleString()} 🪙 of the pot).</span>` +
+      `</div>` +
+      `<div style="font-size:14px;color:#ff9c8c;max-width:420px;font-weight:700;">⚠ Leaving mid-match FORFEITS your stake.</div>` +
+      (can ? "" : `<div style="font-size:14px;color:#ff8a7a;">Not enough gold to sit at this table.</div>`) +
+      `<div style="display:flex;gap:12px;margin-top:8px;">` +
+        `<button id="btn-wager-go" ${can ? "" : "disabled"} style="padding:12px 28px;font:inherit;font-weight:700;` +
+        `cursor:${can ? "pointer" : "not-allowed"};border:none;border-radius:10px;` +
+        `background:${can ? "#ffd24a" : "#555"};color:${can ? "#2a2208" : "#aaa"};">Stake ${info.stake} 🪙</button>` +
+        `<button id="btn-wager-cancel" style="padding:12px 28px;font:inherit;font-weight:700;cursor:pointer;` +
+        `border:none;border-radius:10px;background:#3a3f4a;color:#f4f4f4;">Cancel</button>` +
+      `</div>`;
+    const close = () => { ov.style.display = "none"; };
+    if (can) {
+      (ov.querySelector("#btn-wager-go") as HTMLButtonElement).onclick = () => { close(); onConfirm(); };
+    }
+    (ov.querySelector("#btn-wager-cancel") as HTMLButtonElement).onclick = close;
+    ov.style.display = "flex";
+  }
+  get wagerConfirmOpen(): boolean {
+    return document.getElementById("overlay-wager")?.style.display === "flex";
+  }
+
   /** Login-streak chip: 🔥 N-day count + a tiny ❄ marker per banked freeze. */
   setStreak(count: number, freezes: number) {
     this.q("#streak-count").textContent = String(count);

@@ -87,6 +87,8 @@ export interface TdHudOpts {
   onUpgrade?: () => void;
   onSell?: () => void;
   onTarget?: () => void;
+  /** Always-visible "✕ Leave" button (mobile has no Escape key). */
+  onLeave?: () => void;
 }
 
 const STYLE_ID = "tdh-style";
@@ -98,6 +100,18 @@ const STYLE_CSS = `
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 #tdh * { box-sizing: border-box; }
+
+/* ── always-visible leave button (mobile has no Escape) ───────────────────── */
+#tdh .tdh-leave {
+  position: absolute; top: 14px; right: 14px; pointer-events: auto; cursor: pointer;
+  font: inherit; font-weight: 800; font-size: 14px; color: #ff9c8c;
+  padding: 8px 13px; border-radius: 12px; -webkit-tap-highlight-color: transparent;
+  background: rgba(34,20,18,0.88); border: 1.5px solid rgba(255,138,122,0.42);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.36); backdrop-filter: blur(4px);
+  transition: transform 0.1s, background 0.12s, border-color 0.12s;
+}
+#tdh .tdh-leave:hover { background: rgba(54,26,22,0.92); border-color: rgba(255,138,122,0.7); }
+#tdh .tdh-leave:active { transform: scale(0.96); }
 
 /* ── top status ─────────────────────────────────────────────────────────── */
 #tdh .tdh-top {
@@ -625,6 +639,7 @@ export class TdHud {
         </div>
       </div>
 
+      <button class="tdh-leave" type="button">✕ Leave</button>
       <div class="tdh-banner"></div>
       <div class="tdh-over">
         <div class="tdh-otitle">Victory</div>
@@ -666,6 +681,7 @@ export class TdHud {
     this.upBtn.addEventListener("click", () => this.opts.onUpgrade?.());
     this.sellBtn.addEventListener("click", () => this.opts.onSell?.());
     this.targetBtn.addEventListener("click", () => this.opts.onTarget?.());
+    (this.q(".tdh-leave") as HTMLButtonElement).addEventListener("click", () => this.opts.onLeave?.());
   }
 
   // ── public API ────────────────────────────────────────────────────────────

@@ -1944,3 +1944,103 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
 #tdh .tdh-act { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 /* never let the full-screen win/lose overlay or menus sit under the HUD */
 #tdh .tdh-over { z-index: 1; }
+
+/* ============================================================
+   PAUSE / SETTINGS overlay (item 1) — shown whenever state==="paused".
+   The shell (#overlay-pause) is created by hud.overlayShell() at z-index 60,
+   ABOVE the touch joystick layer (z-index 30), with pointer-events:auto so its
+   controls are tappable on mobile. Dark warm translucent panel, gold/teal accents.
+   ============================================================ */
+#overlay-pause { z-index: 60; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.pause-card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 14px;
+  min-width: 280px; max-width: 88vw; padding: 26px 26px 24px;
+  background: rgba(26,20,14,0.92); border: 1.5px solid rgba(255,210,74,0.32);
+  border-radius: 20px; box-shadow: 0 16px 50px rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+}
+.pause-title {
+  font-size: 30px; font-weight: 900; letter-spacing: 4px; text-align: center;
+  color: #ffe9a8; text-shadow: 0 2px 10px rgba(255,180,60,0.35); margin-bottom: 4px;
+}
+.pause-btn {
+  font: inherit; font-weight: 800; font-size: 17px; cursor: pointer;
+  padding: 13px 20px; border-radius: 12px; border: none; touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent; transition: transform 0.1s, filter 0.12s;
+}
+.pause-btn:active { transform: scale(0.97); }
+.pause-resume { background: linear-gradient(180deg,#ffd24a,#ffb43a); color: #2a2208; }
+.pause-resume:hover { filter: brightness(1.06); }
+.pause-quit { background: rgba(255,138,122,0.16); color: #ff9c8c; border: 1px solid rgba(255,138,122,0.4); }
+.pause-quit:hover { background: rgba(255,138,122,0.26); }
+.pause-settings {
+  display: flex; flex-direction: column; gap: 10px; padding: 12px;
+  background: rgba(255,255,255,0.05); border-radius: 12px; border: 1px solid rgba(255,255,255,0.08);
+}
+.pause-toggle {
+  font: inherit; font-weight: 700; font-size: 15px; cursor: pointer; touch-action: manipulation;
+  padding: 10px 14px; border-radius: 10px; border: 1px solid rgba(127,212,255,0.32);
+  background: rgba(127,212,255,0.12); color: #bfe6ff; -webkit-tap-highlight-color: transparent;
+}
+.pause-toggle:active { transform: scale(0.97); }
+.pause-vol { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 14px; color: #e7ddcb; }
+.pause-vol span { white-space: nowrap; }
+.pause-vol input[type="range"] {
+  flex: 1; accent-color: #ffd24a; height: 22px; cursor: pointer; touch-action: manipulation;
+}
+
+/* ============================================================
+   TD MODE-SELECT panel (item 3) — a tap/click menu at the Tower Defense gateway
+   so mobile players can pick Solo/Duel/Endless/Daily/Wager (number keys still
+   work on desktop as shortcuts). Anchored bottom-center, above the joystick.
+   ============================================================ */
+#td-modeselect {
+  position: fixed; left: 50%; bottom: 86px; transform: translateX(-50%);
+  z-index: 50; pointer-events: none; /* container ignores taps so the joystick works */
+  display: none; flex-direction: column; align-items: center; gap: 8px;
+  width: max-content; max-width: 96vw; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none; font-family: inherit;
+}
+#td-modeselect.show { display: flex; }
+#td-modeselect .tdm-title {
+  font-size: 13px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;
+  color: #ffe9a8; text-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  background: rgba(26,20,14,0.82); padding: 4px 12px; border-radius: 999px;
+  border: 1px solid rgba(255,210,74,0.3);
+}
+#td-modeselect .tdm-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+#td-modeselect .tdm-btn {
+  pointer-events: auto; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  cursor: pointer; font: inherit; color: #f1ece1;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 78px; padding: 9px 12px; border-radius: 14px;
+  background: rgba(22,28,34,0.9); border: 1.5px solid rgba(255,255,255,0.14);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.36); backdrop-filter: blur(4px);
+  transition: transform 0.1s, border-color 0.12s, background 0.12s;
+}
+#td-modeselect .tdm-btn:hover { transform: translateY(-2px); border-color: rgba(255,210,74,0.5); }
+#td-modeselect .tdm-btn:active { transform: scale(0.96); }
+#td-modeselect .tdm-btn.tdm-wager { border-color: rgba(255,210,74,0.45); }
+#td-modeselect .tdm-btn.tdm-done { border-color: rgba(123,224,138,0.5); }
+#td-modeselect .tdm-key {
+  font-size: 10px; font-weight: 800; opacity: 0.7;
+}
+#td-modeselect .tdm-name { font-size: 14px; font-weight: 800; }
+#td-modeselect .tdm-sub { font-size: 10px; font-weight: 700; color: #9fb0bc; }
+#td-modeselect .tdm-btn.tdm-wager .tdm-sub { color: #ffd24a; }
+
+/* ============================================================
+   On-screen LEAVE buttons (item 2) — always-visible quit for TD + Bed Wars so
+   touch players (no Escape key) are never soft-locked. z-index above the HUD
+   panels; pointer-events:auto on the button itself.
+   ============================================================ */
+.mode-leave {
+  position: fixed; top: 14px; right: 14px; z-index: 52; pointer-events: auto;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent; cursor: pointer;
+  font: inherit; font-weight: 800; font-size: 14px; color: #ff9c8c;
+  padding: 8px 14px; border-radius: 12px;
+  background: rgba(34,20,18,0.88); border: 1.5px solid rgba(255,138,122,0.42);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.36); backdrop-filter: blur(4px);
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.mode-leave:hover { background: rgba(54,26,22,0.92); border-color: rgba(255,138,122,0.7); }
+.mode-leave:active { transform: scale(0.96); }
