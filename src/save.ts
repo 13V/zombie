@@ -239,55 +239,150 @@ function sanitizeDaily(raw: unknown): DailyState {
   };
 }
 
+/**
+ * Coerce ANY untrusted blob into a fully-valid SaveData. Shared by loadSave (the
+ * localStorage path) and the cloud-save path so a blob fetched from the backend
+ * is hardened identically to a local one (a forged cloud save can't poison the
+ * economy). Pure + side-effect free.
+ */
+export function sanitizeSave(raw: unknown): SaveData {
+  const data = (raw && typeof raw === "object" ? raw : {}) as Partial<SaveData>;
+  const skins = strArray(data.skins);
+  return {
+    // version: clamp to >=1 so a corrupt/0 value still reads as the v1 schema.
+    version: Math.max(1, Math.floor(num(data.version, 1))),
+    name: typeof data.name === "string" && data.name.trim() ? data.name.slice(0, 16) : randomName(),
+    dailyChestDay: Math.floor(num(data.dailyChestDay)),
+    lastSeen: num(data.lastSeen),
+    prestige: Math.floor(num(data.prestige)),
+    lifetimeGold: num(data.lifetimeGold),
+    streak: sanitizeStreak(data.streak),
+    daily: sanitizeDaily(data.daily),
+    essence: num(data.essence),
+    gold: num(data.gold),
+    goldEarned: num(data.goldEarned),
+    bestRound: num(data.bestRound),
+    bestScore: num(data.bestScore),
+    bestWave: num(data.bestWave),
+    tdBestScore: num(data.tdBestScore),
+    tdDailyDay: num(data.tdDailyDay),
+    tdDailyWave: num(data.tdDailyWave),
+    scores: sanitizeScores(data.scores),
+    owned: strArray(data.owned),
+    skins: skins.length ? skins : ["classic"],
+    skin: typeof data.skin === "string" ? data.skin : "classic",
+    claimed: strArray(data.claimed),
+    stash: sanitizeStash(data.stash),
+    pets: strArray(data.pets),
+    petLevels: sanitizeLevels(data.petLevels),
+    petProgress: sanitizePetProgress(data.petProgress),
+    benchedPets: strArray(data.benchedPets),
+    stats: {
+      kills: num(data.stats?.kills),
+      crits: num(data.stats?.crits),
+      bossKills: num(data.stats?.bossKills),
+      drops: num(data.stats?.drops),
+      games: num(data.stats?.games),
+    },
+    muted: !!data.muted,
+    // music volume 0..1; clamp a forged/out-of-range value to the default
+    musicVolume: Math.min(1, num(data.musicVolume, 0.5)),
+  };
+}
+
 export function loadSave(): SaveData {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return blank();
-    const data = JSON.parse(raw) as Partial<SaveData>;
-    const skins = strArray(data.skins);
-    return {
-      // version: clamp to >=1 so a corrupt/0 value still reads as the v1 schema.
-      version: Math.max(1, Math.floor(num(data.version, 1))),
-      name: typeof data.name === "string" && data.name.trim() ? data.name.slice(0, 16) : randomName(),
-      dailyChestDay: Math.floor(num(data.dailyChestDay)),
-      lastSeen: num(data.lastSeen),
-      prestige: Math.floor(num(data.prestige)),
-      lifetimeGold: num(data.lifetimeGold),
-      streak: sanitizeStreak(data.streak),
-      daily: sanitizeDaily(data.daily),
-      essence: num(data.essence),
-      gold: num(data.gold),
-      goldEarned: num(data.goldEarned),
-      bestRound: num(data.bestRound),
-      bestScore: num(data.bestScore),
-      bestWave: num(data.bestWave),
-      tdBestScore: num(data.tdBestScore),
-      tdDailyDay: num(data.tdDailyDay),
-      tdDailyWave: num(data.tdDailyWave),
-      scores: sanitizeScores(data.scores),
-      owned: strArray(data.owned),
-      skins: skins.length ? skins : ["classic"],
-      skin: typeof data.skin === "string" ? data.skin : "classic",
-      claimed: strArray(data.claimed),
-      stash: sanitizeStash(data.stash),
-      pets: strArray(data.pets),
-      petLevels: sanitizeLevels(data.petLevels),
-      petProgress: sanitizePetProgress(data.petProgress),
-      benchedPets: strArray(data.benchedPets),
-      stats: {
-        kills: num(data.stats?.kills),
-        crits: num(data.stats?.crits),
-        bossKills: num(data.stats?.bossKills),
-        drops: num(data.stats?.drops),
-        games: num(data.stats?.games),
-      },
-      muted: !!data.muted,
-      // music volume 0..1; clamp a forged/out-of-range value to the default
-      musicVolume: Math.min(1, num(data.musicVolume, 0.5)),
-    };
+    return sanitizeSave(JSON.parse(raw));
   } catch {
     return blank();
   }
+}
+
+/** Union of two string lists: keep order, dedupe, lose nothing (left first). */
+function unionStr(a: string[], b: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of [...a, ...b]) {
+    if (!seen.has(x)) {
+      seen.add(x);
+      out.push(x);
+    }
+  }
+  return out;
+}
+
+/** Per-key max of two numeric maps (union of keys). */
+function maxMap(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = Math.max(out[k] ?? 0, v);
+  return out;
+}
+
+/**
+ * Three-way reconcile of a LOCAL save and a CLOUD save into one that NEVER loses
+ * progress. The newer side (greater lastSeen; ties → local) supplies the live
+ * "current state" fields (balances, equipped, settings, dailies); everything
+ * cumulative is combined so neither device can roll the other back:
+ *  - monotonic bests/lifetimes → max
+ *  - unlock lists → set union
+ *  - pet levels / pet progress / lifetime stats → per-key max
+ *  - leaderboard → concat + re-sort + cap
+ * The result is run back through sanitizeSave so it's always structurally valid.
+ * Pure + order-independent for every combined field. Exported for unit tests.
+ */
+export function mergeSaves(local: SaveData, cloud: SaveData): SaveData {
+  const primary = cloud.lastSeen > local.lastSeen ? cloud : local; // ties → local
+  const merged: SaveData = {
+    // current-balance / equipped / state fields come from the newer side
+    version: Math.max(local.version, cloud.version),
+    name: primary.name,
+    dailyChestDay: primary.dailyChestDay,
+    lastSeen: primary.lastSeen,
+    prestige: Math.max(local.prestige, cloud.prestige),
+    lifetimeGold: Math.max(local.lifetimeGold, cloud.lifetimeGold),
+    streak: primary.streak,
+    daily: primary.daily,
+    essence: primary.essence,
+    gold: primary.gold,
+    goldEarned: Math.max(local.goldEarned, cloud.goldEarned),
+    bestRound: Math.max(local.bestRound, cloud.bestRound),
+    bestScore: Math.max(local.bestScore, cloud.bestScore),
+    bestWave: Math.max(local.bestWave, cloud.bestWave),
+    tdBestScore: Math.max(local.tdBestScore, cloud.tdBestScore),
+    tdDailyDay: primary.tdDailyDay,
+    tdDailyWave: primary.tdDailyWave,
+    scores: [...local.scores, ...cloud.scores].sort((a, b) => b.round - a.round || b.score - a.score).slice(0, LEADERBOARD_CAP),
+    owned: unionStr(local.owned, cloud.owned),
+    skins: unionStr(local.skins, cloud.skins),
+    skin: primary.skin,
+    claimed: unionStr(local.claimed, cloud.claimed),
+    stash: primary.stash,
+    pets: unionStr(local.pets, cloud.pets),
+    petLevels: maxMap(local.petLevels, cloud.petLevels),
+    petProgress: (() => {
+      const out: Record<string, Record<string, number>> = {};
+      for (const id of new Set([...Object.keys(local.petProgress), ...Object.keys(cloud.petProgress)])) {
+        out[id] = maxMap(local.petProgress[id] ?? {}, cloud.petProgress[id] ?? {});
+      }
+      return out;
+    })(),
+    benchedPets: unionStr(local.benchedPets, cloud.benchedPets),
+    stats: {
+      kills: Math.max(local.stats.kills, cloud.stats.kills),
+      crits: Math.max(local.stats.crits, cloud.stats.crits),
+      bossKills: Math.max(local.stats.bossKills, cloud.stats.bossKills),
+      drops: Math.max(local.stats.drops, cloud.stats.drops),
+      games: Math.max(local.stats.games, cloud.stats.games),
+    },
+    muted: primary.muted,
+    musicVolume: primary.musicVolume,
+  };
+  // Belt-and-braces: guarantee a structurally valid result.
+  const out = sanitizeSave(merged);
+  out.lastSeen = merged.lastSeen; // sanitizeSave preserves it, but keep it explicit
+  return out;
 }
 
 export function writeSave(data: SaveData) {

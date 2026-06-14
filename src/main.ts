@@ -33,7 +33,8 @@ import { Decals } from "./decals";
 import { Pet, PETS, findAnyPet, petLevelCost, petXpForLevel, petStage, petStageName, petDamageMul, petStageMul, isTrialComplete, RARITY_COLOR, RARITY_LABEL, RARITY_ORDER, ROLE_LABEL, ROLE_ICON, type Rarity, type PetDef, type CombatRole } from "./pets";
 import { EGGS, findEgg, rollEgg, eggOdds } from "./gacha";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
-import { loadSave, writeSave, SaveData, recordScore } from "./save";
+import { loadSave, writeSave, SaveData, recordScore, sanitizeSave, mergeSaves } from "./save";
+import { cloudEnabled, cloudLogin, cloudPush } from "./cloudsave";
 import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows, questsForDay, type DailyMetrics } from "./idle";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
@@ -136,6 +137,14 @@ class Game implements GameApi {
   private activeTraps: { x: number; z: number; r: number; dps: number; kind: "electric" | "fire"; t: number; fx: number }[] = [];
   private _trapFx = new THREE.Vector3(); // scratch for trap FX positions
   private wallet = new Wallet();
+  // Wallet cloud-save session: set on a successful cloudLogin, cleared on
+  // disconnect / token expiry. While set, meaningful saves debounce-push to the
+  // backend keyed by this address. _cloudPushTimer coalesces those pushes.
+  private _cloudToken?: string;
+  private _cloudAddr?: string;
+  private _cloudPushTimer = 0; // window.setTimeout handle (0 = idle)
+  private _cloudSyncing = false; // guards against overlapping login round-trips
+  private _cloudDeferred = false; // a connect arrived mid-run → sync on return to hub
 
   // progression
   private save: SaveData = loadSave();
@@ -656,7 +665,7 @@ class Game implements GameApi {
       // Evolution is gated on level + trial — only fires when both are met.
       this.checkPetEvolutions();
     }
-    writeSave(this.save);
+    this.persist();
     this.audio.powerup();
     if (!owned) this.spawnPets();
     this.renderShop();
@@ -701,7 +710,7 @@ class Game implements GameApi {
     this.save.gold -= cost;
     const pr = (this.save.petProgress[id] ??= {});
     pr._stars = stars + 1;
-    writeSave(this.save);
+    this.persist();
     this.audio.levelUp();
     const liveName = findAnyPet(id)?.name ?? "Pet";
     this.hud.toast(`★ ${liveName} ascended to ${pr._stars}★!`);
@@ -745,7 +754,7 @@ class Game implements GameApi {
         this.save.gold += refund;
       }
     }
-    writeSave(this.save);
+    this.persist();
     this.audio.powerup();
     this.spawnPets();
     this.renderShop();
@@ -779,7 +788,7 @@ class Game implements GameApi {
       evolved = true;
     }
     if (evolved) {
-      writeSave(this.save);
+      this.persist();
       this.spawnPets();
       this.renderShop();
     }
@@ -811,7 +820,7 @@ class Game implements GameApi {
   /** Add a freshly-dropped item to the stash + announce it in-run. */
   private grantLoot(item: LootItem) {
     this.save.stash.push(item);
-    writeSave(this.save);
+    this.persist();
     const info = RARITIES[item.rarity];
     this.floaters.spawn(this.player.pos, `${info.label} LOOT!`, rarityColorHex(item.rarity), 1.1, true);
     this.audio.powerup();
@@ -824,7 +833,7 @@ class Game implements GameApi {
     const [item] = this.save.stash.splice(i, 1);
     this.save.gold += item.gold;
     this.save.goldEarned += item.gold;
-    writeSave(this.save);
+    this.persist();
     this.audio.buy();
     this.renderShop();
   }
@@ -836,7 +845,7 @@ class Game implements GameApi {
     this.save.gold += total;
     this.save.goldEarned += total;
     this.save.stash = [];
-    writeSave(this.save);
+    this.persist();
     this.audio.powerup();
     this.renderShop();
   }
@@ -850,7 +859,7 @@ class Game implements GameApi {
     }
     this.save.essence -= u.cost;
     this.save.owned.push(id);
-    writeSave(this.save);
+    this.persist();
     this.audio.powerup();
     this.renderShop();
   }
@@ -884,7 +893,7 @@ class Game implements GameApi {
       this.audio.ui();
     }
     this.save.skin = id;
-    writeSave(this.save);
+    this.persist();
     this.applyPlayerSkin();
     this.renderShop();
   }
@@ -1094,7 +1103,7 @@ class Game implements GameApi {
     // Fold this run's gold into the prestige basis, then refresh the menu chip.
     this.reconcileLifetimeGold();
 
-    writeSave(this.save);
+    this.persist();
     this.renderShop();
     this.refreshPrestigeUi();
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
@@ -1147,8 +1156,13 @@ class Game implements GameApi {
     if (!s.connected || !s.address) {
       this.hud.setWallet(false, "", "");
       this.hud.setClaimStatus("");
+      this.endCloudSession(); // wallet gone → stop pushing, drop the token
       return;
     }
+    // Cloud-save sync rides the same connect signal as the token check. It's a
+    // no-op unless a save backend URL is configured; mid-run it defers until the
+    // player is back in the hub so we never pop a sign request during combat.
+    this.maybeCloudSync(s.address);
     // Optimistic label until the authoritative backend answers.
     this.hud.setWallet(true, this.wallet.short, "checking…");
     this.hud.setLobbyStatus("Wallet linked.");
@@ -1162,6 +1176,112 @@ class Game implements GameApi {
       this.hud.setWallet(true, this.wallet.short, `${this.save.essence} ✦ pending`);
       this.hud.setClaimStatus(getTokenApiUrl() ? "Backend unreachable" : "Set token backend ⚙ to enable claims");
     }
+  }
+
+  /** True only in the lobby / menu — never mid-run, TD, or bedwars. Cloud sync
+   *  (which can pop a wallet sign request) only runs in these calm states. */
+  private inHub(): boolean {
+    return this.state === "island" || this.state === "menu";
+  }
+
+  /**
+   * Log in to the cloud-save backend (if enabled), merge the stored save with the
+   * local one losing nothing, apply the result to the live UI, then push it back.
+   * Signing pops a wallet popup, so we only do this in the hub — if the wallet
+   * connects mid-run we set _cloudDeferred and retry on return (see enterIsland).
+   * Fully graceful: any failure leaves the game on its local save.
+   */
+  private async maybeCloudSync(address: string) {
+    if (!cloudEnabled()) return; // no URL → cloud save disabled, pure no-op
+    if (this._cloudToken && this._cloudAddr === address) return; // already synced this session
+    if (!this.inHub()) { this._cloudDeferred = true; return; } // defer past combat
+    if (this._cloudSyncing) return; // a login is already in flight
+    this._cloudSyncing = true;
+    this._cloudDeferred = false;
+    try {
+      const resp = await cloudLogin(address, (t) => this.wallet.signText(t));
+      if (!resp) {
+        this.hud.toast("Cloud save unavailable — playing locally");
+        return;
+      }
+      // Merge cloud ↔ local so neither device rolls the other back, then make the
+      // merged save the live one and reflect it everywhere the game shows it.
+      const merged = mergeSaves(this.save, sanitizeSave(resp.save ?? {}));
+      this.save = merged;
+      writeSave(merged);
+      this.applyMergedSaveToUi();
+      this._cloudToken = resp.token;
+      this._cloudAddr = address;
+      // Persist the freshly merged blob back so the cloud holds the union too.
+      const updated = await cloudPush(address, resp.token, merged, merged.lastSeen);
+      if (updated === null) {
+        this._cloudToken = undefined; // token rejected → re-login next connect
+        this.hud.toast("☁ Synced (push deferred)");
+      } else {
+        this.hud.toast("☁ Progress synced to your wallet");
+      }
+    } finally {
+      this._cloudSyncing = false;
+    }
+  }
+
+  /** Reflect a (cloud-merged) save into every live surface the game already uses
+   *  after gold/pet/skin/setting changes — gold/essence/market/pets/skins via the
+   *  shop rebuild, equipped skin, best-run chip, and mute/volume. */
+  private applyMergedSaveToUi() {
+    this.audio.setEnabled(!this.save.muted);
+    this.music.setEnabled(!this.save.muted);
+    this.music.setVolume(this.save.musicVolume);
+    this.hud.setBest(this.save.bestRound, this.save.bestScore);
+    this.applyPlayerSkin();
+    this.renderShop();
+    // If we're standing in the hub, re-spawn the equipped squad so newly-merged
+    // pets appear immediately (spawnPets reads this.save.pets).
+    if (this.state === "island") this.spawnPets();
+  }
+
+  /**
+   * (Re)arm a debounced push of the latest save to the cloud. Coalesces rapid
+   * gold/pet/skin changes into at most one push per ~5s and never blocks the
+   * frame. No-op unless we hold a session token. On 401/expiry the token is
+   * dropped so the next connect / hub-return re-logins. Never signs.
+   */
+  private scheduleCloudPush() {
+    if (!this._cloudToken || !this._cloudAddr) return;
+    if (this._cloudPushTimer) return; // a push is already queued — it'll send the latest
+    this._cloudPushTimer = window.setTimeout(() => {
+      this._cloudPushTimer = 0;
+      const token = this._cloudToken;
+      const addr = this._cloudAddr;
+      if (!token || !addr) return;
+      // Stamp lastSeen so the cloud's "newer side" matches what we just wrote.
+      const snapshot = this.save;
+      cloudPush(addr, token, snapshot, snapshot.lastSeen).then((updated) => {
+        if (updated === null && this._cloudAddr === addr) {
+          this._cloudToken = undefined; // expired/invalid → re-login on next connect
+        }
+      });
+    }, 5000);
+  }
+
+  /** Persist the save locally AND debounce a cloud push. Use this everywhere we
+   *  previously called writeSave(this.save) so gold/pet/skin/score changes both
+   *  hit localStorage and (when a wallet session is live) sync to the cloud. */
+  private persist() {
+    writeSave(this.save);
+    this.scheduleCloudPush();
+  }
+
+  /** Tear down the cloud session (disconnect / wallet gone): stop pushing, drop
+   *  the token so a future connect re-logins cleanly. */
+  private endCloudSession() {
+    if (this._cloudPushTimer) {
+      clearTimeout(this._cloudPushTimer);
+      this._cloudPushTimer = 0;
+    }
+    this._cloudToken = undefined;
+    this._cloudAddr = undefined;
+    this._cloudDeferred = false;
   }
 
   /** Ask the reward backend to pay out earnings to the connected wallet. */
@@ -1662,7 +1782,7 @@ class Game implements GameApi {
     this.audio.setEnabled(!this.audio.enabled);
     this.save.muted = !this.audio.enabled;
     this.music.setEnabled(!this.save.muted); // music follows the master mute
-    writeSave(this.save);
+    this.persist();
     return this.save.muted;
   }
 
@@ -1680,7 +1800,7 @@ class Game implements GameApi {
       onVolume: (v) => {
         this.save.musicVolume = v;
         this.music.setVolume(v);
-        writeSave(this.save);
+        this.persist();
       },
     });
   }
@@ -1773,7 +1893,7 @@ class Game implements GameApi {
       // the attempt is consumed on ENTRY (no retry-scumming via refresh)
       this.save.tdDailyDay = today;
       this.save.tdDailyWave = 0;
-      writeSave(this.save);
+      this.persist();
       this._tdIsDaily = true;
       opts = { endless: true, daily: tdDailyMods(today) };
     } else if (kind === "wager") {
@@ -1784,7 +1904,7 @@ class Game implements GameApi {
       }
       // stake leaves your balance NOW and lives in the locked pot
       this.save.gold -= stake;
-      writeSave(this.save);
+      this.persist();
       this._tdWager = createWager(stake, "you", "treasury-bot");
       mode = "duel";
       this.hud.toast(`💰 ${stake}g staked vs the House — win the duel for ${wagerPayout(stake)}g`);
@@ -2066,6 +2186,12 @@ class Game implements GameApi {
     // spawn burst: a friendly arrival pop so dropping in feels like an event
     this.portalBurst(this.player.pos);
     this.connectIslandPresence();
+    // A wallet that connected mid-run deferred its cloud sync — now that we're
+    // back in the calm hub, run it (safe to sign here). No-op if already synced.
+    const addr = this.wallet.state.address;
+    if (addr && (this._cloudDeferred || (cloudEnabled() && !this._cloudToken))) {
+      this.maybeCloudSync(addr);
+    }
   }
 
   /** Join the shared island instance so other players appear (best-effort). */
@@ -2428,7 +2554,7 @@ class Game implements GameApi {
     this.save.gold += gold;
     this.save.goldEarned += gold;
     this.save.essence += essence;
-    writeSave(this.save);
+    this.persist();
     this.island.setDailyReady(false);
     this.audio.powerup();
     this.portalBurst(this.player.pos);
@@ -2491,7 +2617,7 @@ class Game implements GameApi {
         this.save.gold += seg.gold; this.save.goldEarned += seg.gold; this.save.essence += seg.essence;
         this.hud.toast(`🎡 ${seg.label}!`);
       }
-      writeSave(this.save);
+      this.persist();
       this.renderShop();
       this._hatching = false;
     });
@@ -2675,7 +2801,7 @@ class Game implements GameApi {
     if (this._petLeveledThisFrame) {
       this._petLeveledThisFrame = false;
       this.checkPetEvolutions();
-      writeSave(this.save);
+      this.persist();
     }
     this.resolveRangedFliers();
     this.resolveBlazingTrails();
@@ -2766,7 +2892,7 @@ class Game implements GameApi {
         break;
       case "treasure":
         this.save.essence += 30;
-        writeSave(this.save);
+        this.persist();
         this.hud.toast("+30 ✦ Essence");
         break;
       case "nuke":
@@ -3008,7 +3134,7 @@ class Game implements GameApi {
     if (gold <= 0) return;
     this.save.gold += gold;
     this.save.goldEarned += gold;
-    writeSave(this.save);
+    this.persist();
     this.renderShop();
     if (gold >= IDLE.welcomeBackMinGold) {
       const durationMs = Math.min(elapsed, IDLE.offlineCapMs);
@@ -3036,7 +3162,7 @@ class Game implements GameApi {
     // Roll the daily board to today (clears progress/claims on a new UTC day).
     this.save.daily = rollDaily(this.save.daily, today);
 
-    writeSave(this.save);
+    this.persist();
     this.renderShop();
     this.refreshStreakUi();
     this.refreshDailyUi();
@@ -3076,7 +3202,7 @@ class Game implements GameApi {
       this.hud.toast(`Daily complete  +${done.gold} 🪙 +${done.essence} ✦`);
     }
     this.refreshDailyUi();
-    writeSave(this.save);
+    this.persist();
   }
 
   /** Roll any newly-earned gold (goldEarned delta) into lifetimeGold — the
@@ -3128,7 +3254,7 @@ class Game implements GameApi {
     this.save.owned = [];
     this._goldEarnedMark = 0;
     this._petGold = 0;
-    writeSave(this.save);
+    this.persist();
     this.resetRun(); // rebuild mods from the now-empty owned list + respawn pets
     this.renderShop();
     this.refreshPrestigeUi();
@@ -3265,7 +3391,7 @@ class Game implements GameApi {
       benched.push(id); // bench it
       this.audio.ui();
     }
-    writeSave(this.save);
+    this.persist();
     this.spawnPets();
     this.renderShop();
   }

@@ -104,6 +104,23 @@ export class Wallet {
   }
 
   /**
+   * Sign an arbitrary UTF-8 message with the connected wallet and return the
+   * base64 signature (or null if there's no provider, it can't sign, or the
+   * user declines). Used by cloud-save login to prove wallet ownership — no
+   * funds ever move. Same signing path as requestClaim, factored for reuse.
+   */
+  async signText(text: string): Promise<string | null> {
+    const p = getProvider();
+    if (!p?.signMessage) return null;
+    try {
+      const { signature } = await p.signMessage(new TextEncoder().encode(text), "utf8");
+      return bytesToB64(signature);
+    } catch {
+      return null; // user declined or signing failed
+    }
+  }
+
+  /**
    * Request a payout of earned rewards. The client NEVER moves funds and never
    * tells the server an amount — it only proves wallet ownership (a signed
    * message) and asks. The backend verifies the signature, reads ITS OWN ledger

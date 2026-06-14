@@ -35,7 +35,14 @@ const store = new MemStorage();
 
 const KEY = "tinydead.save.v1";
 
-const { loadSave, recordScore } = await import("../src/save.ts");
+const { loadSave, recordScore, mergeSaves, sanitizeSave } = await import("../src/save.ts");
+
+type SaveData = ReturnType<typeof loadSave>;
+
+/** A fully-valid blank save (sanitizeSave({}) yields one) for building fixtures. */
+function fresh(over: Record<string, unknown> = {}): SaveData {
+  return sanitizeSave(over);
+}
 
 /** Helper: write a raw blob under the save key, then load it. */
 function load(raw: unknown) {
@@ -319,4 +326,148 @@ test("a fully-forged adversarial blob still yields a structurally valid save", (
   // stats fully zeroed (array .kills etc are undefined -> 0)
   assert.deepEqual(s.stats, { kills: 0, crits: 0, bossKills: 0, drops: 0, games: 0 });
   assert.equal(s.muted, true); // [] is truthy
+});
+
+// ---- mergeSaves: cloud ↔ local reconcile (never loses progress) -----------
+
+test("mergeSaves: unlock lists are a UNION keeping items from BOTH sides", () => {
+  const local = fresh({ owned: ["a", "b"], skins: ["classic", "red"], claimed: ["c1"], pets: ["dog"], benchedPets: ["dog"] });
+  const cloud = fresh({ owned: ["b", "c"], skins: ["classic", "blue"], claimed: ["c2"], pets: ["cat"], benchedPets: ["cat"] });
+  const m = mergeSaves(local, cloud);
+  assert.deepEqual(m.owned, ["a", "b", "c"]);
+  assert.deepEqual(m.skins, ["classic", "red", "blue"]); // order preserved, deduped
+  assert.deepEqual(m.claimed, ["c1", "c2"]);
+  assert.deepEqual(m.pets, ["dog", "cat"]);
+  assert.deepEqual(m.benchedPets, ["dog", "cat"]);
+});
+
+test("mergeSaves: monotonic bests/lifetimes take the MAX of the two sides", () => {
+  const local = fresh({ bestRound: 30, bestScore: 5, bestWave: 2, tdBestScore: 100, lifetimeGold: 10, goldEarned: 7, prestige: 1 });
+  const cloud = fresh({ bestRound: 12, bestScore: 9000, bestWave: 40, tdBestScore: 50, lifetimeGold: 999, goldEarned: 3, prestige: 4 });
+  const m = mergeSaves(local, cloud);
+  assert.equal(m.bestRound, 30);
+  assert.equal(m.bestScore, 9000);
+  assert.equal(m.bestWave, 40);
+  assert.equal(m.tdBestScore, 100);
+  assert.equal(m.lifetimeGold, 999);
+  assert.equal(m.goldEarned, 7);
+  assert.equal(m.prestige, 4);
+});
+
+test("mergeSaves: balances/equipped/settings follow the NEWER lastSeen", () => {
+  const older = fresh({ lastSeen: 1000, gold: 10, essence: 1, name: "Old", skin: "red", muted: true, musicVolume: 0.2, tdDailyWave: 3 });
+  const newer = fresh({ lastSeen: 2000, gold: 999, essence: 50, name: "New", skin: "blue", muted: false, musicVolume: 0.9, tdDailyWave: 7 });
+  // newer is cloud
+  const a = mergeSaves(older, newer);
+  assert.equal(a.gold, 999);
+  assert.equal(a.essence, 50);
+  assert.equal(a.name, "New");
+  assert.equal(a.skin, "blue");
+  assert.equal(a.muted, false);
+  assert.equal(a.musicVolume, 0.9);
+  assert.equal(a.tdDailyWave, 7);
+  assert.equal(a.lastSeen, 2000);
+  // newer is local — same winner regardless of side
+  const b = mergeSaves(newer, older);
+  assert.equal(b.gold, 999);
+  assert.equal(b.name, "New");
+});
+
+test("mergeSaves: equal lastSeen → LOCAL wins the current-state tie", () => {
+  const local = fresh({ lastSeen: 5000, gold: 111, name: "Local" });
+  const cloud = fresh({ lastSeen: 5000, gold: 222, name: "Cloud" });
+  const m = mergeSaves(local, cloud);
+  assert.equal(m.gold, 111);
+  assert.equal(m.name, "Local");
+});
+
+test("mergeSaves: petLevels are a per-key MAX (union of keys)", () => {
+  const local = fresh({ petLevels: { dog: 5, cat: 2 } });
+  const cloud = fresh({ petLevels: { dog: 3, owl: 7 } });
+  const m = mergeSaves(local, cloud);
+  assert.deepEqual(m.petLevels, { dog: 5, cat: 2, owl: 7 });
+});
+
+test("mergeSaves: petProgress is per-pet, per-counter MAX", () => {
+  const local = fresh({ petProgress: { dog: { kills: 10, casts: 1 } } });
+  const cloud = fresh({ petProgress: { dog: { kills: 4, evos: 2 }, cat: { kills: 9 } } });
+  const m = mergeSaves(local, cloud);
+  assert.deepEqual(m.petProgress.dog, { kills: 10, casts: 1, evos: 2 });
+  assert.deepEqual(m.petProgress.cat, { kills: 9 });
+});
+
+test("mergeSaves: lifetime stats are per-field MAX", () => {
+  const local = fresh({ stats: { kills: 100, crits: 5, bossKills: 1, drops: 2, games: 9 } });
+  const cloud = fresh({ stats: { kills: 50, crits: 50, bossKills: 3, drops: 1, games: 4 } });
+  const m = mergeSaves(local, cloud);
+  assert.deepEqual(m.stats, { kills: 100, crits: 50, bossKills: 3, drops: 2, games: 9 });
+});
+
+test("mergeSaves: leaderboard concats, re-sorts (round desc, score desc), caps", () => {
+  const local = fresh({ scores: [{ round: 30, score: 5, date: 1 }, { round: 10, score: 1, date: 2 }] });
+  const cloud = fresh({ scores: [{ round: 30, score: 999, date: 3 }, { round: 20, score: 1, date: 4 }] });
+  const m = mergeSaves(local, cloud);
+  assert.equal(m.scores[0].round, 30);
+  assert.equal(m.scores[0].score, 999); // higher score wins the round-30 tie
+  assert.equal(m.scores[1].round, 30);
+  assert.equal(m.scores[1].score, 5);
+  assert.equal(m.scores[2].round, 20);
+  assert.equal(m.scores[3].round, 10);
+  assert.ok(m.scores.length <= 10);
+});
+
+test("mergeSaves: blank() + a rich save NEVER drops the rich side", () => {
+  const blankLocal = fresh(); // pristine
+  const rich = fresh({
+    lastSeen: 9999,
+    gold: 12345,
+    essence: 200,
+    owned: ["a", "b", "c"],
+    skins: ["classic", "gold", "void"],
+    pets: ["dog", "cat", "owl"],
+    petLevels: { dog: 9 },
+    bestRound: 77,
+    tdBestScore: 4242,
+    stats: { kills: 1000, crits: 100, bossKills: 10, drops: 50, games: 200 },
+    scores: [{ round: 77, score: 8000, date: 1 }],
+  });
+  const m = mergeSaves(blankLocal, rich);
+  assert.equal(m.gold, 12345);
+  assert.equal(m.essence, 200);
+  assert.deepEqual(m.owned, ["a", "b", "c"]);
+  assert.deepEqual(m.pets, ["dog", "cat", "owl"]);
+  assert.equal(m.petLevels.dog, 9);
+  assert.equal(m.bestRound, 77);
+  assert.equal(m.tdBestScore, 4242);
+  assert.equal(m.stats.kills, 1000);
+  assert.equal(m.scores[0].score, 8000);
+  // and the reverse direction (rich is local, blank is cloud) keeps it too
+  const m2 = mergeSaves(rich, blankLocal);
+  assert.equal(m2.gold, 12345);
+  assert.deepEqual(m2.pets, ["dog", "cat", "owl"]);
+  assert.equal(m2.bestRound, 77);
+});
+
+test("mergeSaves: monotonic fields are ORDER-INDEPENDENT (a∪b === b∪a)", () => {
+  const a = fresh({ lastSeen: 1, bestRound: 30, bestWave: 5, tdBestScore: 9, lifetimeGold: 100, prestige: 2, petLevels: { dog: 5 }, stats: { kills: 10, crits: 0, bossKills: 0, drops: 0, games: 0 }, owned: ["x"], pets: ["dog"] });
+  const b = fresh({ lastSeen: 2, bestRound: 12, bestWave: 40, tdBestScore: 99, lifetimeGold: 50, prestige: 9, petLevels: { dog: 2, cat: 8 }, stats: { kills: 3, crits: 7, bossKills: 0, drops: 0, games: 0 }, owned: ["y"], pets: ["cat"] });
+  const ab = mergeSaves(a, b);
+  const ba = mergeSaves(b, a);
+  // monotonic / set-union fields must match regardless of argument order
+  assert.equal(ab.bestRound, ba.bestRound);
+  assert.equal(ab.bestWave, ba.bestWave);
+  assert.equal(ab.tdBestScore, ba.tdBestScore);
+  assert.equal(ab.lifetimeGold, ba.lifetimeGold);
+  assert.equal(ab.prestige, ba.prestige);
+  assert.deepEqual(ab.petLevels, ba.petLevels);
+  assert.deepEqual(ab.stats, ba.stats);
+  assert.deepEqual([...ab.owned].sort(), [...ba.owned].sort());
+  assert.deepEqual([...ab.pets].sort(), [...ba.pets].sort());
+});
+
+test("mergeSaves: result is always a structurally valid SaveData", () => {
+  const m = mergeSaves(fresh({ gold: 5 }), fresh({ essence: 9 }));
+  // run through sanitizeSave again — a valid save is a fixed point
+  assert.deepEqual(sanitizeSave(m), m);
+  assert.deepEqual(m.skins.length >= 1, true);
 });
