@@ -323,6 +323,7 @@ export class IslandNet {
   private ensurePeer(id: number, look: PeerLook = { body: 0x4a78d6, head: 0xfff4d6 }): PeerFigure {
     let f = this.peers.get(id);
     if (!f) {
+      console.log("[island] spawn peer", id, "now have", this.peers.size + 1);
       f = new PeerFigure(this.scene, look);
       this.peers.set(id, f);
     }

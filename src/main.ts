@@ -2286,6 +2286,7 @@ class Game implements GameApi {
       await this.net.island();
       const skin = findSkin(this.save.skin);
       this.islandNet = new IslandNet(this.net, this.scene, skin.body, skin.head, this.save.name);
+      console.log("[island] connected as id", this.net.id, "room peers", [...this.net.peers], "state", this.state);
       // a peer hatched an egg → play the celebration over their figure for us too
       this.islandNet.onHatch = (x, z, rarity, shiny, petId) => this.hatchCelebration(x, z, rarity, shiny, petId, true);
       // the co-op gather leader hosted a room → join it if I'm in that portal
