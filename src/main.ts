@@ -429,6 +429,7 @@ class Game implements GameApi {
     addEventListener("fullscreenchange", () => requestAnimationFrame(this.onResize));
     this.onResize();
     this.hud.showStart();
+    this.showMenuBackdrop(); // render the lobby behind the splash
 
     // Idle economy boot: credit offline banker gold (capped, half-rate) and show
     // the "While You Were Away" screen, then settle the daily login streak +
@@ -920,6 +921,22 @@ class Game implements GameApi {
     this.hud.setBest(this.save.bestRound, this.save.bestScore);
     this.renderShop();
     this.hud.showStart();
+    this.showMenuBackdrop(); // lobby glows behind the splash here too
+  }
+
+  /** Render the island lobby as a calm backdrop behind the splash/menu overlay.
+   *  Not the playable hub (no presence/pets/sim) — just the cozy scene showing
+   *  through the semi-transparent splash scrim. */
+  private showMenuBackdrop() {
+    this.arena.group.visible = false;
+    this.island.setVisible(true);
+    this.interactables.setVisible(false);
+    this.drops.clearAll();
+    this.player.pos.set(0, 0, 11); // stand at the front of the square (mostly behind the hero card)
+    this.player.group.position.copy(this.player.pos);
+    this.setRenderTier(this._lowSpec ? 1.6 : 3, this._lowSpec ? 1.4 : 2); // crisp backdrop
+    this.camZoom = this.camZoomTarget = 1.9; // frame the hub immediately (no ease-in from a stale zoom)
+    this.applyView();
   }
 
   /** Pause the breather and offer 1 of 3 stacking run upgrades. */

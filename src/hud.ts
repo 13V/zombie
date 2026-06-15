@@ -165,6 +165,7 @@ export class Hud {
           <p class="tagline">A cozy little world overrun by ten flavors of undead. Survive, loot, spin for wild guns — every run earns <b>Essence</b>.</p>
           <div class="bestline" id="best-line"></div>
           <!-- Primary actions FIRST so they're always visible without scrolling past the shop. -->
+          <button class="play" id="btn-connect">🔗 Connect Wallet</button>
           <button class="play" id="btn-island">🏝️ Enter Island</button>
           <button class="play secondary" id="btn-start">▶ Play Solo</button>
         </div>
@@ -797,6 +798,7 @@ export class Hud {
   }
   onWallet(cb: () => void) {
     this.q("#btn-wallet").addEventListener("click", cb);
+    this.q("#btn-connect").addEventListener("click", cb); // hero CTA shares the connect flow
   }
   /** Wire the Claim button + the token-backend config gear. */
   onClaim(onClaim: () => void, onConfig: () => void) {
@@ -810,6 +812,8 @@ export class Hud {
   setWallet(connected: boolean, short: string, balanceLabel: string) {
     this.q("#btn-wallet").textContent = connected ? short : "Connect Wallet";
     this.q("#btn-wallet").classList.toggle("connected", connected);
+    // Hero CTA: prominent while disconnected, hidden once linked (play leads after).
+    this.q("#btn-connect").classList.toggle("hidden", connected);
     this.q("#wallet-bal").textContent = connected ? balanceLabel : "";
     // the claim row only makes sense once a wallet is linked
     this.q("#claim-row").classList.toggle("hidden", !connected);
