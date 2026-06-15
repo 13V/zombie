@@ -7,10 +7,6 @@
     "deploy": "partykit deploy",
     "login": "partykit login"
   },
-  "dependencies": {
-    "bs58": "^6.0.0",
-    "tweetnacl": "^1.0.3"
-  },
   "devDependencies": {
     "partykit": "latest",
     "typescript": "^5.6.3"

@@ -1,8 +1,5 @@
 {
   "$schema": "https://www.partykit.io/schema.json",
   "name": "tiny-dead",
-  "main": "server.ts",
-  "parties": {
-    "save": "save.ts"
-  }
+  "main": "server.ts"
 }
