@@ -33,7 +33,7 @@ const LS_KEY = "tinydead.saveapi";
 /** Default cloud-save endpoint — the deployed Supabase `save` Edge Function.
  *  Baked in so cloud save is live without a build var; `VITE_SAVE_URL` or a
  *  localStorage override still win (see readInit). Empty = disabled. */
-const DEFAULT_SAVE_URL = "https://zdsyhbxsposwpewrlsec.supabase.co/functions/v1/save";
+const DEFAULT_SAVE_URL = "https://zdsyhbxsposwpewrlsec.supabase.co/functions/v1/rapid-service";
 
 /** Build-time default save URL from Vite's env (VITE_SAVE_URL). Read defensively
  *  — `import.meta.env` only exists under the Vite bundler, never in plain Node
