@@ -16,6 +16,7 @@ import {
 import { TdFx } from "./tdfx";
 import { TdHud, type TdHudState } from "./tdhud";
 import { TdAudio } from "./tdaudio";
+import { loadVoxTurrets, hasVoxTurret, buildVoxTurret } from "./voxturret";
 import type { TdDailyMods } from "./tddaily";
 
 /** Entry options: endless keeps waves coming past TD_TOTAL_WAVES (score = wave
@@ -135,6 +136,8 @@ export class TdMode {
     this.ring.rotation.x = Math.PI / 2;
     this.ring.visible = false;
     this.fx.add(this.ring);
+    // Preload the baked voxel turret models (best-effort; falls back to procedural).
+    void loadVoxTurrets(TD_TOWER_IDS);
   }
 
   spawn(): THREE.Vector3 { return new THREE.Vector3(0, 0, 0); }
@@ -740,6 +743,12 @@ export class TdMode {
    *   sniper — tall watchtower w/ peaked roof + a long scoped rifle
    */
   private makeTurret(id: TdTowerId, tier: number): THREE.Group {
+    // Use the baked MagicaVoxel turret model if it's loaded; otherwise fall back
+    // to the procedural turret below (offline / asset missing).
+    if (hasVoxTurret(id)) {
+      const vox = buildVoxTurret(id, TURRET_SCALE);
+      if (vox) { vox.scale.setScalar(this.turretScale(tier)); return vox; }
+    }
     const accent = TD_TOWERS[id].color;
     const stone = 0x6b7079, stoneDark = 0x4e535b, wood = 0x6b4a2b, woodDark = 0x4a3320, metal = 0x33363d;
     const g = new THREE.Group();
