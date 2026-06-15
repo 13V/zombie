@@ -153,7 +153,7 @@ export class Wallet {
       if (!res.ok || !j.ok) {
         return { ok: false, message: j.error || "Claim rejected by the server." };
       }
-      const amt = typeof j.claimed === "number" ? `${j.claimed} $TOKEN` : "earnings";
+      const amt = typeof j.claimed === "number" ? `${j.claimed} $TINY` : "earnings";
       const tx = j.txid ? ` (tx ${String(j.txid).slice(0, 8)}…)` : "";
       return { ok: true, message: `Claimed ${amt}!${tx}` };
     } catch {

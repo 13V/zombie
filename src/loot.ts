@@ -2,7 +2,7 @@
  * Tradable loot economy. Zombies (rarely) and bosses (always) drop collectible
  * ITEMS with a rarity and a gold value. Players sell items for GOLD — the
  * in-game soft currency. This is the closed economy that, at token launch,
- * bridges to a real on-chain marketplace (gold ⇄ $TOKEN, handled by a backend).
+ * bridges to a real on-chain marketplace (gold ⇄ $TINY, handled by a backend).
  *
  * Everything here is client-side and honest: gold is earned by playing and
  * spent in-game. No real value is created or moved by this file.

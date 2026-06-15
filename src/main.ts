@@ -1177,7 +1177,7 @@ class Game implements GameApi {
     // The ONLY source of truth for claimable tokens is the server ledger.
     const claimable = await fetchClaimable(s.address);
     if (claimable !== null) {
-      this.hud.setWallet(true, this.wallet.short, `${claimable} $TOKEN claimable`);
+      this.hud.setWallet(true, this.wallet.short, `${claimable} $TINY claimable`);
       this.hud.setClaimStatus(claimable > 0 ? "Ready to claim" : "Keep playing to earn");
     } else {
       // No backend yet — show local Essence as a provisional, unverified preview.

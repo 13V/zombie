@@ -218,7 +218,7 @@ export class Hud {
           <span class="wallet-bal" id="wallet-bal"></span>
         </div>
         <div class="wallet-row claim-row hidden" id="claim-row">
-          <button class="coop-btn" id="btn-claim">Claim $TOKEN</button>
+          <button class="coop-btn" id="btn-claim">Claim $TINY</button>
           <button class="link-btn" id="btn-token-api" title="Token reward backend">⚙</button>
           <span class="wallet-bal" id="claim-status"></span>
         </div>
@@ -583,7 +583,7 @@ export class Hud {
         ${items.length ? `<button class="mkt-sellall" id="mkt-sellall">Sell all (⛀ ${total})</button>` : ""}
       </div>
       <div class="mkt-list">${list}</div>
-      <div class="mkt-note">Gold will be tradable for $TOKEN at launch.</div>`;
+      <div class="mkt-note">Gold will be tradable for $TINY at launch.</div>`;
     this.q("#tab-market").querySelectorAll<HTMLButtonElement>(".mkt-item").forEach((btn) => {
       btn.addEventListener("click", () => onSell(btn.dataset.id!));
     });
