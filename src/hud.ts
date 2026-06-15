@@ -231,7 +231,7 @@ export class Hud {
         <div class="overStats" id="over-stats"></div>
         <div class="over-buttons">
           <button class="play" id="btn-restart">Again</button>
-          <button class="coop-btn" id="btn-menu">Menu</button>
+          <button class="coop-btn" id="btn-menu">🏝️ Lobby</button>
         </div>
       </div>
 

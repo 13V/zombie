@@ -406,7 +406,9 @@ class Game implements GameApi {
 
     this.hud.onStart(() => this.startRun());
     this.hud.onRestart(() => this.startRun());
-    this.hud.onMenu(() => this.toMenu());
+    // Game-over "Lobby" button: clean up the dead run, then drop straight into
+    // the island hub — skipping the splash screen entirely.
+    this.hud.onMenu(() => { this.toMenu(); this.enterIsland(); });
     this.hud.onPrestige(() => this.openPrestige());
     this.hud.onHost(() => this.hostGame());
     this.hud.onJoin((code) => this.joinGame(code));
