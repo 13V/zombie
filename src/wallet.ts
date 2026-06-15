@@ -36,6 +36,20 @@ function getProvider(): Provider | null {
   return null;
 }
 
+/** Wallet extensions/in-app browsers can inject `window.solana` a beat after the
+ *  page loads (esp. Phantom's mobile in-app browser), so poll briefly. */
+function waitForProvider(timeoutMs = 1800): Promise<Provider | null> {
+  const now = getProvider();
+  if (now) return Promise.resolve(now);
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const t = setInterval(() => {
+      const p = getProvider();
+      if (p || Date.now() - start > timeoutMs) { clearInterval(t); resolve(p); }
+    }, 100);
+  });
+}
+
 export class Wallet {
   state: WalletState = { connected: false, address: null, tokenBalance: null };
   onChange?: (s: WalletState) => void;
@@ -69,9 +83,11 @@ export class Wallet {
 
   /** Explicit connect (opens the wallet popup). Returns the address or null. */
   async connect(): Promise<string | null> {
-    const p = getProvider();
+    const p = await waitForProvider();
     if (!p) {
-      window.open("https://phantom.app/", "_blank", "noopener");
+      // No injected wallet (e.g. a plain mobile browser). Send them to Phantom;
+      // caller surfaces a "no wallet" message either way.
+      try { window.open("https://phantom.app/", "_blank", "noopener"); } catch { /* ignore */ }
       return null;
     }
     try {

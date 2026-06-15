@@ -1177,10 +1177,16 @@ class Game implements GameApi {
       await this.wallet.disconnect();
       return;
     }
-    if (!this.wallet.available) {
-      this.hud.setLobbyStatus("No Solana wallet found — install Phantom to connect.");
+    // On the splash the status line + address row are hidden, so the connect
+    // button itself is the feedback: show progress, then success (via syncWallet)
+    // or a clear failure hint.
+    this.hud.setConnectLabel("⏳ Connecting…");
+    const addr = await this.wallet.connect();
+    if (!addr && !this.wallet.state.connected) {
+      this.hud.setConnectLabel(
+        this.wallet.available ? "🔗 Connect Wallet (tap to retry)" : "🔗 Open in Phantom to connect",
+      );
     }
-    await this.wallet.connect();
   }
 
   /** Reflect wallet state on the menu, then ask the backend what's claimable. */

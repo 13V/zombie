@@ -809,12 +809,20 @@ export class Hud {
   setClaimStatus(text: string) {
     this.q("#claim-status").textContent = text;
   }
+  /** Show transient state on the splash hero connect button (e.g. "Connecting…").
+   *  The splash hides the status line + address row, so this button IS the feedback. */
+  setConnectLabel(text: string) {
+    this.q("#btn-connect").textContent = text;
+  }
   /** Reflect wallet connection state on the menu button + balance chip. */
   setWallet(connected: boolean, short: string, balanceLabel: string) {
     this.q("#btn-wallet").textContent = connected ? short : "Connect Wallet";
     this.q("#btn-wallet").classList.toggle("connected", connected);
-    // Hero CTA: prominent while disconnected, hidden once linked (play leads after).
-    this.q("#btn-connect").classList.toggle("hidden", connected);
+    // Hero CTA stays visible as the splash's connection indicator: shows the
+    // linked address when connected (the address row is hidden on the splash).
+    const connectBtn = this.q("#btn-connect");
+    connectBtn.textContent = connected ? `✅ ${short}` : "🔗 Connect Wallet";
+    connectBtn.classList.toggle("connected", connected);
     this.q("#wallet-bal").textContent = connected ? balanceLabel : "";
     // the claim row only makes sense once a wallet is linked
     this.q("#claim-row").classList.toggle("hidden", !connected);
