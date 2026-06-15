@@ -58,6 +58,57 @@ export async function fetchClaimable(address: string): Promise<number | null> {
   }
 }
 
+/**
+ * Earn rails — convert gameplay gold into claimable $TINY via the backend.
+ *
+ * Sign ONCE per session for a short-lived token (so reporting after each run
+ * doesn't pop a wallet signature every time); the backend then caps/credits.
+ * All no-ops until a backend URL is configured.
+ */
+
+/** Sign in for an earn-session token. `sign` returns a base64 signature (or null
+ *  if declined). Returns the token, or null on any failure. */
+export async function earnLogin(
+  address: string,
+  sign: (message: string) => Promise<string | null>,
+): Promise<string | null> {
+  if (!apiUrl) return null;
+  try {
+    const message = `Tiny Realm login\naddress: ${address}\nts: ${Date.now()}`;
+    const signature = await sign(message);
+    if (!signature) return null;
+    const r = await fetch(`${apiUrl}/earn/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address, message, signature }),
+    });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { token?: unknown };
+    return typeof j.token === "string" ? j.token : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Report gameplay gold for crediting (server caps it). Returns the $TINY
+ *  credited, null on failure, or "expired" if the session token is stale. */
+export async function reportEarn(token: string, gold: number): Promise<number | "expired" | null> {
+  if (!apiUrl || !(gold > 0)) return null;
+  try {
+    const r = await fetch(`${apiUrl}/earn`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token, gold: Math.floor(gold) }),
+    });
+    if (r.status === 401) return "expired";
+    if (!r.ok) return null;
+    const j = (await r.json()) as { credited?: unknown };
+    return typeof j.credited === "number" ? j.credited : null;
+  } catch {
+    return null;
+  }
+}
+
 /** base64-encode raw signature bytes for JSON transport (no deps). */
 export function bytesToB64(bytes: Uint8Array): string {
   let s = "";

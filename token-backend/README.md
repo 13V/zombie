@@ -43,7 +43,18 @@ treasury. Players withdraw their in-game `$TOKEN` balance to their wallet.
 - `POST /market/buy` — a player buys a listing; 5% fee → treasury, rest → seller.
 - `POST /buyback` *(admin)* — treasury buys an item from a player and relists it at a markup.
 - `POST /box/open` *(admin)* — provably-fair (commit-reveal) box outcome decided server-side.
+- `POST /earn/login` — player signs ONCE per session → short-lived earn token (so reporting after each run doesn't pop a wallet prompt every time).
+- `POST /earn` — `{ token, gold }` → converts gameplay gold into claimable `$TINY`, **hard-capped** (see below). The static client is forgeable, so these caps — not trust — bound the payout. Returns `{ credited, balance, dailyRemaining }`.
 - `POST /claim` — verifies wallet signature + freshness + replay, pays out the balance, returns `{ ok, claimed, txid }`.
+
+### Earn caps (env — tune for your treasury, funded by coin trading fees)
+- `EARN_RATE` (def `0.01`) — `$TINY` credited per 1 gold earned.
+- `EARN_PER_REQUEST_MAX` (def `50`) — max credited per single report.
+- `EARN_DAILY_MAX` (def `200`) — max credited per wallet per UTC day. **This is the main throttle on payout/abuse.**
+- `EARN_MIN_INTERVAL_MS` (def `15000`) — min gap between a wallet's reports.
+- `EARN_TOKEN_TTL_MS` (def `6h`) — earn-session token lifetime.
+
+> Earn is **client-reported** (the game is static/forgeable), so credits are bounded by the daily cap, not verified gameplay. Keep `EARN_DAILY_MAX` conservative relative to treasury inflow; claims pay from the treasury, so fund it from fees before turning earning loose.
 
 ## Run it (dry-run, no real tokens)
 ```bash

@@ -53,7 +53,7 @@ import { CHALLENGES, RunStats, blankRunStats } from "./challenges";
 import { NetClient, InputMsg, ZombieSnap, AffixCode, warmServer, getServerUrl, setServerUrl } from "./net";
 import { TouchControls, isTouchDevice } from "./touchControls";
 import { Wallet } from "./wallet";
-import { getTokenApiUrl, setTokenApiUrl, fetchClaimable } from "./token";
+import { getTokenApiUrl, setTokenApiUrl, fetchClaimable, earnLogin, reportEarn } from "./token";
 import { NetPlay, GuestSlot } from "./netplay";
 import { COLORS, auraMaterial } from "./palette";
 import { TiltShift } from "./tiltShift";
@@ -117,6 +117,9 @@ class Game implements GameApi {
   // without touching combat code. This marks goldEarned at the last reconcile.
   private _goldEarnedMark = 0;
   private _runGoldStart = 0; // goldEarned at this run's start (for the "earn gold" daily)
+  private _earnMark = 0; // goldEarned already reported to the $TINY earn backend
+  private _earnToken?: string; // short-lived earn-session token (sign once per session)
+  private _earnBusy = false; // a flush is in flight (avoid overlapping reports)
   private _bankerRoundGold = 0; // gold minted by bankers this round (per-round cap)
   private _bankerRound = -1; // round the above was last reset for
   // ── PET DEPTH: role/synergy per-round accumulators (drainer heal + harvester
@@ -437,6 +440,7 @@ class Game implements GameApi {
     // NEW gold (this session onward) feeds the prestige basis — migrated saves
     // with a large pre-feature goldEarned don't dump it into prestige at once.
     this._goldEarnedMark = this.save.goldEarned;
+    this._earnMark = this.save.goldEarned; // don't credit pre-boot gold on first connect
     this.refreshPrestigeUi();
 
     this.resetRun(); // place player + default weapon so the menu scene looks alive
@@ -1165,8 +1169,12 @@ class Game implements GameApi {
       this.hud.setWallet(false, "", "");
       this.hud.setClaimStatus("");
       this.endCloudSession(); // wallet gone → stop pushing, drop the token
+      this._earnToken = undefined; // drop the earn session too
       return;
     }
+    // Only credit gold earned WHILE connected — baseline the earn mark at connect
+    // so prior gold isn't retroactively dumped into a freshly linked wallet.
+    this._earnMark = this.save.goldEarned;
     // Cloud-save sync rides the same connect signal as the token check. It's a
     // no-op unless a save backend URL is configured; mid-run it defers until the
     // player is back in the hub so we never pop a sign request during combat.
@@ -1190,6 +1198,36 @@ class Game implements GameApi {
    *  (which can pop a wallet sign request) only runs in these calm states. */
   private inHub(): boolean {
     return this.state === "island" || this.state === "menu";
+  }
+
+  /** Report gold earned since the last flush to the $TINY earn backend, which
+   *  caps + credits it as claimable. No-op unless a wallet is connected AND a
+   *  token backend URL is configured. Signs once per session (lazy login); the
+   *  server's per-day caps bound the payout. Called on each return to the hub. */
+  private async flushEarnings(): Promise<void> {
+    if (this._earnBusy) return;
+    const addr = this.wallet.state.address;
+    if (!addr || !getTokenApiUrl()) return;
+    const delta = Math.floor(this.save.goldEarned - this._earnMark);
+    if (delta <= 0) return;
+    this._earnBusy = true;
+    try {
+      if (!this._earnToken) {
+        this._earnToken = (await earnLogin(addr, (m) => this.wallet.signText(m))) ?? undefined;
+        if (!this._earnToken) return; // declined / unreachable — try again next hub visit
+      }
+      const res = await reportEarn(this._earnToken, delta);
+      if (res === "expired") { this._earnToken = undefined; return; } // re-login next time
+      if (res === null) return; // transient failure — keep the mark so we retry the same delta
+      this._earnMark = this.save.goldEarned; // credited (even if 0 from daily cap) — advance
+      const claimable = await fetchClaimable(addr);
+      if (claimable !== null) {
+        this.hud.setWallet(true, this.wallet.short, `${claimable} $TINY claimable`);
+        if (res > 0) this.hud.toast(`+${res} $TINY earned`);
+      }
+    } finally {
+      this._earnBusy = false;
+    }
   }
 
   /**
@@ -2207,6 +2245,8 @@ class Game implements GameApi {
     if (addr && (this._cloudDeferred || (cloudEnabled() && !this._cloudToken))) {
       this.maybeCloudSync(addr);
     }
+    // Settle this run's gold into claimable $TINY (no-op without wallet + backend).
+    void this.flushEarnings();
   }
 
   /** Join the shared island instance so other players appear (best-effort). */

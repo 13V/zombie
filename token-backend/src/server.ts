@@ -34,11 +34,25 @@ const MARKET_FEE = Number(process.env.MARKET_FEE ?? 0.05); // 5% to treasury
 const STATE_PATH = process.env.STATE_PATH ?? "./ledger.json";
 const TREASURY_SELLER = "TREASURY"; // sentinel: a listing owned by the treasury
 
+// ---- earn config (gameplay → claimable $TINY) -----------------------------
+// The static client is forgeable, so these CAPS — not trust — bound the payout:
+// a wallet can only convert so much gold/day, throttled, replay-safe. Tune for
+// your treasury (funded by coin trading fees). All overridable via env.
+const EARN_RATE = Number(process.env.EARN_RATE ?? 0.01);            // $TINY credited per 1 gold earned
+const EARN_PER_REQUEST_MAX = Number(process.env.EARN_PER_REQUEST_MAX ?? 50); // cap per single report
+const EARN_DAILY_MAX = Number(process.env.EARN_DAILY_MAX ?? 200);  // cap per wallet per UTC day
+const EARN_MIN_INTERVAL_MS = Number(process.env.EARN_MIN_INTERVAL_MS ?? 15000); // throttle between reports
+const EARN_TOKEN_TTL_MS = Number(process.env.EARN_TOKEN_TTL_MS ?? 6 * 60 * 60 * 1000); // session token life
+const utcDay = () => Math.floor(Date.now() / 86_400_000);
+
 // ---- state (JSON-file placeholder — REPLACE WITH A REAL DB) ----------------
 interface Account {
   balance: number; // in-game $TOKEN the player holds (spendable + withdrawable)
   claimedTotal: number; // lifetime withdrawn to wallet
   usedSignatures: string[]; // claim replay guard
+  lastEarnTs?: number; // last accepted /earn (rate-limit)
+  earnDay?: number; // UTC day-index the daily earn window belongs to
+  earnedToday?: number; // $TINY credited via /earn so far today (vs EARN_DAILY_MAX)
 }
 interface Listing {
   id: number;
@@ -56,6 +70,8 @@ interface State {
   houses: Record<string, unknown>;
   /** Social counters keyed by "owner:plotIndex" → likes/visits. */
   houseSocial?: Record<string, { likes: number; visits: number }>;
+  /** Short-lived earn-session tokens: token → { address, exp }. */
+  tokens?: Record<string, { address: string; exp: number }>;
 }
 
 function load(): State {
@@ -68,9 +84,10 @@ function load(): State {
       nextListingId: s.nextListingId ?? 1,
       houses: s.houses ?? {},
       houseSocial: s.houseSocial ?? {},
+      tokens: s.tokens ?? {},
     };
   } catch {
-    return { accounts: {}, treasury: 0, market: [], nextListingId: 1, houses: {}, houseSocial: {} };
+    return { accounts: {}, treasury: 0, market: [], nextListingId: 1, houses: {}, houseSocial: {}, tokens: {} };
   }
 }
 function save(s: State) {
@@ -328,6 +345,57 @@ app.post("/house/like", (req, res) => {
   social.likes += 1;
   save(s);
   res.json({ ok: true, likes: social.likes });
+});
+
+// --- earn (gameplay → claimable $TINY) ---
+
+/** Sign once per session to get a short-lived earn token, so reporting earnings
+ *  after each run doesn't pop a wallet signature every time. The signature proves
+ *  wallet ownership; the token authorizes subsequent /earn calls for ~6h. */
+app.post("/earn/login", (req, res) => {
+  const { address, message, signature } = req.body ?? {};
+  if (typeof address !== "string" || typeof message !== "string" || typeof signature !== "string") {
+    return res.status(400).json({ error: "address, message, signature required" });
+  }
+  if (!message.includes(`address: ${address}`)) return res.status(400).json({ error: "message/address mismatch" });
+  if (!freshTimestamp(message)) return res.status(400).json({ error: "signed request expired — try again" });
+  if (!verifySig(address, message, signature)) return res.status(401).json({ error: "bad signature" });
+  const s = load();
+  const tokens = (s.tokens ??= {});
+  const now = Date.now();
+  for (const [t, v] of Object.entries(tokens)) if (v.exp <= now) delete tokens[t]; // prune expired
+  const token = crypto.randomBytes(24).toString("base64url");
+  tokens[token] = { address, exp: now + EARN_TOKEN_TTL_MS };
+  save(s);
+  res.json({ ok: true, token, ttl: EARN_TOKEN_TTL_MS });
+});
+
+/** Convert gameplay gold into claimable $TINY, capped hard. Auth is the earn
+ *  token from /earn/login. CAPS are the treasury's protection (client is
+ *  forgeable): per-request max, per-wallet daily max, and a rate-limit. */
+app.post("/earn", (req, res) => {
+  const { token, gold } = req.body ?? {};
+  if (typeof token !== "string" || typeof gold !== "number" || !(gold > 0)) {
+    return res.status(400).json({ error: "token + positive gold required" });
+  }
+  const s = load();
+  const tok = (s.tokens ??= {})[token];
+  const now = Date.now();
+  if (!tok || tok.exp <= now) { if (tok) delete s.tokens![token]; save(s); return res.status(401).json({ error: "session expired — sign in again" }); }
+  const a = acct(s, tok.address);
+  if (a.lastEarnTs && now - a.lastEarnTs < EARN_MIN_INTERVAL_MS) return res.status(429).json({ error: "slow down" });
+  // roll the daily window
+  const day = utcDay();
+  if (a.earnDay !== day) { a.earnDay = day; a.earnedToday = 0; }
+  const remaining = Math.max(0, EARN_DAILY_MAX - (a.earnedToday ?? 0));
+  const credit = round(Math.min(Math.floor(gold) * EARN_RATE, EARN_PER_REQUEST_MAX, remaining));
+  a.lastEarnTs = now;
+  if (credit > 0) {
+    a.balance = round(a.balance + credit);
+    a.earnedToday = round((a.earnedToday ?? 0) + credit);
+  }
+  save(s);
+  res.json({ ok: true, credited: credit, balance: a.balance, dailyRemaining: round(EARN_DAILY_MAX - (a.earnedToday ?? 0)) });
 });
 
 /** Withdraw in-game balance to the wallet. Client proves ownership; server
