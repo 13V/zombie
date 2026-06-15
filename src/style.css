@@ -1773,6 +1773,31 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
   background: rgba(255,207,82,0.12); border: 1px solid rgba(255,207,82,0.3);
   border-radius: 999px; padding: 6px 16px; font-size: 13px; color: #ffe7ad;
 }
+/* Contract-address pill — click to copy */
+.ca-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin: 2px 0 2px; padding: 7px 14px;
+  border-radius: 999px; cursor: pointer;
+  background: linear-gradient(180deg, rgba(255,207,82,0.16), rgba(255,207,82,0.08));
+  border: 1.5px solid rgba(255,207,82,0.45);
+  color: #ffe7ad; font: inherit;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.ca-pill:hover { transform: translateY(-1px); border-color: rgba(255,207,82,0.75); box-shadow: 0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1); }
+.ca-pill:active { transform: translateY(0); }
+.ca-pill .ca-label {
+  font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--gold2); background: rgba(0,0,0,0.22);
+  padding: 2px 7px; border-radius: 999px;
+}
+.ca-pill .ca-addr {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px; letter-spacing: 0.02em; color: #fff;
+}
+.ca-pill .ca-copy { font-size: 12px; opacity: 0.85; }
+.ca-pill.copied { border-color: #7bd88f; color: #cdfada; }
+.ca-pill.copied .ca-label { color: #7bd88f; }
 .splash-hero .play {
   margin-top: 6px; width: 100%; border-radius: 16px;
   background: linear-gradient(180deg, var(--gold2), #e0a635);

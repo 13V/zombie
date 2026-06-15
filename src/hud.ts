@@ -165,6 +165,11 @@ export class Hud {
           <img class="splash-logo" src="/logo.png" alt="Tiny Realm" />
           <img class="splash-art" src="/hero.png" alt="" />
           <p class="tagline">A tiny voxel world you can actually play. Survive, build, raid, collect — every run earns <b>$TINY</b>.</p>
+          <button class="ca-pill" id="ca-pill" data-ca="GSMfrHEcAd54gugddTYpRLMLjASq1xp1CM83PRUopump" title="Copy contract address">
+            <span class="ca-label">$TINY CA</span>
+            <span class="ca-addr">GSMfrHE…RUopump</span>
+            <span class="ca-copy">📋</span>
+          </button>
           <div class="bestline" id="best-line"></div>
           <!-- Primary actions FIRST so they're always visible without scrolling past the shop. -->
           <button class="play" id="btn-connect">🔗 Connect Wallet</button>
@@ -262,6 +267,23 @@ export class Hud {
 
     // ✕ on the shop-modal: close back to the island
     this.q("#overlay-close").addEventListener("click", () => this.hideStart());
+
+    // CA pill: copy the contract address to clipboard with quick "Copied!" feedback
+    const caPill = this.q("#ca-pill");
+    caPill.addEventListener("click", () => {
+      const ca = caPill.dataset.ca || "";
+      try { navigator.clipboard?.writeText(ca); } catch { /* clipboard blocked */ }
+      const copy = caPill.querySelector<HTMLElement>(".ca-copy");
+      const addr = caPill.querySelector<HTMLElement>(".ca-addr");
+      caPill.classList.add("copied");
+      if (copy) copy.textContent = "✓";
+      if (addr) { addr.dataset.prev = addr.textContent || ""; addr.textContent = "Copied!"; }
+      window.setTimeout(() => {
+        caPill.classList.remove("copied");
+        if (copy) copy.textContent = "📋";
+        if (addr && addr.dataset.prev) addr.textContent = addr.dataset.prev;
+      }, 1400);
+    });
     // clicking the dark backdrop (outside the card) also closes the shop modal
     this.startOverlay.addEventListener("click", (e) => {
       if (e.target === this.startOverlay && this.startOverlay.classList.contains("shop-modal")) this.hideStart();
