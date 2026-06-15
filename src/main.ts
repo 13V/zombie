@@ -4311,7 +4311,7 @@ class Game implements GameApi {
 
     // player-controlled zoom (wheel / +- keys) eased toward the target, with the
     // boss-death punch-zoom folded in. Re-apply the ortho frustum every frame.
-    this.camZoomTarget = Math.max(0.7, Math.min(this.state === "island" ? 3.4 : 1.9, this.camZoomTarget));
+    this.camZoomTarget = Math.max(0.7, Math.min(1.9, this.camZoomTarget));
     this.camZoom += (this.camZoomTarget - this.camZoom) * (1 - Math.exp(-12 * dt));
     if (this.zoomPunch > 0.001) this.zoomPunch *= Math.pow(0.02, dt);
     this.applyView();
@@ -4334,8 +4334,9 @@ class Game implements GameApi {
 
   /** Nudge the zoom target (mult>1 zooms out), clamped. Wider range in the hub. */
   private nudgeZoom(factor: number) {
-    const maxOut = this.state === "island" ? 3.4 : 1.9;
-    this.camZoomTarget = Math.max(0.7, Math.min(maxOut, this.camZoomTarget * factor));
+    // Cap the lobby zoom-out at the default framing so the empty water/horizon
+    // band below the island can never be brought into view.
+    this.camZoomTarget = Math.max(0.7, Math.min(1.9, this.camZoomTarget * factor));
   }
 
   private onResize = () => {
