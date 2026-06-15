@@ -56,8 +56,10 @@ const FACES = [
 ] as const;
 
 /** Merge a voxel list into one BufferGeometry, dropping faces hidden between
- *  adjacent voxels. Vertex colors carry the palette (converted sRGB→linear). */
-function buildGeometry(id: string, d: VoxData): THREE.BufferGeometry {
+ *  adjacent voxels. The whole pack shares one red/grey palette, so we RECOLOR the
+ *  red "body" voxels to the tower's signature color (keeping their shading + the
+ *  neutral grey structure) — that's what makes each tower visually distinct. */
+function buildGeometry(id: string, d: VoxData, accent: number): THREE.BufferGeometry {
   const cached = geomCache.get(id);
   if (cached) return cached;
   const v = d.v;
@@ -66,11 +68,23 @@ function buildGeometry(id: string, d: VoxData): THREE.BufferGeometry {
   const key = (x: number, y: number, z: number) => (x * 1024 + y) * 1024 + z;
   for (let i = 0; i < n; i++) filled.add(key(v[i * 6], v[i * 6 + 1], v[i * 6 + 2]));
 
+  // tower accent (0..1) + the pack's main-red luminance for shade-preserving recolor
+  const aR = ((accent >> 16) & 255) / 255, aG = ((accent >> 8) & 255) / 255, aB = (accent & 255) / 255;
+  const MAIN_RED_LUM = 0.299 * 213 + 0.587 * 76 + 0.114 * 58; // the pack's primary red
+
   const pos: number[] = [], nor: number[] = [], col: number[] = [];
   const tmp = new THREE.Color();
   for (let i = 0; i < n; i++) {
     const x = v[i * 6], y = v[i * 6 + 1], z = v[i * 6 + 2];
-    tmp.setRGB(v[i * 6 + 3] / 255, v[i * 6 + 4] / 255, v[i * 6 + 5] / 255, THREE.SRGBColorSpace);
+    const r = v[i * 6 + 3], g = v[i * 6 + 4], b = v[i * 6 + 5];
+    // "body" = the red family (R dominant). Recolor to the tower accent, scaled
+    // by this voxel's brightness so darker/lighter reds keep their shading.
+    if (r > 80 && r > g * 1.45 && r > b * 1.45) {
+      const k = Math.min(1.35, (0.299 * r + 0.587 * g + 0.114 * b) / MAIN_RED_LUM);
+      tmp.setRGB(Math.min(1, aR * k), Math.min(1, aG * k), Math.min(1, aB * k), THREE.SRGBColorSpace);
+    } else {
+      tmp.setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace);
+    }
     for (const f of FACES) {
       if (filled.has(key(x + f.dl[0], y + f.dl[1], z + f.dl[2]))) continue; // interior face — skip
       const [a, b, c2, e] = f.c;
@@ -97,7 +111,7 @@ function buildGeometry(id: string, d: VoxData): THREE.BufferGeometry {
 export function buildVoxTurret(id: string, turretScaleBase: number, accent: number): THREE.Group | null {
   const d = data.get(id);
   if (!d) return null;
-  const geo = buildGeometry(id, d);
+  const geo = buildGeometry(id, d, accent);
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.72, metalness: 0.04 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
