@@ -937,6 +937,9 @@ class Game implements GameApi {
     this.setRenderTier(this._lowSpec ? 1.6 : 3, this._lowSpec ? 1.4 : 2); // crisp backdrop
     this.camZoom = this.camZoomTarget = 1.9; // frame the hub immediately (no ease-in from a stale zoom)
     this.applyView();
+    // Connect island presence so real players show on the splash too (social
+    // proof). Idempotent — enterIsland reuses the same connection.
+    void this.connectIslandPresence();
   }
 
   /** Pause the breather and offer 1 of 3 stacking run upgrades. */
@@ -1057,6 +1060,7 @@ class Game implements GameApi {
 
   private startRun() {
     // leaving the hub for the zombie world: swap scenes back to the arena
+    this.disconnectIslandPresence(); // free the island socket during a solo run
     this.setRenderTier(this._lowSpec ? 1.3 : 1.5); // start crisp; the governor drops res if a heavy wave needs it
     this.island.setVisible(false);
     this.arena.group.visible = true;
@@ -1829,6 +1833,12 @@ class Game implements GameApi {
       this.simulateTd(dt);
     } else {
       this.player.idle(dt); // keep the figure breathing on menu / pause / over
+      // Splash backdrop: step + render other players so the lobby looks alive.
+      // No-op in pause/over (presence is disconnected there → islandNet undefined).
+      this.islandNet?.update(dt, {
+        x: this.player.pos.x, z: this.player.pos.z,
+        ry: this.player.group.rotation.y, moving: false,
+      });
     }
 
     this.island.update(dt);
@@ -2282,7 +2292,7 @@ class Game implements GameApi {
       this.islandNet.onPortalStart = (portal, code) => this.onPortalStart(portal, code);
       this.updateIslandFlex(); // broadcast my squad + title + prestige to peers
       this.islandNet.setMenuOpen(this.emoteMenu?.isOpen ?? false);
-      this.hud.toast("Island: press T to emote 👋");
+      if (this.state === "island") this.hud.toast("Island: press T to emote 👋"); // not on the splash backdrop
     } catch {
       // presence is optional — the hub still works solo if the relay is asleep
       this.net?.close();

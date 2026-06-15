@@ -18,7 +18,7 @@ const HOST_ID = 1;
 /** Capacity of a co-op run room (host + up to 3 guests). */
 const MAX_MEMBERS = 4;
 /** Capacity of a social island instance (Roblox-style shared lobby). */
-const ISLAND_CAP = 16;
+const ISLAND_CAP = 24;
 /** Fixed code prefix for island instances; numbered instances spill over. */
 const ISLAND_PREFIX = "ISLE";
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous 0/O/1/I

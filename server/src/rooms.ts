@@ -13,7 +13,7 @@ import type { WebSocket } from 'ws';
 export const MAX_MEMBERS = 4;
 
 /** Capacity of a social island instance (Roblox-style shared lobby). */
-export const ISLAND_CAP = 16;
+export const ISLAND_CAP = 24;
 
 /** Fixed code prefix for island instances; numbered instances spill over. */
 export const ISLAND_PREFIX = 'ISLE';
