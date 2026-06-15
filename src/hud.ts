@@ -608,7 +608,7 @@ export class Hud {
     const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k` : `${n}`);
     const card = (r: (typeof rows)[number]) => {
       const cls = r.affordable ? "" : "locked";
-      const action = r.owned ? `Lv ${r.level} → ⛀ ${r.upCost}` : `⛀ ${r.cost}`;
+      const action = r.owned ? `Lv ${r.level} → ⛀ ${r.upCost}` : `🥚 Hatch from eggs`;
       const stageTag = r.owned && r.stage && r.stageName ? ` · ${r.stageName}` : "";
       const lvlBadge = r.owned ? `<span class="pet-lvl">Lv ${r.level}${stageTag}</span>` : "";
       // combat-XP bar toward the next level (pets level by fighting)

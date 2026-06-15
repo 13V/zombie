@@ -663,21 +663,12 @@ class Game implements GameApi {
     const baseForCost = PETS.find((p) => p.evolvesTo === id) ?? def;
     const owned = this.save.pets.includes(id);
     if (!owned) {
-      if (this.save.gold < def.cost) { this.audio.deny(); return; }
-      this.save.gold -= def.cost;
-      this.save.pets.push(id);
-      this.save.petLevels[id] = 1;
-      // Cosmetic shiny/chroma chase: low-odds roll on first acquisition. Stored as
-      // petProgress[id]._shiny (reserved numeric key). PURELY visual (tint/sparkle
-      // in pets.ts Pet.build/update) — never affects power, never cashable.
-      if (Math.random() < PET_DEPTH.cosmetic.shinyOdds) {
-        (this.save.petProgress[id] ??= {})._shiny = 1;
-        this.hud.toast(`✨ SHINY ${def.name}! ✨`);
-      }
-      // Collection-completion milestone: a one-time soft-essence reward when a new
-      // distinct pet crosses a threshold count. NON-CASHABLE (essence only).
-      this.grantCollectionMilestones();
-    } else {
+      // Pets can no longer be bought directly — they're hatched from eggs.
+      this.audio.deny();
+      this.hud.toast(`🥚 ${def.name} is hatched from eggs!`);
+      return;
+    }
+    {
       const level = this.save.petLevels[id] ?? 1;
       const cost = petLevelCost(baseForCost, level);
       if (this.save.gold < cost) { this.audio.deny(); return; }
