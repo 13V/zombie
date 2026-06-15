@@ -271,8 +271,10 @@ function handleDisconnect(socket: WebSocket): void {
   const room = s.room;
   const leavingId = s.member.id;
 
-  if (leavingId === HOST_ID) {
-    // Host left → tear the room down.
+  if (leavingId === HOST_ID && !room.isIsland) {
+    // Co-op host left → tear the room down (host is authoritative). ISLANDS are
+    // hostless: the first joiner just happens to get id 1, so we must NOT nuke
+    // the instance when they leave — fall through to the normal member-left path.
     const remaining = rooms.others(room, HOST_ID);
     rooms.deleteRoom(room);
     for (const guest of remaining) {
@@ -293,7 +295,8 @@ function handleDisconnect(socket: WebSocket): void {
     return;
   }
 
-  // A guest left → notify remaining members; RoomManager deletes empty rooms.
+  // A member left (a co-op guest, OR anyone in a hostless island incl. id 1) →
+  // notify remaining members; RoomManager deletes the room once it's empty.
   const remaining = rooms.removeMember(room, leavingId);
   for (const other of remaining) {
     send(other.socket, { t: 'peer-leave', id: leavingId });

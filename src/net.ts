@@ -415,7 +415,7 @@ export class NetClient {
   private handle(ev: MessageEvent) {
     const m = this.parse(ev.data);
     if (!m) return;
-    console.log("[net] recv", m.t, (m as { id?: number; from?: number }).id ?? (m as { from?: number }).from ?? "");
+    if (m.t !== "relay") console.log("[net] recv", m.t, (m as { id?: number; from?: number }).id ?? "");
     switch (m.t) {
       case "peer-join":
         this.peers.add(m.id);

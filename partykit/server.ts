@@ -180,7 +180,10 @@ export default class Relay implements Party.Server {
     if (!room) return;
     room.members.delete(loc.id);
 
-    if (loc.id === HOST_ID) {
+    // Co-op host left → tear the room down (host is authoritative). ISLANDS are
+    // hostless (first joiner just gets id 1), so we must NOT nuke the instance —
+    // fall through to the normal member-left notify.
+    if (loc.id === HOST_ID && !room.isIsland) {
       for (const m of room.members.values()) {
         send(m.conn, { t: "peer-leave", id: HOST_ID });
         send(m.conn, { t: "error", msg: "host left" });
