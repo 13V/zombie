@@ -37,7 +37,7 @@ const state = new WeakMap<WebSocket, SocketState>();
 const httpServer = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'content-type': 'text/plain' });
-    res.end('ok');
+    res.end('ok conns=' + wss.clients.size);
     return;
   }
   // Anything else over plain HTTP gets a minimal 404; real traffic is WS.
@@ -51,7 +51,7 @@ const wss = new WebSocketServer({ server: httpServer, maxPayload: 64 * 1024 });
 
 // Hard ceiling on concurrent sockets — refuse new connections past this so a
 // flood can't exhaust memory/file descriptors.
-const MAX_CONNECTIONS = 500;
+const MAX_CONNECTIONS = 5000;
 
 // ---------------------------------------------------------------------------
 // Message helpers.
