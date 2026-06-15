@@ -74,7 +74,7 @@ class Game implements GameApi {
   private viewSize = 15; // half-height of the orthographic view, in world units
   private camZoom = 1; // live zoom multiplier (eased toward camZoomTarget)
   private camZoomTarget = 1; // player-set zoom (wheel / +- keys); >1 = zoomed out
-  private _tiltStrength = 1.8; // base tilt-shift blur (eased off when zoomed in close)
+  private _tiltStrength = 1.0; // base tilt-shift blur (eased off when zoomed in close)
   private _hatching = false; // an egg-hatch reveal is on screen (blocks re-hatch)
   private _gatherPortal = ""; // mode portal I'm currently standing in (co-op gather)
   private _portalStarting = false; // a portal match is being launched (host or guest)
@@ -262,7 +262,7 @@ class Game implements GameApi {
     // Tilt-shift is built unconditionally (onResize touches it) but only ever
     // added as passes on desktop.
     this.tilt = new TiltShift(innerWidth, innerHeight, {
-      focus: 0.5, band: 0.42, strength: this._tiltStrength, vignette: 0.26, saturation: 1.08, warmth: 0.12,
+      focus: 0.5, band: 0.58, strength: this._tiltStrength, vignette: 0.26, saturation: 1.08, warmth: 0.12,
     });
     if (this.composer) {
       // Gentle bloom — only the brightest emissives glow. Half-res.
@@ -1652,7 +1652,12 @@ class Game implements GameApi {
   /** Apply the current adaptive DPR to the renderer + composer (rebuilds the
    *  post-stack buffers at the new internal resolution). */
   private applyPixelRatio() {
-    const pr = Math.min(devicePixelRatio, this._dprCap) * this._dprScale;
+    // Light scenes (cap ≥ 2: hub / TD / menu) supersample on low-DPI displays —
+    // render at ≥1.5× and downsample so the voxel art reads crisp instead of soft
+    // on a standard 1× monitor. Heavy scenes (horde, cap 1.5) never supersample.
+    const ssFloor = this._dprCap >= 2 ? 1.5 : 0;
+    const base = Math.max(devicePixelRatio, ssFloor);
+    const pr = Math.min(base, this._dprCap) * this._dprScale;
     this.renderer.setPixelRatio(pr);
     this.composer?.setPixelRatio(pr);
     this.composer?.setSize(innerWidth, innerHeight);
