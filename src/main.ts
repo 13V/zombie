@@ -2173,7 +2173,7 @@ class Game implements GameApi {
     this.island.setVisible(true);
     this.player.alive = true;
     this.player.pos.set(0, 0, 11); // stand at the front of the village square
-    this.camZoomTarget = 2.4; // pull back so the whole hub + satellite islands read (wheel/pinch to adjust)
+    this.camZoomTarget = 1.9; // framed so the hub fills the view without showing the empty water/horizon band below the island (wheel/pinch to pull back further)
     // hide the zombie-map fixtures (perk pads, gum, mystery box, traps) + any
     // leftover loot — the hub shares world coords with the arena.
     this.interactables.setVisible(false);
