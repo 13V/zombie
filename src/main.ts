@@ -92,6 +92,7 @@ class Game implements GameApi {
   private arena: Arena;
   private island!: Island;
   private islandNet?: IslandNet;
+  private _islandConnecting = false; // in-flight guard so we never open two island sockets
   private emoteMenu?: EmoteMenu;
   private footstepAcc = 0; // throttles island footstep puffs
   private islandPop = -1; // last-rendered "N players here" count (-1 = unset)
@@ -937,9 +938,6 @@ class Game implements GameApi {
     this.setRenderTier(this._lowSpec ? 1.6 : 3, this._lowSpec ? 1.4 : 2); // crisp backdrop
     this.camZoom = this.camZoomTarget = 1.9; // frame the hub immediately (no ease-in from a stale zoom)
     this.applyView();
-    // Connect island presence so real players show on the splash too (social
-    // proof). Idempotent — enterIsland reuses the same connection.
-    void this.connectIslandPresence();
   }
 
   /** Pause the breather and offer 1 of 3 stacking run upgrades. */
@@ -2278,7 +2276,10 @@ class Game implements GameApi {
 
   /** Join the shared island instance so other players appear (best-effort). */
   private async connectIslandPresence() {
-    if (this.islandNet || this.net) return; // already social, or in a co-op room
+    // Guard against double-connect: islandNet/net set once connected, _islandConnecting
+    // covers the in-flight window (so a second call can't open a 2nd socket → 2nd room).
+    if (this.islandNet || this.net || this._islandConnecting) return;
+    this._islandConnecting = true;
     warmServer();
     try {
       this.net = new NetClient();
@@ -2299,6 +2300,8 @@ class Game implements GameApi {
       this.net?.close();
       this.net = undefined;
       this.hud.setLobbyStatus("Island presence offline (relay asleep) — hub still works.");
+    } finally {
+      this._islandConnecting = false;
     }
   }
 
