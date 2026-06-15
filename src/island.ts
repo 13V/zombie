@@ -1732,7 +1732,6 @@ export class Island {
       index: { text: "COLLECTION", color: 0x6ad7ff, h: 5.6 },
       wheel: { text: "FORTUNE WHEEL", color: 0xff9ec7, h: 6.4 },
       wardrobe: { text: "WARDROBE", color: 0xc792ea, h: 4.6 },
-      bedwars: { text: "BED WARS", color: 0xff5a4a, h: 4.6 },
       td: { text: "TOWER DEFENSE", color: 0x7fd4ff, h: 4.6 },
       pets: { text: "PET SANCTUARY", color: 0xff7ab0, h: 5.6 },
       shop: { text: "SHOP", color: 0xffd24a, h: 3.8 },
