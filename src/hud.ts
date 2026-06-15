@@ -161,8 +161,9 @@ export class Hud {
       <div class="overlay splash" id="overlay-start">
         <button class="overlay-close" id="overlay-close" title="Back to island">✕</button>
         <div class="splash-hero">
-          <h1>TINY <span class="dead">DEAD</span></h1>
-          <p class="tagline">A cozy little world overrun by ten flavors of undead. Survive, loot, spin for wild guns — every run earns <b>Essence</b>.</p>
+          <img class="splash-logo" src="/logo.png" alt="Tiny Realm" />
+          <img class="splash-art" src="/hero.png" alt="" />
+          <p class="tagline">A tiny voxel world you can actually play. Survive, build, raid, collect — every run earns <b>$TINY</b>.</p>
           <div class="bestline" id="best-line"></div>
           <!-- Primary actions FIRST so they're always visible without scrolling past the shop. -->
           <button class="play" id="btn-connect">🔗 Connect Wallet</button>
