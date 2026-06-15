@@ -67,6 +67,7 @@ class Game implements GameApi {
   private _dprCap = 1.5; // device tier ceiling (1 on mobile, 1.5 desktop)
   private _lowSpec = false; // touch/mobile tier (set at construction)
   private _dprScale = 1; // live multiplier, stepped by the frame-time governor
+  private _ss = 1; // supersample floor for the current scene (>1 = render above native)
   private _ftSmooth = 1 / 60; // exponentially-smoothed frame time (seconds)
   private _adaptT = 0; // seconds since the governor last adjusted
   private scene = new THREE.Scene();
@@ -1652,11 +1653,12 @@ class Game implements GameApi {
   /** Apply the current adaptive DPR to the renderer + composer (rebuilds the
    *  post-stack buffers at the new internal resolution). */
   private applyPixelRatio() {
-    // Light scenes (cap ≥ 2: hub / TD / menu) supersample on low-DPI displays —
-    // render at ≥1.5× and downsample so the voxel art reads crisp instead of soft
-    // on a standard 1× monitor. Heavy scenes (horde, cap 1.5) never supersample.
-    const ssFloor = this._dprCap >= 2 ? 1.5 : 0;
-    const base = Math.max(devicePixelRatio, ssFloor);
+    // Supersample on low-DPI displays — render above native and downsample so the
+    // voxel art reads crisp instead of soft on a standard 1× monitor. The hub
+    // pushes 2× (perf doesn't matter in the lobby); the heavy horde never SS's.
+    // Note the SS floor also lifts the adaptive-scale floor (2× × 0.55 ≈ 1.1×),
+    // so even under load the lobby never drops below native resolution.
+    const base = Math.max(devicePixelRatio, this._ss);
     const pr = Math.min(base, this._dprCap) * this._dprScale;
     this.renderer.setPixelRatio(pr);
     this.composer?.setPixelRatio(pr);
@@ -1668,8 +1670,9 @@ class Game implements GameApi {
    *  Defense) get a higher ceiling than the heavy zombie horde, so they render
    *  sharp on phones instead of inheriting the horde's low scale. The frame
    *  governor still steps the scale back down if THIS scene actually struggles. */
-  private setRenderTier(cap: number) {
+  private setRenderTier(cap: number, ss = 1) {
     this._dprCap = cap;
+    this._ss = ss;
     this._dprScale = 1;
     this._ftSmooth = 1 / 60;
     this._adaptT = 0;
@@ -1836,7 +1839,7 @@ class Game implements GameApi {
   private enterBedWars() {
     if (!this.bw) this.bw = new BedWarsMode(this.scene, () => this.leaveBedWars()); // on-screen "✕ Leave" (mobile)
     this.disconnectIslandPresence();
-    this.setRenderTier(this._lowSpec ? 1.4 : 2); // crisp start; parity with enterTd/enterIsland
+    this.setRenderTier(this._lowSpec ? 1.4 : 2, this._lowSpec ? 1 : 1.5); // crisp start; parity with enterTd/enterIsland
     this.island.setVisible(false);
     this.arena.group.visible = false;
     this.interactables.setVisible(false);
@@ -1936,7 +1939,7 @@ class Game implements GameApi {
     this.bullets.clear();
     this._tdEndTimer = 0;
     this.td.enter(mode, opts);
-    this.setRenderTier(this._lowSpec ? 1.5 : 2); // TD is light — render it sharp (governor drops only if it struggles)
+    this.setRenderTier(this._lowSpec ? 1.5 : 2, this._lowSpec ? 1 : 1.5); // TD is light — render it sharp (governor drops only if it struggles)
     this.player.pos.copy(this.td.spawn());
     this.player.group.position.copy(this.player.pos);
     this.camZoomTarget = 2.2;         // pull back to read the whole lane
@@ -2169,7 +2172,7 @@ class Game implements GameApi {
   /** Enter the island hub: hide the arena, show the island, drop the player in. */
   private enterIsland() {
     this.teardownNet();
-    this.setRenderTier(this._lowSpec ? 1.4 : 2); // lobby renders sharp; never inherit the horde's low scale
+    this.setRenderTier(this._lowSpec ? 1.6 : 3, this._lowSpec ? 1.4 : 2); // lobby renders extra-sharp (2× supersample on desktop — perf doesn't matter here)
     this.music.play("hub"); // warm lofi for the lobby
     this.state = "island";
     this.hud.hideStart();

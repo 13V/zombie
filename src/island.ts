@@ -1751,6 +1751,7 @@ export class Island {
       }
       const sign = makeSign(text, color);
       sign.position.set(z.pos.x, h, z.pos.z);
+      sign.scale.multiplyScalar(1.9); // ~2× so the zone labels are readable from the hub framing
       this.group.add(sign);
     }
   }
@@ -2987,25 +2988,27 @@ const BUNT_ROPE = new THREE.BoxGeometry(1, 0.035, 0.035);
 /** A floating pill-shaped nameplate sign (canvas sprite, fog-immune) used to
  *  label the hub's interactive structures so they're easy to find. */
 function makeSign(text: string, color: number): THREE.Sprite {
+  // 2× canvas (512×128, 60px font) so the label stays crisp at the larger
+  // in-world size and under lobby supersampling.
   const c = document.createElement("canvas");
-  c.width = 256;
-  c.height = 64;
+  c.width = 512;
+  c.height = 128;
   const g = c.getContext("2d")!;
-  g.font = "bold 30px system-ui, sans-serif";
+  g.font = "bold 60px system-ui, sans-serif";
   const tw = g.measureText(text).width;
-  const w = Math.min(252, tw + 40);
-  const x = (256 - w) / 2;
+  const w = Math.min(504, tw + 80);
+  const x = (512 - w) / 2;
   g.beginPath();
-  (g as CanvasRenderingContext2D & { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }).roundRect(x, 8, w, 48, 16);
+  (g as CanvasRenderingContext2D & { roundRect: (x: number, y: number, w: number, h: number, r: number) => void }).roundRect(x, 16, w, 96, 32);
   g.fillStyle = "rgba(28,20,12,0.85)";
   g.fill();
-  g.lineWidth = 4;
+  g.lineWidth = 8;
   g.strokeStyle = `#${color.toString(16).padStart(6, "0")}`;
   g.stroke();
   g.fillStyle = "#ffffff";
   g.textAlign = "center";
   g.textBaseline = "middle";
-  g.fillText(text, 128, 33);
+  g.fillText(text, 256, 66);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.generateMipmaps = false;
