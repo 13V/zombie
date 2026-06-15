@@ -1753,6 +1753,13 @@ export class Island {
       sign.position.set(z.pos.x, h, z.pos.z);
       sign.scale.multiplyScalar(1.9); // ~2× so the zone labels are readable from the hub framing
       this.group.add(sign);
+      // Duo & Squad are temporarily disabled → a small "COMING SOON" tag underneath.
+      if (z.kind === "mode" && (z.modePlayers ?? 1) >= 2) {
+        const soon = makeSign("COMING SOON", 0xffd24a);
+        soon.position.set(z.pos.x, h - 1.3, z.pos.z);
+        soon.scale.multiplyScalar(1.25);
+        this.group.add(soon);
+      }
     }
   }
 
@@ -1878,8 +1885,8 @@ export class Island {
       this.group.add(g);
       this.zones.push({ id: "wardrobe", kind: "wardrobe", pos, radius: 2.4, label: "Wardrobe" });
     }
-    // ---- BED WARS portal: a podium with a bed under a red arch (right side) ----
-    {
+    // ---- BED WARS: removed from the lobby for now (disabled block) ----
+    if (false) {
       const g = new THREE.Group();
       const stone = voxelMaterial(VOX.stone);
       const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.0, 0.4, 8), stone);

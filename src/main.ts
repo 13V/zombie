@@ -2414,6 +2414,15 @@ class Game implements GameApi {
     // proximity prompt for the nearest interactive pad / egg / mode gate
     const near = this.island.nearestZone(this.player.pos);
 
+    // Duo & Squad are temporarily disabled — intercept those pads before any
+    // gather/dwell/host logic and just show "Coming Soon". (Solo still works.)
+    if (near && near.kind === "mode" && (near.modePlayers ?? 1) >= 2) {
+      if (this._gatherPortal) { this._gatherPortal = ""; this.islandNet?.setPortal(null); }
+      this.hud.hideEggPanel();
+      this.hud.showPrompt("Duo & Squad — Coming Soon ⏳", false);
+      return;
+    }
+
     // Co-op GATHER: standing in a Duo/Squad portal (online) pools players; when it
     // hits the target the lowest-id occupant hosts a room, shares the code over
     // the relay, and everyone jumps into the match together. Walk off to cancel.
@@ -2525,11 +2534,10 @@ class Game implements GameApi {
     if (zone.kind === "mode" || zone.kind === "join") this.portalBurst(zone.pos);
     switch (zone.kind) {
       case "mode": {
-        // SOLO starts a local run immediately. DUO/SQUAD host a co-op room sized
-        // for that many players (difficulty scales with who actually joins).
+        // SOLO starts a local run. DUO/SQUAD co-op is temporarily disabled.
         const players = zone.modePlayers ?? 1;
         if (players <= 1) this.startRun();
-        else this.hostGame(players);
+        else this.hud.toast("Duo & Squad — coming soon! ⏳");
         break;
       }
       case "join": {
