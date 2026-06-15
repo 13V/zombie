@@ -74,6 +74,7 @@ class Game implements GameApi {
   private viewSize = 15; // half-height of the orthographic view, in world units
   private camZoom = 1; // live zoom multiplier (eased toward camZoomTarget)
   private camZoomTarget = 1; // player-set zoom (wheel / +- keys); >1 = zoomed out
+  private _tiltStrength = 1.8; // base tilt-shift blur (eased off when zoomed in close)
   private _hatching = false; // an egg-hatch reveal is on screen (blocks re-hatch)
   private _gatherPortal = ""; // mode portal I'm currently standing in (co-op gather)
   private _portalStarting = false; // a portal match is being launched (host or guest)
@@ -225,6 +226,9 @@ class Game implements GameApi {
     // would be redundant cost. Mobile: MSAA is the AA (no SMAA).
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: lowSpec });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, this._dprCap));
+    // Clear to the page cream (not the default black) so any pixel a scene's
+    // background doesn't cover reads as the page, never a dark/navy bar.
+    this.renderer.setClearColor(0xe9dcc2, 1);
     this.renderer.shadowMap.enabled = !lowSpec; // shadow pass is too hot for phones
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -258,7 +262,7 @@ class Game implements GameApi {
     // Tilt-shift is built unconditionally (onResize touches it) but only ever
     // added as passes on desktop.
     this.tilt = new TiltShift(innerWidth, innerHeight, {
-      focus: 0.5, band: 0.42, strength: 1.8, vignette: 0.26, saturation: 1.08, warmth: 0.12,
+      focus: 0.5, band: 0.42, strength: this._tiltStrength, vignette: 0.26, saturation: 1.08, warmth: 0.12,
     });
     if (this.composer) {
       // Gentle bloom — only the brightest emissives glow. Half-res.
@@ -416,6 +420,9 @@ class Game implements GameApi {
     this.wallet.tryEagerConnect();
 
     addEventListener("resize", this.onResize);
+    // Entering/leaving fullscreen changes the viewport without always firing a
+    // timely "resize"; re-fit on the next frame (when innerHeight is settled).
+    addEventListener("fullscreenchange", () => requestAnimationFrame(this.onResize));
     this.onResize();
     this.hud.showStart();
 
@@ -4311,6 +4318,10 @@ class Game implements GameApi {
     this.camera.top = vs;
     this.camera.bottom = -vs;
     this.camera.updateProjectionMatrix();
+    // Ease the diorama defocus off as the camera zooms in close (camZoom < 1):
+    // at full zoom-in the magnified, low-poly world reads sharper without the
+    // miniature blur smearing it; default/zoomed-out keeps the full effect.
+    this.tilt?.setStrength(this._tiltStrength * Math.min(1, Math.max(0.25, (this.camZoom - 0.55) / 0.45)));
   }
 
   /** Nudge the zoom target (mult>1 zooms out), clamped. Wider range in the hub. */
@@ -4321,7 +4332,12 @@ class Game implements GameApi {
 
   private onResize = () => {
     this.applyView();
-    this.renderer.setSize(innerWidth, innerHeight);
+    // updateStyle=false: let the CSS (#scene { width/height: 100% }) own the
+    // canvas's *display* size so it always fills the viewport exactly. With the
+    // default (true), three.js writes an explicit px height that can lag the real
+    // viewport (esp. entering fullscreen), leaving a strip of the black clear
+    // color showing at the bottom.
+    this.renderer.setSize(innerWidth, innerHeight, false);
     this.composer?.setSize(innerWidth, innerHeight);
     this.tilt.setSize(innerWidth, innerHeight);
   };

@@ -110,4 +110,11 @@ export class TiltShift {
     (this.horizontal.uniforms.direction.value as THREE.Vector2).set(1 / width, 0);
     (this.vertical.uniforms.direction.value as THREE.Vector2).set(0, 1 / height);
   }
+
+  /** Live-adjust the max blur (texels). Used to ease off the diorama defocus when
+   *  the player zooms the camera in close, so magnified views stay crisp. */
+  setStrength(strength: number) {
+    this.horizontal.uniforms.strength.value = strength;
+    this.vertical.uniforms.strength.value = strength;
+  }
 }
