@@ -1873,7 +1873,10 @@ button.play:active { transform: translateY(3px); box-shadow: 0 3px 0 #c79a2e; }
    SPLASH 2.1 — premium hero: center it, glow the title, shine
    the button, frame the card, tuck the co-op link as a footer
    ============================================================ */
-.splash { justify-content: center !important; }
+/* `safe center`: center the card when it fits, but fall back to top-aligned +
+   scrollable when it's taller than the viewport — otherwise centering clips the
+   logo off the top (and buttons off the bottom) on short/mobile screens. */
+.splash { justify-content: safe center !important; }
 .splash-hero {
   position: relative;
   gap: 14px;
