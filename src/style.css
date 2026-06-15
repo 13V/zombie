@@ -319,6 +319,17 @@ body.touch .controls { display: none; }
   gap: 14px;
   text-shadow: 0 2px 0 rgba(0, 0, 0, 0.25);
 }
+/* Persistent "wallet connected" pill — top-right, above every screen incl. the splash. */
+#wallet-pill {
+  position: fixed; top: 10px; right: 10px; z-index: 55;
+  pointer-events: auto; cursor: pointer;
+  background: rgba(20, 14, 10, 0.72); border: 1.5px solid var(--gold);
+  border-radius: 999px; padding: 4px 11px;
+  font-size: 12px; font-weight: 800; color: #ffe9a8; letter-spacing: 0.02em;
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+#wallet-pill.hidden { display: none; }
 
 .pill {
   background: rgba(58, 47, 37, 0.78);

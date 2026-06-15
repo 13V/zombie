@@ -431,6 +431,14 @@ class Game implements GameApi {
     // timely "resize"; re-fit on the next frame (when innerHeight is settled).
     addEventListener("fullscreenchange", () => requestAnimationFrame(this.onResize));
     this.onResize();
+    // DEV/TEST cheat: visit with ?money to top up local gold + essence for testing
+    // the shop/pets. Only touches the LOCAL save — it CANNOT mint $TINY (that's
+    // server-ledgered + daily-capped). Remove before public launch.
+    if (new URLSearchParams(location.search).has("money")) {
+      this.save.gold = Math.max(this.save.gold, 1_000_000_000);
+      this.save.essence = Math.max(this.save.essence, 1_000_000);
+      writeSave(this.save);
+    }
     this.hud.showStart();
     this.showMenuBackdrop(); // render the lobby behind the splash
 

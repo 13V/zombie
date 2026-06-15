@@ -123,6 +123,7 @@ export class Hud {
 
   private build() {
     this.root.innerHTML = `
+      <div id="wallet-pill" class="hidden">🔗 <span id="wallet-pill-addr"></span></div>
       <div class="hud-top">
         <div class="pill round"><span class="pico">🌊</span><span class="label">Round</span><span class="value" id="hud-round">1</span></div>
         <div class="pill points"><span class="pico">⭐</span><span class="label">Points</span><span class="value" id="hud-points">0</span></div>
@@ -800,6 +801,7 @@ export class Hud {
   onWallet(cb: () => void) {
     this.q("#btn-wallet").addEventListener("click", cb);
     this.q("#btn-connect").addEventListener("click", cb); // hero CTA shares the connect flow
+    this.q("#wallet-pill").addEventListener("click", cb); // tap the pill to disconnect
   }
   /** Wire the Claim button + the token-backend config gear. */
   onClaim(onClaim: () => void, onConfig: () => void) {
@@ -823,6 +825,9 @@ export class Hud {
     const connectBtn = this.q("#btn-connect");
     connectBtn.textContent = connected ? `✅ ${short}` : "🔗 Connect Wallet";
     connectBtn.classList.toggle("connected", connected);
+    // persistent top-of-screen pill (visible across every screen, not just the menu)
+    this.q("#wallet-pill").classList.toggle("hidden", !connected);
+    this.q("#wallet-pill-addr").textContent = short;
     this.q("#wallet-bal").textContent = connected ? balanceLabel : "";
     // the claim row only makes sense once a wallet is linked
     this.q("#claim-row").classList.toggle("hidden", !connected);
