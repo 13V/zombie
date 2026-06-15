@@ -746,7 +746,7 @@ export class TdMode {
     // Use the baked MagicaVoxel turret model if it's loaded; otherwise fall back
     // to the procedural turret below (offline / asset missing).
     if (hasVoxTurret(id)) {
-      const vox = buildVoxTurret(id, TURRET_SCALE);
+      const vox = buildVoxTurret(id, TURRET_SCALE, TD_TOWERS[id].color);
       if (vox) { vox.scale.setScalar(this.turretScale(tier)); return vox; }
     }
     const accent = TD_TOWERS[id].color;

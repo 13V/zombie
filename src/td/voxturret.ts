@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { glowMaterial } from "../palette";
 
 /**
  * Runtime loader for the baked MagicaVoxel turret models (public/turrets/*.json).
@@ -93,7 +94,7 @@ function buildGeometry(id: string, d: VoxData): THREE.BufferGeometry {
  * "barrel" group so the existing aim code swivels it to face targets. Returns null
  * if the model isn't loaded (caller uses the procedural turret).
  */
-export function buildVoxTurret(id: string, turretScaleBase: number): THREE.Group | null {
+export function buildVoxTurret(id: string, turretScaleBase: number, accent: number): THREE.Group | null {
   const d = data.get(id);
   if (!d) return null;
   const geo = buildGeometry(id, d);
@@ -101,7 +102,7 @@ export function buildVoxTurret(id: string, turretScaleBase: number): THREE.Group
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
   // center on X/Z, sit the model's base at y=0
-  const [dx, , dz] = d.d;
+  const [dx, dy, dz] = d.d;
   mesh.position.set(-dx / 2, 0, -dz / 2);
 
   // inner group carries the static orientation/facing offsets; the "barrel" group
@@ -110,6 +111,22 @@ export function buildVoxTurret(id: string, turretScaleBase: number): THREE.Group
   inner.rotation.x = ORIENT_X;
   inner.rotation.y = FACING_Y;
   inner.add(mesh);
+
+  // Animation anchors the TD animator drives (tinted with the tower color):
+  //  • "muzzle" — barrel-tip glow that brightens as the shot charges + flashes on
+  //    fire (animator scales it + pulses emissive — no fixed position assumed).
+  //  • "core"   — a slow-spinning energy core in the body that pulses with charge.
+  // (spin/scan hooks are skipped: they hard-set positions tuned to the old turret
+  //  scale and would sit wrong on these models.)
+  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 8), glowMaterial(accent, 1.0));
+  muzzle.name = "muzzle";
+  muzzle.position.set(0, dy * 0.55, dz * 0.5); // front-top tip, along the barrel's +Z
+  inner.add(muzzle);
+
+  const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.1, 0), glowMaterial(accent, 0.8));
+  core.name = "core";
+  core.position.set(0, dy * 0.5, 0); // body center
+  inner.add(core);
 
   // Barrel intrinsic scale is expressed relative to TURRET_SCALE so that the
   // caller can scale the whole group by turretScale(tier) — matching the
