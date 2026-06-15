@@ -156,6 +156,8 @@ export class Island {
   private pads: { id: string; group: THREE.Group; ring: THREE.Mesh; pos: THREE.Vector3; lit: number }[] = [];
   private greeter?: VoxelChar;
   private arrow?: THREE.Mesh;
+  // floor chevrons leading from the plaza out to the ZOMBIES bridge (pulse outward)
+  private guideArrowMats: THREE.MeshStandardMaterial[] = [];
   // animation registries
   private eggs: EggShrine[] = [];
   private rooms: CoopRoom[] = [];
@@ -216,6 +218,7 @@ export class Island {
     this.buildZones();
     this.buildSatellites(); // floating game-mode islands + bridges (hub-and-spoke)
     this.buildHubPaths();   // paved spokes from the plaza out to each bridge
+    this.buildGuideArrows(); // glowing floor chevrons pointing to the ZOMBIES game
     this.buildModes();
     this.buildEggs();
     this.buildSanctuary();
@@ -351,6 +354,11 @@ export class Island {
     if (this.arrow) {
       this.arrow.position.y = 3.6 + Math.sin(t * 2.2) * 0.2;
       this.arrow.rotation.y += dt * 1.5;
+    }
+    // chevron trail to the zombie game — bright band sweeps outward toward it
+    for (let i = 0; i < this.guideArrowMats.length; i++) {
+      const wave = (Math.sin(t * 2.6 - i * 0.8) + 1) * 0.5; // 0..1, peaks travel outward
+      this.guideArrowMats[i].emissiveIntensity = 0.3 + wave * 1.5;
     }
 
     if (this.sanctuaryOrb) {
@@ -1248,6 +1256,31 @@ export class Island {
           this.group.add(tile);
         }
       }
+    }
+  }
+
+  /** A trail of glowing green chevrons running from the plaza out to the ZOMBIES
+   *  satellite bridge. They pulse in an outward-travelling wave so new players
+   *  instantly read "the zombie game is THIS way". */
+  private buildGuideArrows() {
+    const zs = SATELLITES.find((s) => s.id === "sat_zombies");
+    if (!zs) return;
+    const d = Math.hypot(zs.center.x, zs.center.z) || 1;
+    const dir = { x: zs.center.x / d, z: zs.center.z / d };
+    const yaw = Math.atan2(dir.x, dir.z); // chevron points along the spoke (toward the satellite)
+    const armGeo = new THREE.BoxGeometry(0.32, 0.16, 1.5);
+    // run from just outside the plaza up to the bridge mouth
+    for (let r = PLAZA_R + 2.5; r <= ISLAND.half - 4; r += 3.4) {
+      const mat = glowMaterial(0x8be36b, 0.7) as THREE.MeshStandardMaterial;
+      const chev = new THREE.Group();
+      const a = new THREE.Mesh(armGeo, mat); a.position.set(-0.45, 0.64, 0); a.rotation.y = 0.64;
+      const b = new THREE.Mesh(armGeo, mat); b.position.set(0.45, 0.64, 0); b.rotation.y = -0.64;
+      a.userData.noCast = b.userData.noCast = true;
+      chev.add(a, b);
+      chev.position.set(dir.x * r, 0, dir.z * r);
+      chev.rotation.y = yaw;
+      this.group.add(chev);
+      this.guideArrowMats.push(mat);
     }
   }
 
