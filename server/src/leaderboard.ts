@@ -26,14 +26,21 @@ export interface ScoreRow {
 }
 
 const FILE = process.env.LEADERBOARD_FILE || './leaderboard.json';
-const CAP = 100; // rows kept/served
+export const CAP = 100; // rows kept/served
 const MAX_NAME = 16;
-const MAX_ROUND = 100_000; // generous ceiling; rejects obviously forged values
-const MAX_SCORE = 1_000_000_000;
+export const MAX_ROUND = 100_000; // generous ceiling; rejects obviously forged values
+export const MAX_SCORE = 1_000_000_000;
+
+/** A leaderboard store: the in-memory/file one (default) or the Supabase one.
+ *  Methods are async so a Postgres-backed store can be dropped in transparently. */
+export interface LbStore {
+  top(limit?: number): Promise<ScoreRow[]>;
+  submit(input: { addr?: unknown; name?: unknown; round?: unknown; score?: unknown }): Promise<{ ok: boolean; rank: number }>;
+}
 
 /** Validate a Solana wallet address (base58, 32–44 chars). Returns "" if bad.
  *  The board is keyed on this so identity is the wallet, not the display name. */
-function cleanAddr(raw: unknown): string {
+export function cleanAddr(raw: unknown): string {
   if (typeof raw !== 'string') return '';
   const s = raw.trim();
   return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s) ? s : '';
@@ -41,7 +48,7 @@ function cleanAddr(raw: unknown): string {
 
 /** Strip control chars / collapse whitespace / cap a display name → "Anon"
  *  fallback. Filters by code point so there are no control-char regex literals. */
-function cleanName(raw: unknown): string {
+export function cleanName(raw: unknown): string {
   if (typeof raw !== 'string') return 'Anon';
   let out = '';
   let prevSpace = false;
@@ -63,13 +70,13 @@ function cleanName(raw: unknown): string {
   return out || 'Anon';
 }
 
-function clampInt(v: unknown, max: number): number {
+export function clampInt(v: unknown, max: number): number {
   const n = typeof v === 'number' ? v : Number(v);
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.min(max, Math.floor(n));
 }
 
-export class Leaderboard {
+export class Leaderboard implements LbStore {
   private rows: ScoreRow[] = [];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -113,7 +120,7 @@ export class Leaderboard {
   }
 
   /** Current top rows (already sorted, capped). Returns a fresh array. */
-  top(limit = CAP): ScoreRow[] {
+  async top(limit = CAP): Promise<ScoreRow[]> {
     return this.rows.slice(0, Math.min(limit, CAP));
   }
 
@@ -124,7 +131,7 @@ export class Leaderboard {
    * latest. Requires a valid address — name-only runs are rejected. Returns the
    * row's 0-based rank, or -1 if it didn't qualify.
    */
-  submit(input: { addr?: unknown; name?: unknown; round?: unknown; score?: unknown }): { ok: boolean; rank: number } {
+  async submit(input: { addr?: unknown; name?: unknown; round?: unknown; score?: unknown }): Promise<{ ok: boolean; rank: number }> {
     const row: ScoreRow = {
       addr: cleanAddr(input.addr),
       name: cleanName(input.name),
@@ -148,4 +155,25 @@ export class Leaderboard {
     const rank = this.rows.findIndex((r) => r.addr === row.addr);
     return { ok: true, rank };
   }
+}
+
+/**
+ * Pick the leaderboard backend at startup. If Supabase is configured (durable
+ * Postgres — survives restarts/redeploys) use it; otherwise fall back to the
+ * in-memory/file store so local dev and un-configured deploys still work.
+ *
+ * Env (set on the relay host, NEVER in the client):
+ *   SUPABASE_URL                 e.g. https://xxxx.supabase.co
+ *   SUPABASE_SERVICE_ROLE_KEY    service-role key (or SUPABASE_KEY)
+ */
+export async function makeLeaderboard(): Promise<LbStore> {
+  const url = process.env.SUPABASE_URL?.replace(/\/$/, '');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
+  if (url && key) {
+    const { SupabaseLeaderboard } = await import('./supabaseLeaderboard.js');
+    console.log('[leaderboard] using Supabase Postgres store');
+    return new SupabaseLeaderboard(url, key);
+  }
+  console.log('[leaderboard] using in-memory/file store (set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY for durable storage)');
+  return new Leaderboard();
 }

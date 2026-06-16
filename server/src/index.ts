@@ -14,13 +14,15 @@
 import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { RoomManager, HOST_ID, type Member, type Room } from './rooms.js';
-import { Leaderboard } from './leaderboard.js';
+import { makeLeaderboard, type LbStore } from './leaderboard.js';
 
 const PORT = Number(process.env.PORT) || 8080;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 const rooms = new RoomManager();
-const leaderboard = new Leaderboard();
+// Chosen at startup: Supabase Postgres (durable) if configured, else memory/file.
+let leaderboard: LbStore;
+makeLeaderboard().then((lb) => { leaderboard = lb; });
 
 /**
  * Per-socket bookkeeping. We stash the member's identity on the socket so we
@@ -77,16 +79,20 @@ const httpServer = http.createServer((req, res) => {
 
   // GET /leaderboard → current global top survivors (JSON).
   if (req.method === 'GET' && url === '/leaderboard') {
-    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-    res.end(JSON.stringify({ ok: true, rows: leaderboard.top() }));
+    Promise.resolve(leaderboard?.top() ?? []).then((rows) => {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+      res.end(JSON.stringify({ ok: true, rows }));
+    });
     return;
   }
 
-  // POST /score { name, round, score } → record a finished run.
+  // POST /score { addr, name, round, score } → record a finished run.
   if (req.method === 'POST' && url === '/score') {
-    readJsonBody(req).then((body) => {
+    readJsonBody(req).then(async (body) => {
       const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
-      const result = leaderboard.submit({ addr: b.addr, name: b.name, round: b.round, score: b.score });
+      const result = leaderboard
+        ? await leaderboard.submit({ addr: b.addr, name: b.name, round: b.round, score: b.score })
+        : { ok: false, rank: -1 };
       res.writeHead(result.ok ? 200 : 400, { 'content-type': 'application/json', ...CORS });
       res.end(JSON.stringify(result));
     });
