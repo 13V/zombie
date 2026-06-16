@@ -86,7 +86,7 @@ function inHubCorridor(x: number, z: number): boolean {
 /** An interactive spot on the island the player can walk up to. */
 export interface IslandZone {
   id: string;
-  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel" | "wardrobe" | "bedwars" | "td" | "soon";
+  kind: "mode" | "join" | "shop" | "egg" | "pets" | "daily" | "index" | "wheel" | "wardrobe" | "bedwars" | "td" | "soon" | "freepet";
   pos: THREE.Vector3;
   radius: number; // proximity radius that triggers the prompt
   label: string; // shown in the proximity prompt
@@ -158,6 +158,8 @@ export class Island {
   private arrow?: THREE.Mesh;
   // floor chevrons leading from the plaza out to the ZOMBIES bridge (pulse outward)
   private guideArrowMats: THREE.MeshStandardMaterial[] = [];
+  // the one-per-player free Epic gift egg at the zombie bridge approach
+  private freeEpic?: { group: THREE.Group; egg: THREE.Mesh; lid: THREE.Group; aura: THREE.Mesh; sign: THREE.Sprite; pos: THREE.Vector3; claimed: boolean };
   // animation registries
   private eggs: EggShrine[] = [];
   private rooms: CoopRoom[] = [];
@@ -219,6 +221,7 @@ export class Island {
     this.buildSatellites(); // floating game-mode islands + bridges (hub-and-spoke)
     this.buildHubPaths();   // paved spokes from the plaza out to each bridge
     this.buildGuideArrows(); // glowing floor chevrons pointing to the ZOMBIES game
+    this.buildFreeEpicEgg(); // one-per-player free Epic gift egg by the zombie bridge
     this.buildModes();
     this.buildEggs();
     this.buildSanctuary();
@@ -359,6 +362,14 @@ export class Island {
     for (let i = 0; i < this.guideArrowMats.length; i++) {
       const wave = (Math.sin(t * 2.6 - i * 0.8) + 1) * 0.5; // 0..1, peaks travel outward
       this.guideArrowMats[i].emissiveIntensity = 0.3 + wave * 1.5;
+    }
+    // free Epic gift: bob the box + lift/wobble the lid (only while unclaimed)
+    if (this.freeEpic) {
+      const fe = this.freeEpic;
+      fe.egg.position.y = 1.75 + Math.sin(t * 1.8) * (fe.claimed ? 0.0 : 0.1);
+      fe.lid.position.y = 2.32 + (fe.claimed ? 0 : Math.max(0, Math.sin(t * 1.8)) * 0.16);
+      fe.lid.rotation.y = fe.claimed ? 0 : Math.sin(t * 1.2) * 0.12;
+      if (!fe.claimed) fe.group.rotation.y = Math.sin(t * 0.5) * 0.15;
     }
 
     if (this.sanctuaryOrb) {
@@ -1282,6 +1293,98 @@ export class Island {
       this.group.add(chev);
       this.guideArrowMats.push(mat);
     }
+  }
+
+  /** A free, one-per-player EPIC gift egg sitting beside the zombie-bridge path —
+   *  a golden present-box on a pedestal with a floating "FREE EPIC PET" sign, so
+   *  new players grab a strong companion before their first zombie run. */
+  private buildFreeEpicEgg() {
+    const zs = SATELLITES.find((s) => s.id === "sat_zombies");
+    if (!zs) return;
+    const d = Math.hypot(zs.center.x, zs.center.z) || 1;
+    const dir = { x: zs.center.x / d, z: zs.center.z / d };
+    const perp = { x: -dir.z, z: dir.x };
+    const along = 30, off = 4.0; // beside the cobble approach, inside the kept-clear corridor
+    const pos = new THREE.Vector3(dir.x * along + perp.x * off, 0, dir.z * along + perp.z * off);
+    const EPIC = 0xc792ea, GOLD = 0xffd24a;
+
+    const g = new THREE.Group();
+    // pedestal (matches the egg-shrine stone look)
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.0, 0.5, 8), voxelMaterial(VOX.stone));
+    base.position.y = 0.25;
+    const mid = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.76, 0.6, 8), voxelMaterial(VOX.stoneDark));
+    mid.position.y = 0.82;
+    const ringGlow = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 0.09, 16), glowMaterial(EPIC, 0.9));
+    ringGlow.position.y = 1.16;
+    g.add(base, mid, ringGlow);
+
+    // the "egg" = a wrapped gift box: epic-purple box + golden ribbon cross + bow
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.9, 0.95), glowMaterial(EPIC, 0.85));
+    box.position.y = 1.75;
+    const ribV = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.92, 0.97), glowMaterial(GOLD, 1.0));
+    ribV.position.y = 1.75;
+    const ribH = new THREE.Mesh(new THREE.BoxGeometry(0.97, 0.92, 0.18), glowMaterial(GOLD, 1.0));
+    ribH.position.y = 1.75;
+    g.add(box, ribV, ribH);
+    // the lid + bow (lifts/tilts a touch on the bob so it reads as openable)
+    const lid = new THREE.Group();
+    const lidBox = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.22, 1.05), glowMaterial(EPIC, 0.95));
+    lidBox.position.y = 0.0;
+    const knot = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), glowMaterial(GOLD, 1.2));
+    knot.position.y = 0.22;
+    for (const sx of [-1, 1]) {
+      const loop = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.3, 0.16), glowMaterial(GOLD, 1.1));
+      loop.position.set(sx * 0.26, 0.26, 0);
+      loop.rotation.z = sx * 0.5;
+      lid.add(loop);
+    }
+    lid.add(lidBox, knot);
+    lid.position.y = 2.32;
+    g.add(lid);
+
+    // breathing aura + rising beam (epic glow)
+    const aura = new THREE.Mesh(new THREE.IcosahedronGeometry(1.05, 1), auraMaterial(EPIC, 0.55));
+    aura.position.y = 1.85;
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.6, 0.18, 2.8, 8, 1, true),
+      new THREE.MeshStandardMaterial({ color: EPIC, emissive: EPIC, emissiveIntensity: 1.0, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
+    );
+    beam.position.y = 3.1;
+    g.add(aura, beam);
+
+    // floating sign so the offer is unmistakable
+    const sign = makeSign("🎁 FREE EPIC PET", GOLD);
+    sign.position.set(0, 3.7, 0);
+    sign.scale.set(3.6, 0.9, 1);
+    g.add(sign);
+
+    g.position.copy(pos);
+    this.group.add(g);
+    this.freeEpic = { group: g, egg: box, lid, aura, sign, pos: pos.clone(), claimed: false };
+    this.zones.push({ id: "free_epic", kind: "freepet", pos: pos.clone(), radius: 2.2, label: "🎁 Claim your FREE Epic pet  [E]" });
+  }
+
+  /** Reflect whether THIS player has already claimed the free Epic (dim the gift,
+   *  swap the sign) — called by main.ts from the save flag when entering the hub. */
+  setFreeEpicClaimed(claimed: boolean) {
+    const fe = this.freeEpic;
+    if (!fe || fe.claimed === claimed) return;
+    fe.claimed = claimed;
+    const dim = (m: THREE.Object3D) => {
+      const mat = (m as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+      if (mat && "emissiveIntensity" in mat) mat.emissiveIntensity = claimed ? 0.12 : Math.max(0.6, mat.emissiveIntensity);
+    };
+    fe.group.traverse(dim);
+    fe.aura.visible = !claimed;
+    fe.group.remove(fe.sign);
+    const sm = fe.sign.material as THREE.SpriteMaterial; sm.map?.dispose(); sm.dispose();
+    fe.sign = makeSign(claimed ? "✓ CLAIMED" : "🎁 FREE EPIC PET", claimed ? 0x9a8f7a : 0xffd24a);
+    fe.sign.position.set(0, 3.7, 0);
+    fe.sign.scale.set(claimed ? 2.4 : 3.6, 0.9, 1);
+    fe.group.add(fe.sign);
+    // update the proximity prompt label for the zone
+    const z = this.zones.find((zz) => zz.id === "free_epic");
+    if (z) z.label = claimed ? "🎁 Free Epic — already claimed" : "🎁 Claim your FREE Epic pet  [E]";
   }
 
   private addPad(id: string, kind: IslandZone["kind"], pos: THREE.Vector3, color: number, label: string) {

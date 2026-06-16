@@ -341,6 +341,14 @@ test("mergeSaves: unlock lists are a UNION keeping items from BOTH sides", () =>
   assert.deepEqual(m.benchedPets, ["dog", "cat"]);
 });
 
+test("mergeSaves: freeEpicClaimed is STICKY (OR) so the free Epic can't be re-claimed via cloud sync", () => {
+  // claimed on either side → stays claimed after a merge (anti-dupe)
+  assert.equal(mergeSaves(fresh({ freeEpicClaimed: true }), fresh({ freeEpicClaimed: false })).freeEpicClaimed, true);
+  assert.equal(mergeSaves(fresh({ freeEpicClaimed: false }), fresh({ freeEpicClaimed: true })).freeEpicClaimed, true);
+  // never claimed on either side → still unclaimed
+  assert.equal(mergeSaves(fresh({ freeEpicClaimed: false }), fresh({ freeEpicClaimed: false })).freeEpicClaimed, false);
+});
+
 test("mergeSaves: monotonic bests/lifetimes take the MAX of the two sides", () => {
   const local = fresh({ bestRound: 30, bestScore: 5, bestWave: 2, tdBestScore: 100, lifetimeGold: 10, goldEarned: 7, prestige: 1 });
   const cloud = fresh({ bestRound: 12, bestScore: 9000, bestWave: 40, tdBestScore: 50, lifetimeGold: 999, goldEarned: 3, prestige: 4 });

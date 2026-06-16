@@ -83,6 +83,7 @@ export interface SaveData {
   petLevels: Record<string, number>; // pet id -> level (1+), leveled with gold
   petProgress: Record<string, Record<string, number>>; // pet id -> evolution-trial counters
   benchedPets: string[]; // combat pet ids the player has manually benched (not in the active squad)
+  freeEpicClaimed: boolean; // claimed the one-per-player free Epic pet at the zombie bridge
   stats: LifetimeStats;
   muted: boolean;
   musicVolume: number; // music volume 0..1 (the pause-menu slider; default 0.5)
@@ -136,6 +137,7 @@ function blank(): SaveData {
     petLevels: {},
     petProgress: {},
     benchedPets: [],
+    freeEpicClaimed: false,
     stats: blankStats(),
     muted: false,
     musicVolume: 0.5,
@@ -277,6 +279,7 @@ export function sanitizeSave(raw: unknown): SaveData {
     petLevels: sanitizeLevels(data.petLevels),
     petProgress: sanitizePetProgress(data.petProgress),
     benchedPets: strArray(data.benchedPets),
+    freeEpicClaimed: !!data.freeEpicClaimed,
     stats: {
       kills: num(data.stats?.kills),
       crits: num(data.stats?.crits),
@@ -369,6 +372,9 @@ export function mergeSaves(local: SaveData, cloud: SaveData): SaveData {
       return out;
     })(),
     benchedPets: unionStr(local.benchedPets, cloud.benchedPets),
+    // sticky once claimed on EITHER device, so cloud-syncing can't reset the
+    // one-per-player free Epic and let it be claimed twice
+    freeEpicClaimed: local.freeEpicClaimed || cloud.freeEpicClaimed,
     stats: {
       kills: Math.max(local.stats.kills, cloud.stats.kills),
       crits: Math.max(local.stats.crits, cloud.stats.crits),

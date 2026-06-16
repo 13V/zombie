@@ -2261,6 +2261,7 @@ class Game implements GameApi {
     this._dwellZone = ""; // no auto-enter charge until we actually stand in a portal
     this._dwellTime = 0;
     this.island.setDailyReady(dayUtc(Date.now()) !== this.save.dailyChestDay); // chest glow
+    this.island.setFreeEpicClaimed(this.save.freeEpicClaimed); // dim the gift if already taken
     this.spawnPets(); // bring the equipped squad into the hub so they follow + flex
     this.setLocalAura(this.auraTierFor()); // show my own earned aura in the hub
     this.setLocalPlate(true); // and my own nameplate over my head
@@ -2491,6 +2492,12 @@ class Game implements GameApi {
       this.hud.hideTdModeSelect();
       this.hud.showPrompt(`${near.label} ${bar}  (walk off to cancel)`, true);
       if (ready) { this._dwellTime = 0; this._dwellZone = ""; this.activateIslandZone(near); return; }
+    } else if (near?.kind === "freepet") {
+      // one-per-player free Epic gift: a deliberate [E] press (no auto-claim)
+      this.hud.hideEggPanel();
+      this.hud.hideTdModeSelect();
+      if (this.save.freeEpicClaimed) this.hud.showPrompt("🎁 Free Epic — already claimed", false);
+      else this.hud.showPrompt("🎁 Claim your FREE Epic pet!  [E]", true);
     } else {
       this.hud.hideEggPanel();
       this.hud.hideTdModeSelect();
@@ -2562,7 +2569,55 @@ class Game implements GameApi {
       case "soon":
         this.hud.toast("🚧 New island coming soon!");
         break;
+      case "freepet":
+        this.claimFreeEpic();
+        break;
     }
+  }
+
+  /** Grant the one-per-player free EPIC pet at the zombie bridge. Picks an Epic
+   *  the player doesn't own yet (so it's always useful), marks the save flag so
+   *  it can never be claimed twice, then plays the full hatch celebration. */
+  private claimFreeEpic() {
+    if (this.save.freeEpicClaimed) {
+      this.audio.deny();
+      this.hud.toast("🎁 You already claimed your free Epic pet!");
+      return;
+    }
+    const epics = PETS.filter((p) => p.rarity === "epic");
+    const unowned = epics.filter((p) => !this.save.pets.includes(p.id));
+    const pool = unowned.length ? unowned : epics;
+    const pet = pool[Math.floor(Math.random() * pool.length)];
+    if (!pet) return;
+    // claim is sticky from here on — set BEFORE granting so a mid-grant reload can't dupe
+    this.save.freeEpicClaimed = true;
+    if (!this.save.pets.includes(pet.id)) {
+      this.save.pets.push(pet.id);
+      this.save.petLevels[pet.id] = 1;
+      this.grantCollectionMilestones();
+    }
+    this.persist();
+    this.audio.powerup();
+    this.spawnPets();
+    this.renderShop();
+    this.island.setFreeEpicClaimed(true); // dim the gift box + swap the sign
+    // celebration (same as a hatch): burst, floating tag, lobby broadcast, reveal
+    const rarityIdx = RARITY_ORDER.indexOf("epic");
+    this.portalBurst(this.player.pos);
+    this.hatchCelebration(this.player.pos.x, this.player.pos.z, rarityIdx, false, pet.id, false);
+    this.islandNet?.sendHatch(pet.id, rarityIdx, false);
+    this._hatching = true;
+    this.hud.showEggReveal({
+      eggColor: "#c792ea",
+      petName: pet.name,
+      petThumb: petThumbnail(pet.id, 1),
+      rarityLabel: RARITY_LABEL.epic,
+      rarityColor: RARITY_COLOR.epic,
+      status: "new",
+      statusText: "🎁 FREE EPIC!",
+      confetti: true,
+      onDone: () => { this._hatching = false; },
+    });
   }
 
   /** Hatch a pet from an egg pedestal with a reveal toast + reward FX. */
