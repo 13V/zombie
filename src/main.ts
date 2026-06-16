@@ -2405,15 +2405,6 @@ class Game implements GameApi {
     // proximity prompt for the nearest interactive pad / egg / mode gate
     const near = this.island.nearestZone(this.player.pos);
 
-    // Duo & Squad are temporarily disabled — intercept those pads before any
-    // gather/dwell/host logic and just show "Coming Soon". (Solo still works.)
-    if (near && near.kind === "mode" && (near.modePlayers ?? 1) >= 2) {
-      if (this._gatherPortal) { this._gatherPortal = ""; this.islandNet?.setPortal(null); }
-      this.hud.hideEggPanel();
-      this.hud.showPrompt("Duo & Squad — Coming Soon ⏳", false);
-      return;
-    }
-
     // Co-op GATHER: standing in a Duo/Squad portal (online) pools players; when it
     // hits the target the lowest-id occupant hosts a room, shares the code over
     // the relay, and everyone jumps into the match together. Walk off to cancel.
@@ -2426,17 +2417,15 @@ class Game implements GameApi {
       const count = occ.length;
       this.hud.hideEggPanel();
       this.hud.showPrompt(`🚪 ${this.modeName(target)} — waiting ${Math.min(count, target)}/${target}…  (walk off to cancel)`, true);
-      if (count >= target) {
-        this._portalStarting = true;
-        // deterministic leader: lowest id hosts; everyone else waits for the code
+      if (count >= target && !this._portalStarting) {
+        // Deterministic leader: the lowest id in the full portal hosts the room
+        // and broadcasts its code; everyone else stays "waiting" and joins via
+        // onPortalStart() when the code arrives. Non-leaders must NOT latch
+        // _portalStarting here — onPortalStart()'s guard would then drop the
+        // code and the guest would never join (walk off the pad to cancel).
         if (this.islandNet.localId === Math.min(...occ)) {
+          this._portalStarting = true;
           this.startPortalMatchAsHost(gatherZone.id, target);
-        } else {
-          // waiting on the leader's code — recover if it never arrives (e.g. the
-          // leader walked off the pad at the last instant) so we don't soft-lock.
-          window.setTimeout(() => {
-            if (this._portalStarting && this.state === "island") this._portalStarting = false;
-          }, 5000);
         }
       }
       return; // gather portals don't use the normal [E] activation
@@ -2525,10 +2514,14 @@ class Game implements GameApi {
     if (zone.kind === "mode" || zone.kind === "join") this.portalBurst(zone.pos);
     switch (zone.kind) {
       case "mode": {
-        // SOLO starts a local run. DUO/SQUAD co-op is temporarily disabled.
+        // SOLO starts a local run. DUO/SQUAD normally matchmake via the portal
+        // gather (handled in updateIslandInteraction before we get here). This
+        // path only runs when there's no island presence to gather with (server
+        // asleep / solo lobby): open a co-op room directly and show the code so a
+        // friend can join from the "Join a Friend's Run" pad.
         const players = zone.modePlayers ?? 1;
         if (players <= 1) this.startRun();
-        else this.hud.toast("Duo & Squad — coming soon! ⏳");
+        else this.hostGame(players);
         break;
       }
       case "join": {
