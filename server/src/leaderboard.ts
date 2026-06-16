@@ -18,7 +18,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
 export interface ScoreRow {
-  name: string;
+  addr: string; // wallet address — the UNIQUE per-player key
+  name: string; // display name (cosmetic only)
   round: number;
   score: number;
   ts: number; // ms epoch the row was recorded (tiebreak / recency)
@@ -29,6 +30,14 @@ const CAP = 100; // rows kept/served
 const MAX_NAME = 16;
 const MAX_ROUND = 100_000; // generous ceiling; rejects obviously forged values
 const MAX_SCORE = 1_000_000_000;
+
+/** Validate a Solana wallet address (base58, 32–44 chars). Returns "" if bad.
+ *  The board is keyed on this so identity is the wallet, not the display name. */
+function cleanAddr(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const s = raw.trim();
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s) ? s : '';
+}
 
 /** Strip control chars / collapse whitespace / cap a display name → "Anon"
  *  fallback. Filters by code point so there are no control-char regex literals. */
@@ -73,8 +82,8 @@ export class Leaderboard {
       const raw = JSON.parse(readFileSync(FILE, 'utf8'));
       if (Array.isArray(raw)) {
         this.rows = raw
-          .map((r) => ({ name: cleanName(r?.name), round: clampInt(r?.round, MAX_ROUND), score: clampInt(r?.score, MAX_SCORE), ts: clampInt(r?.ts, Number.MAX_SAFE_INTEGER) }))
-          .filter((r) => r.round > 0)
+          .map((r) => ({ addr: cleanAddr(r?.addr), name: cleanName(r?.name), round: clampInt(r?.round, MAX_ROUND), score: clampInt(r?.score, MAX_SCORE), ts: clampInt(r?.ts, Number.MAX_SAFE_INTEGER) }))
+          .filter((r) => r.addr && r.round > 0)
           .slice(0, CAP);
         this.resort();
       }
@@ -109,33 +118,34 @@ export class Leaderboard {
   }
 
   /**
-   * Record a finished run. Keeps only each name's BEST run (higher round, then
-   * higher score) so the board can't be flooded by one player. Returns the
-   * inserted/updated row's 0-based rank, or -1 if it didn't make the board.
+   * Record a finished run, keyed by WALLET address (the unique per-player id).
+   * Keeps only each wallet's BEST run (higher round, then higher score) so one
+   * player can't flood the board, and updates that wallet's display name to the
+   * latest. Requires a valid address — name-only runs are rejected. Returns the
+   * row's 0-based rank, or -1 if it didn't qualify.
    */
-  submit(input: { name?: unknown; round?: unknown; score?: unknown }): { ok: boolean; rank: number } {
+  submit(input: { addr?: unknown; name?: unknown; round?: unknown; score?: unknown }): { ok: boolean; rank: number } {
     const row: ScoreRow = {
+      addr: cleanAddr(input.addr),
       name: cleanName(input.name),
       round: clampInt(input.round, MAX_ROUND),
       score: clampInt(input.score, MAX_SCORE),
       ts: Date.now(),
     };
-    if (row.round <= 0) return { ok: false, rank: -1 };
+    if (!row.addr || row.round <= 0) return { ok: false, rank: -1 };
 
-    const existing = this.rows.find((r) => r.name === row.name);
+    const existing = this.rows.find((r) => r.addr === row.addr);
     if (existing) {
-      // only replace if this run is strictly better than the name's current best
+      existing.name = row.name; // keep the wallet's display name fresh
+      // only replace the score if this run is strictly better than the current best
       const better = row.round > existing.round || (row.round === existing.round && row.score > existing.score);
-      if (!better) return { ok: true, rank: this.rows.indexOf(existing) };
-      existing.round = row.round;
-      existing.score = row.score;
-      existing.ts = row.ts;
+      if (better) { existing.round = row.round; existing.score = row.score; existing.ts = row.ts; }
     } else {
       this.rows.push(row);
     }
     this.resort();
     this.scheduleSave();
-    const rank = this.rows.findIndex((r) => r.name === row.name);
+    const rank = this.rows.findIndex((r) => r.addr === row.addr);
     return { ok: true, rank };
   }
 }

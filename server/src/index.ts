@@ -86,7 +86,7 @@ const httpServer = http.createServer((req, res) => {
   if (req.method === 'POST' && url === '/score') {
     readJsonBody(req).then((body) => {
       const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
-      const result = leaderboard.submit({ name: b.name, round: b.round, score: b.score });
+      const result = leaderboard.submit({ addr: b.addr, name: b.name, round: b.round, score: b.score });
       res.writeHead(result.ok ? 200 : 400, { 'content-type': 'application/json', ...CORS });
       res.end(JSON.stringify(result));
     });

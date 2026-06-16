@@ -1121,9 +1121,10 @@ class Game implements GameApi {
     const entry = { round: this.rounds.round, score: this.points, date: Date.now() };
     const lb = recordScore(this.save.scores, entry);
     this.save.scores = lb.board;
-    // Submit to the GLOBAL leaderboard (best-effort; the relay keeps each name's
-    // best run). Fire-and-forget so a slow/asleep server never blocks game-over.
-    void submitScore(this.save.name, this.rounds.round, this.points);
+    // Submit to the GLOBAL leaderboard, keyed by wallet (best-effort; the relay
+    // keeps each wallet's best run). No-op without a connected wallet — the
+    // global board is wallet-gated. Fire-and-forget so it never blocks game-over.
+    void submitScore(this.wallet.state.address, this.save.name, this.rounds.round, this.points);
 
     // Fold this run into lifetime stats, then settle any newly-met challenges.
     this.runStats.round = this.rounds.round;
@@ -2400,10 +2401,13 @@ class Game implements GameApi {
         this._lbFetchAcc = 0;
         void fetchLeaderboard().then((rows) => { if (rows.length) this._globalLb = rows; });
       }
-      const me = { name: this.save.name, best: this.save.bestRound };
+      // The board is the GLOBAL wallet-ranked top survivors. Optimistically
+      // include myself (only if wallet-connected) so my latest best shows before
+      // the next ~15s refetch; dedupe-by-name in setLeaderboard merges it.
       const global = this._globalLb.map((r) => ({ name: r.name, best: r.round }));
-      const peers = this.islandNet?.standings() ?? [];
-      this.island.setLeaderboard([me, ...global, ...peers]);
+      const me = this.wallet.state.connected && this.save.bestRound > 0
+        ? [{ name: this.save.name, best: this.save.bestRound }] : [];
+      this.island.setLeaderboard([...me, ...global]);
     }
 
     // a dismissable menu (shop / pet index) is up → E / Space / Esc closes it,

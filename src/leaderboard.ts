@@ -10,7 +10,8 @@
 import { getServerUrl } from "./net";
 
 export interface LbRow {
-  name: string;
+  addr: string; // wallet address (the unique per-player key)
+  name: string; // display name (cosmetic)
   round: number;
   score: number;
 }
@@ -39,14 +40,18 @@ export async function fetchLeaderboard(timeoutMs = 6000): Promise<LbRow[]> {
   }
 }
 
-/** Submit a finished run to the global board. Fire-and-forget; never throws. */
-export async function submitScore(name: string, round: number, score: number): Promise<void> {
-  if (!(round > 0)) return; // nothing to record
+/**
+ * Submit a finished run to the global board, keyed by WALLET address. Requires a
+ * connected wallet — the global board is wallet-gated (true per-player identity).
+ * Fire-and-forget; never throws.
+ */
+export async function submitScore(addr: string | null, name: string, round: number, score: number): Promise<void> {
+  if (!addr || !(round > 0)) return; // no wallet or nothing to record
   try {
     await fetch(`${httpBase()}/score`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, round, score }),
+      body: JSON.stringify({ addr, name, round, score }),
     });
   } catch {
     /* best-effort */
