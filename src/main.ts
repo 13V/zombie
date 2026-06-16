@@ -35,6 +35,7 @@ import { EGGS, findEgg, rollEgg, eggOdds } from "./gacha";
 import { RunMods, defaultMods, cloneMods, diffMods } from "./mods";
 import { loadSave, writeSave, SaveData, recordScore, sanitizeSave, mergeSaves } from "./save";
 import { cloudEnabled, cloudLogin, cloudPush } from "./cloudsave";
+import { fetchLeaderboard, submitScore, type LbRow } from "./leaderboard";
 import { offlineGold, prestigeGain, prestigeMultiplier, dayUtc, settleStreak, rollDaily, applyDailyProgress, settleDaily, dailyRows, questsForDay, type DailyMetrics } from "./idle";
 import { META_UPGRADES, essenceFor } from "./meta";
 import { RUN_UPGRADES, rollUpgrades, RunUpgrade } from "./upgrades";
@@ -84,6 +85,8 @@ class Game implements GameApi {
   private _localAura?: THREE.Mesh; // my own lobby flex aura (attached to player.group)
   private _localPlate?: THREE.Sprite; // my own nameplate over my head in the hub
   private _lbAcc = 0; // throttle accumulator for the lobby leaderboard refresh
+  private _lbFetchAcc = 99; // seconds since the last GLOBAL leaderboard fetch (high → fetch soon)
+  private _globalLb: LbRow[] = []; // cached global top survivors (refetched periodically)
   private composer?: EffectComposer; // post stack — absent on lowSpec (direct render)
   private clock = new THREE.Clock();
 
@@ -1118,6 +1121,9 @@ class Game implements GameApi {
     const entry = { round: this.rounds.round, score: this.points, date: Date.now() };
     const lb = recordScore(this.save.scores, entry);
     this.save.scores = lb.board;
+    // Submit to the GLOBAL leaderboard (best-effort; the relay keeps each name's
+    // best run). Fire-and-forget so a slow/asleep server never blocks game-over.
+    void submitScore(this.save.name, this.rounds.round, this.points);
 
     // Fold this run into lifetime stats, then settle any newly-met challenges.
     this.runStats.round = this.rounds.round;
@@ -2262,6 +2268,9 @@ class Game implements GameApi {
     this._dwellTime = 0;
     this.island.setDailyReady(dayUtc(Date.now()) !== this.save.dailyChestDay); // chest glow
     this.island.setFreeEpicClaimed(this.save.freeEpicClaimed); // dim the gift if already taken
+    // pull the global leaderboard right away so the billboard isn't stale/empty
+    this._lbFetchAcc = 99;
+    void fetchLeaderboard().then((rows) => { if (rows.length) this._globalLb = rows; });
     this.spawnPets(); // bring the equipped squad into the hub so they follow + flex
     this.setLocalAura(this.auraTierFor()); // show my own earned aura in the hub
     this.setLocalPlate(true); // and my own nameplate over my head
@@ -2381,12 +2390,20 @@ class Game implements GameApi {
       this.hud.setIslandPopulation(pop);
     }
 
-    // refresh the lobby leaderboard ~once a second (me + every named peer)
-    this._lbAcc = (this._lbAcc ?? 0) + dt;
+    // Refresh the billboard ~once a second from the GLOBAL board (cached), plus
+    // me + any named lobby peers, and refetch the global board every ~15s.
+    this._lbAcc += dt;
     if (this._lbAcc >= 1) {
       this._lbAcc = 0;
+      this._lbFetchAcc += 1;
+      if (this._lbFetchAcc >= 15) {
+        this._lbFetchAcc = 0;
+        void fetchLeaderboard().then((rows) => { if (rows.length) this._globalLb = rows; });
+      }
       const me = { name: this.save.name, best: this.save.bestRound };
-      this.island.setLeaderboard([me, ...(this.islandNet?.standings() ?? [])]);
+      const global = this._globalLb.map((r) => ({ name: r.name, best: r.round }));
+      const peers = this.islandNet?.standings() ?? [];
+      this.island.setLeaderboard([me, ...global, ...peers]);
     }
 
     // a dismissable menu (shop / pet index) is up → E / Space / Esc closes it,

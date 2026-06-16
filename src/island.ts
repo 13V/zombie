@@ -1842,7 +1842,14 @@ export class Island {
     g.fillStyle = "#ffd24a";
     g.fillText("🏆 TOP SURVIVORS", W / 2, 38);
     g.font = "bold 32px system-ui, sans-serif";
-    const top = entries.filter((e) => e.best > 0).sort((a, b) => b.best - a.best).slice(0, 5);
+    // dedupe by name (me / global / lobby-peer lists can overlap) keeping the
+    // highest best, then take the top 5
+    const byName = new Map<string, number>();
+    for (const e of entries) {
+      if (!(e.best > 0)) continue;
+      byName.set(e.name, Math.max(byName.get(e.name) ?? 0, e.best));
+    }
+    const top = [...byName].map(([name, best]) => ({ name, best })).sort((a, b) => b.best - a.best).slice(0, 5);
     if (!top.length) {
       g.fillStyle = "#e8dcc8";
       g.fillText("No runs yet — go make a mess!", W / 2, H / 2 + 10);

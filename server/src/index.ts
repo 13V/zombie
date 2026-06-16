@@ -14,11 +14,13 @@
 import http from 'node:http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { RoomManager, HOST_ID, type Member, type Room } from './rooms.js';
+import { Leaderboard } from './leaderboard.js';
 
 const PORT = Number(process.env.PORT) || 8080;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 const rooms = new RoomManager();
+const leaderboard = new Leaderboard();
 
 /**
  * Per-socket bookkeeping. We stash the member's identity on the socket so we
@@ -34,12 +36,63 @@ const state = new WeakMap<WebSocket, SocketState>();
 // HTTP server (health check) + WebSocket upgrade on the same port.
 // ---------------------------------------------------------------------------
 
+// Browser clients live on a different origin (tinyrealm.fun) than this relay, so
+// the leaderboard endpoints need permissive CORS. WS isn't subject to CORS.
+const CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET,POST,OPTIONS',
+  'access-control-allow-headers': 'content-type',
+};
+
+/** Read a JSON request body with a hard size cap (anti-OOM). */
+function readJsonBody(req: http.IncomingMessage, limit = 4096): Promise<unknown> {
+  return new Promise((resolve) => {
+    let data = '';
+    let aborted = false;
+    req.on('data', (chunk) => {
+      if (aborted) return;
+      data += chunk;
+      if (data.length > limit) { aborted = true; resolve(null); req.destroy(); }
+    });
+    req.on('end', () => { if (aborted) return; try { resolve(JSON.parse(data || 'null')); } catch { resolve(null); } });
+    req.on('error', () => resolve(null));
+  });
+}
+
 const httpServer = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/health') {
+  const url = (req.url || '').split('?')[0];
+
+  // CORS preflight for the leaderboard POST.
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, CORS);
+    res.end();
+    return;
+  }
+
+  if (req.method === 'GET' && url === '/health') {
     res.writeHead(200, { 'content-type': 'text/plain' });
     res.end('ok conns=' + wss.clients.size);
     return;
   }
+
+  // GET /leaderboard → current global top survivors (JSON).
+  if (req.method === 'GET' && url === '/leaderboard') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+    res.end(JSON.stringify({ ok: true, rows: leaderboard.top() }));
+    return;
+  }
+
+  // POST /score { name, round, score } → record a finished run.
+  if (req.method === 'POST' && url === '/score') {
+    readJsonBody(req).then((body) => {
+      const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+      const result = leaderboard.submit({ name: b.name, round: b.round, score: b.score });
+      res.writeHead(result.ok ? 200 : 400, { 'content-type': 'application/json', ...CORS });
+      res.end(JSON.stringify(result));
+    });
+    return;
+  }
+
   // Anything else over plain HTTP gets a minimal 404; real traffic is WS.
   res.writeHead(404, { 'content-type': 'text/plain' });
   res.end('not found');
